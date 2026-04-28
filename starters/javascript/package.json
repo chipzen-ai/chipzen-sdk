@@ -1,0 +1,12 @@
+{
+  "name": "chipzen-starter-bot",
+  "version": "0.2.0",
+  "description": "Chipzen starter bot — JavaScript",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

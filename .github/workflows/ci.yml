@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python-starter:
+    name: Python starter (lint + smoke)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starters/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        run: ruff check .
+      - name: Format check
+        run: ruff format --check .
+      - name: Import smoke
+        run: python -c "import importlib, ast, pathlib; [ast.parse(p.read_text()) for p in pathlib.Path('.').glob('*.py')]"
+
+  javascript-starter:
+    name: JavaScript starter (lint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starters/javascript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax check
+        run: node --check bot.js
+
+  rust-starter:
+    name: Rust starter (check)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: starters/rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update
+      - name: Cargo check
+        run: cargo check --quiet
+      - name: Cargo fmt check
+        run: cargo fmt --check
+
+  reference-bot:
+    name: Reference bot (lint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/reference-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        run: ruff check .
+      - name: Format check
+        run: ruff format --check .

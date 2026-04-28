@@ -1,0 +1,3 @@
+# Default owner for everything in the repo. Required reviewer for all PRs.
+# Triage cadence per README: alpha = best-effort; named SLO at external alpha launch.
+* @Dave-London

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+dist/
+build/
+
+# JavaScript / TypeScript
+node_modules/
+*.log
+.npm
+.pnpm-store/
+coverage/
+.next/
+.nuxt/
+.turbo/
+
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+*.tar.gz
+*.zip
+*.whl
+
+# CLA signatures storage
+.cla-signatures.json

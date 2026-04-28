@@ -1,0 +1,81 @@
+name: SDK / starter / protocol bug
+description: Report a bug in the SDK code, a starter, the reference bot, or the wire-protocol spec.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please confirm the issue is in this
+        repo's scope before submitting (SDK / protocol / starters /
+        docs). Account, billing, matchmaking, and auth issues go to
+        support@chipzen.ai or Discord — see the issue chooser.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Python starter
+        - JavaScript starter
+        - Rust starter
+        - Reference bot
+        - Wire-protocol spec (transport)
+        - Wire-protocol spec (poker game-state)
+        - Developer manual
+        - Build / packaging tooling
+        - Other (describe in the body)
+    validations:
+      required: true
+
+  - type: input
+    id: sdk-version
+    attributes:
+      label: SDK version / commit
+      description: "Tag, commit SHA, or starter directory you cloned from. `unknown` is fine if you don't have it."
+      placeholder: "main @ abc1234, or v0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the unexpected behavior. Include error messages, stack traces, or relevant log lines verbatim.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal commands or code that reproduce the issue.
+      placeholder: |
+        1. Clone starters/python
+        2. Run `python bot.py`
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "macOS 14.5, Python 3.11.7, Docker 25.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Suspected root cause, links to related issues, etc. Optional.
+    validations:
+      required: false

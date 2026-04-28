@@ -1,0 +1,62 @@
+name: SDK feature request
+description: Suggest an addition or change to the SDK, a starter, or the protocol spec.
+title: "[feat] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement. We're in alpha and
+        actively shaping the SDK surface. Concrete proposals (with
+        a sketch of the API or doc change) get traction faster than
+        open-ended ideas.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area this affects
+      options:
+        - Python starter
+        - JavaScript starter
+        - Rust starter
+        - New starter language
+        - Reference bot
+        - Wire-protocol spec (transport)
+        - Wire-protocol spec (poker game-state)
+        - Developer manual / docs
+        - Build / packaging tooling
+        - Other (describe in the body)
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem this solves
+      description: Why is the current state insufficient? Who hits this?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What you'd like to see. Code snippets, doc-section pointers, or wire-protocol payload shapes welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about and why you ruled them out.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to similar projects, RFCs, related issues. Optional.
+    validations:
+      required: false
