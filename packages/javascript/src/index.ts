@@ -22,3 +22,16 @@ export {
   SUPPORTED_PROTOCOL_VERSIONS,
   type RunBotOptions,
 } from "./client.js";
+export {
+  scaffoldBot,
+  type ScaffoldOptions,
+} from "./scaffold.js";
+export {
+  validateBot,
+  DEFAULT_MAX_UPLOAD_BYTES,
+  DEFAULT_TIMEOUT_WARN_MS,
+  PLATFORM_TIMEOUT_MS,
+  type Severity,
+  type ValidateOptions,
+  type ValidationResult,
+} from "./validate.js";

@@ -36,6 +36,9 @@
       "require": "./dist/index.cjs"
     }
   },
+  "bin": {
+    "chipzen-sdk": "./dist/bin.js"
+  },
   "files": [
     "dist",
     "README.md",
