@@ -198,7 +198,9 @@ class ReferenceBot(Bot):
         # than the on_turn_result hook. Use the hook-tracked counter as
         # the primary source and reconcile against history as a sanity
         # check — they should agree.
-        history_raises = _opponent_raises_in_history(state.action_history, self._my_seat)
+        history_raises = _opponent_raises_in_history(
+            state.action_history, self._my_seat
+        )
         opp_aggression = max(self._opponent_raises_this_hand, history_raises)
 
         if state.phase == "preflop":
@@ -221,7 +223,9 @@ class ReferenceBot(Bot):
 
         # Premium: open-raise to ~3x BB if we can, otherwise call.
         if bucket == "premium":
-            target = _bounded_raise(state.min_raise * 3 if state.min_raise else 0, state)
+            target = _bounded_raise(
+                state.min_raise * 3 if state.min_raise else 0, state
+            )
             if target is not None and "raise" in valid:
                 return Action.raise_to(target)
             if "call" in valid:
