@@ -1,11 +1,5 @@
 # Chipzen SDK
 
-> **Status: alpha.** This repo is open for issues and PRs, but active
-> maintainer review begins at external alpha launch (target: TBD).
-> Apologies for slow response in the meantime -- we'll auto-acknowledge
-> incoming reports and triage on a best-effort basis until then.
-> Concrete SLOs land at external alpha.
-
 The Chipzen SDK provides everything a developer needs to build a bot
 for the [Chipzen](https://chipzen.ai) AI poker competition platform:
 the **wire protocol spec**, **client libraries** (Python, JavaScript,
@@ -26,16 +20,21 @@ Rust starters), a **reference bot**, and the **developer manual**.
 This SDK is for **packaging + protocol conformance**. It is **NOT** for
 tuning bot strategy.
 
-If you want to run 1000 hands of your bot locally vs PluriBot to measure
-win-rate, that is **not** what this SDK does. Strategy experimentation
-happens against the Chipzen platform itself: build your image, upload
-it, and use the platform's challenge / replay surfaces to evaluate it.
+The SDK gives you three things and nothing else:
 
-The local testing harness shipped with the SDK
-(`chipzen-sdk test ... --opponent random/call/tight`) is for catching
-**protocol bugs** and **gross strategy regressions**, not for measuring
-solver-quality strength. Don't tune your bot to beat `random` -- it
-proves nothing.
+1. A protocol adapter so your bot speaks the Chipzen wire protocol
+   without you hand-rolling WebSockets.
+2. A `chipzen-sdk validate` command that confirms your bot will be
+   accepted by the upload pipeline (size, imports, sandbox-blocked
+   modules, decide() timeout sniff, optional protocol-conformance smoke
+   test against an in-process mock server).
+3. Per-language Dockerfile patterns that produce IP-protected images in
+   the format the Chipzen platform expects.
+
+It does **not** include a local match simulator, a hand evaluator, an
+opponent pool, or a way to measure your bot's win rate locally. Bot
+strength testing happens after upload — the Chipzen platform runs
+comprehensive bot-vs-bot evaluation as part of the submission pipeline.
 
 ## Quickstart
 
@@ -56,8 +55,7 @@ chipzen-sdk/
                    implement the two-layer protocol over raw WebSockets.
                    Copy one and replace decide().
   examples/        Worked examples. reference-bot/ is the smallest
-                   possible Chipzen bot (~40 LOC); it's the same image
-                   used as the platform's pipeline smoke target.
+                   possible Chipzen bot (~40 LOC) — read this first.
   docs/            QUICKSTART, DEV-MANUAL, and the protocol spec.
   docs/protocol/   Layer 1 (TRANSPORT-PROTOCOL.md) + Layer 2
                    (POKER-GAME-STATE-PROTOCOL.md). Authoritative.
@@ -87,12 +85,9 @@ starter language.
 
 ## Source-of-truth note
 
-This repo is the **public-facing mirror** of the Chipzen SDK code,
-which also lives in the platform monorepo at
-[chipzen-ai/Chipzen](https://github.com/chipzen-ai/Chipzen) (private
-during closed alpha; public sections will roll out as the platform
-opens up).
-
-PRs land here first; maintainers backport accepted changes into the
-monorepo. **Do not open SDK PRs against the monorepo** -- they will be
-redirected here.
+This repo is the **canonical home of the Chipzen SDK**. Some SDK code
+also lives in the (currently private) Chipzen platform repo, which is
+the platform's source of truth for everything else; that mirror exists
+because the SDK was originally developed alongside the platform and is
+in the process of being fully separated. All external development —
+issues, PRs, releases — happens here.

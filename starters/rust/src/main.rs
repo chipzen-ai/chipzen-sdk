@@ -1,8 +1,8 @@
 //! Chipzen starter bot — tight-aggressive preflop, check-call postflop.
 //!
 //! Implements the Chipzen two-layer protocol:
-//!   Layer 1 (Transport): docs/arch/TRANSPORT-PROTOCOL.md
-//!   Layer 2 (Poker):     docs/arch/POKER-GAME-STATE-PROTOCOL.md
+//!   Layer 1 (Transport): docs/protocol/TRANSPORT-PROTOCOL.md
+//!   Layer 2 (Poker):     docs/protocol/POKER-GAME-STATE-PROTOCOL.md
 //!
 //! Usage:  cargo run -- ws://localhost:8001/ws/match/{match_id}/bot
 //! Env:    CHIPZEN_WS_URL    — WebSocket URL (alternative to CLI arg)

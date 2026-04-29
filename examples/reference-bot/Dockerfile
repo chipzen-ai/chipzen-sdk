@@ -2,14 +2,12 @@
 #
 # Reference "always-check-or-fold" bot image.
 #
-# Intentionally minimal. This is the sanity target for load tests, the
-# upload-pipeline smoke test, and the starter example referenced from the
-# dev quickstart. The whole point of the image is that it is tiny,
-# deterministic, and does nothing interesting -- check when you can,
-# otherwise fold.
+# Intentionally minimal: it is tiny, deterministic, and does nothing
+# interesting — check when you can, otherwise fold. New developers read
+# this first; a fuller integration comes after.
 #
-# Contrast with the PluriBot image (numpy/scipy + a 900k CFR checkpoint,
-# ~136 MB compressed); this one stays under 50 MB compressed.
+# Stays under 50 MB compressed (Alpine base, pure-Python deps, no
+# checkpoints or native extensions).
 #
 # Build (from this directory):
 #   docker build -t reference-bot:test .
@@ -46,11 +44,10 @@ RUN pip install chipzen-bot \
 COPY bot.py /bot/bot.py
 
 # -----------------------------------------------------------------------------
-# 3. Non-root user. The platform's upload pipeline adds seccomp, --read-only,
-#    cap-drop, and --user 10001:10001 on top of this; keeping the image
-#    unprivileged is defense in depth. uid 10001 matches the executor's
-#    --user flag. The container's root FS is read-only at runtime so /bot
-#    ownership is symbolic -- the only writable surface is /tmp tmpfs.
+# 3. Non-root user (defense in depth). The Chipzen runtime additionally
+#    applies seccomp, cap-drop, and a read-only root FS; keeping the image
+#    itself unprivileged means it works the same way locally and in
+#    production. The only writable surface at runtime is /tmp (tmpfs).
 # -----------------------------------------------------------------------------
 RUN adduser -D -u 10001 -s /bin/sh bot \
     && chown -R bot:bot /bot

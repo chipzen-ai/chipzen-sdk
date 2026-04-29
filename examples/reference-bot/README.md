@@ -1,17 +1,11 @@
 # Reference bot (`reference-bot`)
 
 A deliberately minimal Chipzen bot that **always checks when legal,
-otherwise folds**. It exists for three reasons:
-
-1. **Starter example.** ~40 lines of Python on top of the public
-   `chipzen-bot` SDK. New developers read this first, *then* a fuller
-   integration if they want to see one.
-2. **Load-test sanity target.** Decision cost is effectively zero, so
-   the bot itself is never the bottleneck when measuring the platform's
-   N-concurrent-match latency.
-3. **Pipeline smoke target.** Post-deploy checks upload this image,
-   wait for `approved`, play a 10-hand match against it, and assert no
-   server timeouts or safe-default fallbacks.
+otherwise folds**. ~40 lines of Python on top of the public
+`chipzen-bot` SDK. New developers read this first, *then* a fuller
+integration if they want to see one. Decision cost is effectively
+zero, so the bot is also useful as a baseline for measuring your own
+bot's overhead.
 
 ## What's in the image
 
