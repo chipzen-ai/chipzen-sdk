@@ -56,11 +56,13 @@ chipzen-sdk/
                    a validate CLI / library, and an IP-protected
                    Dockerfile recipe. Currently placeholders — see
                    each package README for its target ship phase.
-  starters/        Language starters that implement the two-layer
-                   protocol over raw WebSockets. Useful as a reference
-                   for the protocol; will be superseded by the thin
-                   SDK-based starters under packages/<lang>/starters/
-                   as each language adapter ships.
+  starters/        Per-language scaffolds. The Python starter has
+                   moved to packages/python/starters/python/ now that
+                   the SDK has shipped (it compiles bot.py to a Cython
+                   .so for IP-protected uploads). The JS and Rust
+                   starters here are still raw-WebSocket protocol
+                   references and will move into their own packages
+                   once each adapter ships.
   examples/        Worked examples. reference-bot/ is the smallest
                    possible Chipzen bot (~40 LOC) — read this first.
   docs/            QUICKSTART, DEV-MANUAL, and the protocol spec.
