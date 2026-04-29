@@ -1,22 +1,43 @@
 # Reference bot (`reference-bot`)
 
-A deliberately minimal Chipzen bot that **always checks when legal,
-otherwise folds**. ~40 lines of Python on top of the public
-`chipzen-bot` SDK. New developers read this first, *then* a fuller
-integration if they want to see one. Decision cost is effectively
-zero, so the bot is also useful as a baseline for measuring your own
-bot's overhead.
+A non-trivial **demonstration** Chipzen bot built on top of the
+public `chipzen-bot` SDK. ~250 lines of plain, readable Python that
+shows off everything the protocol exposes:
+
+- Per-match state via `on_match_start` (seat assignment).
+- Per-hand state via `on_round_start` (resets per-hand trackers).
+- Live observation via `on_turn_result` (counts opponent aggression
+  in the current hand).
+- Branching on `state.phase` for preflop vs. postflop.
+- Heuristic preflop bucketing using `state.hole_cards` (`premium` /
+  `strong` / `medium` / `weak`).
+- Made-hand class detection from `state.hole_cards` + `state.board`
+  (no pair / pair / two pair / trips+).
+- Action-history awareness — the per-hand counter is reconciled
+  against `state.action_history` for cross-validation.
+- Strict `state.valid_actions` and `min_raise`/`max_raise` checking
+  — the bot will never return an action the server hasn't offered.
+
+**It's not a strong bot.** It folds too much, doesn't bluff, ignores
+pot odds, and has no draw recognition. The point of this file is to
+show that the SDK can carry real strategy state cleanly, not to win
+matches. If you're starting your own bot, copy
+[`packages/python/starters/python/`](../../packages/python/starters/python/)
+— it's a thin scaffold with the IP-protected Cython Dockerfile.
 
 ## What's in the image
 
 - `python:3.11-alpine` base.
 - The `chipzen-bot` SDK installed from PyPI (pulls in `websockets`).
-- `bot.py` -- a ~40-line `ChipzenBot` subclass whose `decide()` is
-  `Action.check() if "check" in state.valid_actions else Action.fold()`.
+- `bot.py` — a ~250-line `ChipzenBot` subclass with lifecycle hooks,
+  preflop bucketing, postflop hand-class branching, and opponent
+  aggression tracking.
 - No checkpoints, no data files, no native deps.
 
-Target compressed size: **under 50 MB** via
-`docker save reference-bot:test | gzip`.
+Target compressed size: **well under 50 MB** via
+`docker save reference-bot:test | gzip` — this image stays small
+because the bot is pure Python with no model weights or numerical
+deps.
 
 ## Build
 
