@@ -25,19 +25,26 @@ Want more detail? Read the full developer manual at
 ```bash
 git clone https://github.com/chipzen-ai/chipzen-sdk.git
 cd chipzen-sdk
-ls examples/reference-bot/ starters/python/
+ls examples/reference-bot/ packages/python/starters/python/
 ```
 
 Expected:
 
 ```
-examples/reference-bot/: Dockerfile  README.md  bot.py
-starters/python/:        Dockerfile  bot.py     requirements.txt
+examples/reference-bot/:           Dockerfile  README.md  bot.py
+packages/python/starters/python/:  Dockerfile  README.md  bot.py  requirements.txt  .dockerignore
 ```
 
-`examples/reference-bot/` is our worked example. `starters/python/` is a
-scaffolded starter to copy for your own bot; JS and Rust starters live
-alongside it under `starters/`.
+`examples/reference-bot/` is our worked example.
+`packages/python/starters/python/` is the IP-protected starter you copy
+for your own bot — its Dockerfile compiles `bot.py` to a Cython `.so`
+so the runtime image contains no readable `.py` source for your
+strategy. See [`../packages/python/IP-PROTECTION.md`](../packages/python/IP-PROTECTION.md)
+for what that protects.
+
+JS and Rust starters live under `starters/javascript/` and
+`starters/rust/` for now and will move to their own packages once the
+JS and Rust adapters ship (Phase 2 / Phase 3).
 
 ## 3. Inspect the reference bot
 
@@ -156,8 +163,9 @@ documented in
 
 ## Where to go next
 
-- **Your own bot:** copy `starters/python/` (or `javascript/` /
-  `rust/`) and replace `decide()`.
+- **Your own bot:** copy `packages/python/starters/python/` (Python,
+  IP-protected via Cython) or `starters/javascript/` / `starters/rust/`
+  (raw-WebSocket pending their adapters), and replace `decide()`.
 - **Pre-upload check:** `chipzen-sdk validate ./my_bot/
   --check-connectivity` — see
   [`DEV-MANUAL.md` §4](DEV-MANUAL.md#4-testing-your-bot).
