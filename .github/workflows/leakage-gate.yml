@@ -1,0 +1,83 @@
+name: Leakage gate
+
+# Fails the build if a known internal-context phrase is reintroduced
+# anywhere in the repo. The Phase 0 voice/leakage cleanup PR removed
+# all of these; this workflow makes the cleanup permanent so a future
+# extraction from the platform monorepo doesn't quietly re-leak.
+#
+# To intentionally allow one of these strings (e.g. a doc that
+# legitimately discusses the platform monorepo's existence), edit the
+# `EXCLUDE` block below or move the file under one of the excluded
+# paths.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  grep:
+    name: Forbidden-phrase grep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Forbidden-phrase scan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Patterns that indicate internal-context leakage from the CZ
+          # platform monorepo. Update with care — every entry here is
+          # something a Phase 0 review explicitly judged "should not appear
+          # in a public OSS repo".
+          PATTERNS=(
+            'CZ#[0-9]'                  # internal Jira/issue prefix
+            'PluriBot'                  # downstream private bot, not part of SDK
+            'platform monorepo'         # internal-context phrase
+            'chipzen-sdk test'          # cut CLI subcommand (Decision A)
+            'chipzen[._]testing'        # cut local-match-simulator module
+            'docs/arch/'                # internal monorepo path; public is docs/protocol/
+          )
+
+          # Excluded from the scan:
+          #   .git           — not source
+          #   leakage-gate.yml (this file) — defines the patterns by name,
+          #                    so it self-matches by design
+          # `grep --exclude` matches basenames, not paths — both args here
+          # are basenames-only.
+          GREP_ARGS=(
+            --exclude-dir=.git
+            --exclude=leakage-gate.yml
+          )
+
+          fail=0
+          for pat in "${PATTERNS[@]}"; do
+            echo "::group::pattern: $pat"
+            if matches=$(grep -rEn "$pat" "${GREP_ARGS[@]}" . || true); [ -n "$matches" ]; then
+              echo "::error::Forbidden phrase reintroduced: '$pat'"
+              echo "$matches"
+              fail=1
+            else
+              echo "(clean)"
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "❌ One or more forbidden internal-context phrases were"
+            echo "   reintroduced. See the grouped output above for"
+            echo "   exact file:line locations."
+            echo ""
+            echo "   If a match is intentional, either rephrase or update"
+            echo "   the EXCLUDE list in this workflow (with a comment"
+            echo "   explaining why)."
+            exit 1
+          fi
+
+          echo "✅ All forbidden patterns absent."

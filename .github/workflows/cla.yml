@@ -6,11 +6,12 @@ on:
   pull_request_target:
     types: [opened, closed, synchronize]
 
+# pull_request_target runs with elevated permissions on PRs from forks.
+# Keep the surface minimal: only what the CLA action actually needs.
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
-  statuses: write
+  contents: write       # update .cla-signatures.json
+  pull-requests: write  # post the sign-CLA comment + the all-signed reply
+  statuses: write       # set the CLA check status on the PR
 
 jobs:
   cla:
@@ -18,7 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: CLA Assistant
-        uses: contributor-assistant/github-action@v2
+        # SHA pinned to v2.6.1 — bump in a single intentional commit when the
+        # action publishes a new release; never use floating tags here because
+        # this workflow runs with elevated pull_request_target permissions.
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
