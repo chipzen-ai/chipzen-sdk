@@ -100,6 +100,7 @@ def validate_bot(
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
     timeout_warn_ms: int = DEFAULT_TIMEOUT_WARN_MS,
     entry_point: str | None = None,
+    check_connectivity: bool = False,
 ) -> list[tuple[Severity, str, str]]:
     """Run all validation checks on a bot artifact.
 
@@ -108,6 +109,11 @@ def validate_bot(
         max_upload_bytes: Maximum allowed zip size in bytes.
         timeout_warn_ms: Warn if decide() takes longer than this (ms).
         entry_point: Override the entry point filename (default: auto-detect).
+        check_connectivity: When True, after the static + smoke checks pass,
+            additionally drive the bot through a canned protocol exchange
+            (handshake + one full hand + match_end) using an in-process mock
+            WebSocket. Reports protocol-conformance failures as additional
+            check entries. Pure connectivity — does not judge bot strength.
 
     Returns:
         List of (severity, check_name, message) tuples.
@@ -135,13 +141,17 @@ def validate_bot(
                 bot_dir = contents[0]
             else:
                 bot_dir = Path(tmpdir)
-            results.extend(_check_directory(bot_dir, entry_point, timeout_warn_ms))
+            results.extend(
+                _check_directory(bot_dir, entry_point, timeout_warn_ms, check_connectivity)
+            )
         finally:
             _shutil.rmtree(tmpdir, ignore_errors=True)
     elif bot_path.is_dir():
         # Check what the zip size would be
         results.extend(_check_dir_size(bot_path, max_upload_bytes))
-        results.extend(_check_directory(bot_path, entry_point, timeout_warn_ms))
+        results.extend(
+            _check_directory(bot_path, entry_point, timeout_warn_ms, check_connectivity)
+        )
     else:
         results.append(
             ("fail", "file_structure", f"Path not found or not a directory/zip: {bot_path}")
@@ -183,6 +193,7 @@ def _check_directory(
     bot_dir: Path,
     entry_point: str | None,
     timeout_warn_ms: int,
+    check_connectivity: bool = False,
 ) -> list[tuple[Severity, str, str]]:
     """Run all directory-level checks."""
     results: list[tuple[Severity, str, str]] = []
@@ -251,7 +262,71 @@ def _check_directory(
     # 7. Smoke test + timeout check
     results.extend(_smoke_test(bot_dir, ep, bot_class_name, timeout_warn_ms))
 
+    # 8. (Optional) Protocol-conformance check.
+    # Only run if the smoke test passed — if the bot can't even be
+    # instantiated and called once, the wire-level scenario can't tell
+    # us anything new and would just produce a noisier failure.
+    if check_connectivity:
+        smoke_passed = all(
+            sev != "fail" for sev, name, _ in results if name == "smoke_test"
+        )
+        if smoke_passed:
+            results.extend(_connectivity_check(bot_dir, ep, bot_class_name))
+        else:
+            results.append(
+                (
+                    "warn",
+                    "connectivity",
+                    "skipped — smoke_test did not pass; fix that first then re-run",
+                )
+            )
+
     return results
+
+
+def _connectivity_check(
+    bot_dir: Path,
+    entry_point: Path,
+    class_name: str,
+) -> list[tuple[Severity, str, str]]:
+    """Drive the bot through canned protocol exchanges via an in-process mock.
+
+    Re-imports the bot fresh (sys.path / sys.modules juggling) so this
+    runs against the same code the smoke test exercised and isn't holding
+    onto stale state from earlier checks.
+    """
+    from chipzen.conformance import run_conformance_checks
+
+    bot_dir_str = str(bot_dir)
+    added_to_path = False
+    if bot_dir_str not in sys.path:
+        sys.path.insert(0, bot_dir_str)
+        added_to_path = True
+
+    module_name = entry_point.stem
+    if module_name in sys.modules:
+        del sys.modules[module_name]
+
+    try:
+        module = importlib.import_module(module_name)
+        cls = getattr(module, class_name)
+        bot = cls()
+        checks = run_conformance_checks(bot)
+        return [(c.severity, c.name, c.message) for c in checks]
+    except Exception as exc:  # noqa: BLE001 — surface anything that goes wrong
+        return [
+            (
+                "fail",
+                "connectivity",
+                f"failed to load bot for connectivity check: "
+                f"{type(exc).__name__}: {exc}",
+            )
+        ]
+    finally:
+        if added_to_path and bot_dir_str in sys.path:
+            sys.path.remove(bot_dir_str)
+        if module_name in sys.modules:
+            del sys.modules[module_name]
 
 
 def _find_entry_point(bot_dir: Path, override: str | None) -> Path | None:
@@ -515,15 +590,18 @@ def validate_cli(args: list[str] | None = None) -> None:
         description="Validate a bot before uploading to the Chipzen platform",
         epilog=(
             "Checks performed:\n"
-            "  file_structure  Entry point file exists and is valid Python\n"
-            "  syntax          Python syntax check\n"
-            "  imports         Scan for blocked/restricted imports\n"
-            "  bot_class       Class inheriting from ChipzenBot/Bot exists\n"
-            "  decide_method   Bot class implements decide()\n"
-            "  requirements    Packages are in the platform allow-list\n"
-            "  smoke_test      Bot can be instantiated and returns an Action\n"
-            "  timeout         decide() completes within time limits\n"
-            "  size            Artifact size within upload limits\n"
+            "  file_structure         Entry point file exists and is valid Python\n"
+            "  syntax                 Python syntax check\n"
+            "  imports                Scan for blocked/restricted imports\n"
+            "  bot_class              Class inheriting from ChipzenBot/Bot exists\n"
+            "  decide_method          Bot class implements decide()\n"
+            "  requirements           Packages are in the platform allow-list\n"
+            "  smoke_test             Bot can be instantiated and returns an Action\n"
+            "  timeout                decide() completes within time limits\n"
+            "  size                   Artifact size within upload limits\n"
+            "  connectivity_full_match  (with --check-connectivity) Drive the bot\n"
+            "                         through a canned handshake + 1 hand + match_end\n"
+            "                         via an in-process mock WebSocket\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -552,6 +630,15 @@ def validate_cli(args: list[str] | None = None) -> None:
         help=f"Warn if decide() takes longer than this in ms (default: {DEFAULT_TIMEOUT_WARN_MS})",
     )
     parser.add_argument(
+        "--check-connectivity",
+        action="store_true",
+        help=(
+            "Drive the bot through a canned protocol exchange via an "
+            "in-process mock WebSocket (pure connectivity / wire-protocol "
+            "conformance — no judgement of strategy strength)"
+        ),
+    )
+    parser.add_argument(
         "--no-color",
         action="store_true",
         help="Disable colored output",
@@ -564,6 +651,7 @@ def validate_cli(args: list[str] | None = None) -> None:
         max_upload_bytes=parsed.max_size_mb * 1024 * 1024,
         timeout_warn_ms=parsed.timeout_warn_ms,
         entry_point=parsed.entry_point,
+        check_connectivity=parsed.check_connectivity,
     )
 
     _print_results(results, color=not parsed.no_color)
