@@ -1,0 +1,110 @@
+name: Release Python
+
+# Builds and publishes the chipzen-bot Python package to PyPI.
+#
+# Triggers:
+#   1. Push of a tag matching `python-v*` (e.g. `python-v0.2.0`) — the
+#      normal release path. Tag should match the version in
+#      packages/python/pyproject.toml.
+#   2. Manual workflow_dispatch — for first-time releases or
+#      emergencies. Use the `dry_run` input to build + upload the
+#      artifacts without publishing.
+#
+# Auth model:
+#   PyPI Trusted Publishers (OIDC). No PYPI_TOKEN secret is needed.
+#   The trusted publisher must be configured on PyPI before the first
+#   real publish — see packages/python/RELEASING.md for the one-time
+#   setup steps.
+
+on:
+  push:
+    tags:
+      - "python-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only, don't publish (for inspecting the artifact)."
+        type: boolean
+        default: false
+      target_index:
+        description: "Where to publish."
+        type: choice
+        default: "pypi"
+        options:
+          - pypi
+          - testpypi
+
+# Single in-flight publish per index — avoids racing two parallel
+# tag pushes into PyPI (would 409 on the second one anyway, but the
+# explicit lock makes the failure mode clearer).
+concurrency:
+  group: release-python-${{ inputs.target_index || 'pypi' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tooling
+        run: pip install --upgrade build
+      - name: Build sdist + wheel
+        working-directory: packages/python
+        run: python -m build --sdist --wheel --outdir dist/
+      - name: Sanity-check produced artifacts
+        working-directory: packages/python
+        run: |
+          ls -la dist/
+          # Ensure both an sdist (.tar.gz) and a wheel (.whl) were produced.
+          test -n "$(ls dist/*.tar.gz 2>/dev/null)" || { echo "::error::no sdist produced"; exit 1; }
+          test -n "$(ls dist/*.whl 2>/dev/null)" || { echo "::error::no wheel produced"; exit 1; }
+      - name: Upload artifacts for downstream jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: chipzen-bot-dist
+          path: packages/python/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to ${{ inputs.target_index || 'pypi' }}
+    needs: build
+    # Skip publish entirely on workflow_dispatch with dry_run=true.
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    environment:
+      # The named environment is what PyPI Trusted Publishers binds
+      # against — see RELEASING.md. The same env name must be used in
+      # the PyPI publisher configuration.
+      name: ${{ inputs.target_index || 'pypi' }}
+      url: ${{ inputs.target_index == 'testpypi' && 'https://test.pypi.org/p/chipzen-bot' || 'https://pypi.org/p/chipzen-bot' }}
+    permissions:
+      # OIDC token issuance — required for Trusted Publishers.
+      id-token: write
+      contents: read
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: chipzen-bot-dist
+          path: dist/
+      - name: List artifacts
+        run: ls -la dist/
+      - name: Publish to PyPI
+        # SHA pinned to v1.14.0 (https://github.com/pypa/gh-action-pypi-publish).
+        # Bump in a single intentional commit when pypa publishes a new release.
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        with:
+          packages-dir: dist/
+          repository-url: ${{ inputs.target_index == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+          # Defaults from gh-action-pypi-publish v1.14.0+:
+          #   verbose: true, print-hash: true
