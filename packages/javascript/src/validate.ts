@@ -11,6 +11,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { type GameState } from "./models.js";
+import { runConformanceChecks } from "./conformance.js";
+import type { Bot } from "./bot.js";
 
 const VALID_ACTION_KINDS = new Set(["fold", "check", "call", "raise", "all_in"]);
 
@@ -46,6 +48,14 @@ export interface ValidateOptions {
   maxUploadBytes?: number;
   /** Warn if `decide()` takes longer than this (ms). */
   timeoutWarnMs?: number;
+  /**
+   * If true, run the protocol-conformance harness after the smoke test
+   * passes — drives the bot through one full canned match (handshake +
+   * 1 hand + match_end) against an in-process mock WebSocket.
+   */
+  checkConnectivity?: boolean;
+  /** Per-conformance-scenario timeout (ms). Default 10s. */
+  conformanceTimeoutMs?: number;
 }
 
 export const DEFAULT_MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
@@ -119,7 +129,15 @@ export async function validateBot(
   }
 
   results.push(...(await checkDirectorySize(botPath, maxBytes)));
-  results.push(...(await checkDirectory(botPath, options.entryPoint, timeoutWarn)));
+  results.push(
+    ...(await checkDirectory(
+      botPath,
+      options.entryPoint,
+      timeoutWarn,
+      options.checkConnectivity ?? false,
+      options.conformanceTimeoutMs ?? 10_000,
+    )),
+  );
   return results;
 }
 
@@ -156,6 +174,8 @@ async function checkDirectory(
   dir: string,
   entryPointOverride: string | undefined,
   timeoutWarnMs: number,
+  checkConnectivity: boolean,
+  conformanceTimeoutMs: number,
 ): Promise<ValidationResult[]> {
   const results: ValidationResult[] = [];
 
@@ -195,7 +215,9 @@ async function checkDirectory(
   if (decideResult.severity === "fail") return results;
 
   // smoke_test + timeout — dynamic import + invoke decide() once.
-  results.push(...(await smokeTest(entry, botClassName, timeoutWarnMs)));
+  results.push(
+    ...(await smokeTest(entry, botClassName, timeoutWarnMs, checkConnectivity, conformanceTimeoutMs)),
+  );
 
   return results;
 }
@@ -340,6 +362,8 @@ async function smokeTest(
   entry: string,
   className: string,
   timeoutWarnMs: number,
+  checkConnectivity: boolean,
+  conformanceTimeoutMs: number,
 ): Promise<ValidationResult[]> {
   const results: ValidationResult[] = [];
 
@@ -428,6 +452,14 @@ async function smokeTest(
       name: "timeout",
       message: `decide() completed in ${elapsedMs.toFixed(1)} ms`,
     });
+  }
+
+  if (checkConnectivity) {
+    // Reuse the bot instance — same shape the user's production code does.
+    const conformance = await runConformanceChecks(bot as unknown as Bot, {
+      timeoutMs: conformanceTimeoutMs,
+    });
+    results.push(...conformance);
   }
 
   return results;

@@ -120,6 +120,8 @@ async function validateCli(args: string[]): Promise<void> {
       `${DEFAULT_MAX_UPLOAD_BYTES / (1024 * 1024)})`);
     console.log("  --timeout-warn-ms <int>   Warn-threshold for decide() in ms (default: " +
       `${DEFAULT_TIMEOUT_WARN_MS})`);
+    console.log("  --check-connectivity      Run the protocol-conformance harness");
+    console.log("                            (drives the bot through 1 canned match)");
     console.log("  --no-color                Disable colored output");
     return;
   }
@@ -130,6 +132,7 @@ async function validateCli(args: string[]): Promise<void> {
       "entry-point": { type: "string" },
       "max-size-mb": { type: "string" },
       "timeout-warn-ms": { type: "string" },
+      "check-connectivity": { type: "boolean" },
       "no-color": { type: "boolean" },
     },
     allowPositionals: true,
@@ -152,6 +155,7 @@ async function validateCli(args: string[]): Promise<void> {
     entryPoint: values["entry-point"],
     maxUploadBytes: maxBytes,
     timeoutWarnMs: timeoutWarn,
+    checkConnectivity: values["check-connectivity"] ?? false,
   });
 
   printResults(results, !values["no-color"]);

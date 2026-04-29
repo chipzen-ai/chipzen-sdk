@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { scaffoldBot } from "../src/scaffold.js";
+import { scaffoldBot, _DOCKERFILE_TEMPLATE_FOR_TEST } from "../src/scaffold.js";
 
 let workDir: string;
 
@@ -63,5 +63,27 @@ describe("scaffoldBot", () => {
     await expect(scaffoldBot("epsilon_bot", { parentDir: workDir })).rejects.toThrow(
       /already exists/,
     );
+  });
+
+  it("scaffolded Dockerfile is the IP-protected Bun-compile multi-stage build", async () => {
+    const projectDir = await scaffoldBot("zeta_bot", { parentDir: workDir });
+    const dockerfile = await fs.readFile(path.join(projectDir, "Dockerfile"), "utf-8");
+    expect(dockerfile).toMatch(/FROM oven\/bun:1-debian AS builder/);
+    expect(dockerfile).toMatch(/bun build --compile --minify --sourcemap=none/);
+    expect(dockerfile).toMatch(/rm bot\.js/);
+    expect(dockerfile).toMatch(/FROM debian:12-slim/);
+    expect(dockerfile).toMatch(/COPY --from=builder \/build\/bot \/bot\/bot/);
+  });
+
+  it("scaffolded Dockerfile is byte-identical to the canonical starter's Dockerfile", async () => {
+    // The scaffold and the canonical starter MUST stay in sync — both
+    // are user-facing surfaces that document the same build recipe. If
+    // this test fails, update one to match the other (or update the
+    // shared template in scaffold.ts and re-mirror it to the starter).
+    const starterDockerfile = await fs.readFile(
+      path.resolve(__dirname, "..", "starters", "javascript", "Dockerfile"),
+      "utf-8",
+    );
+    expect(starterDockerfile).toBe(_DOCKERFILE_TEMPLATE_FOR_TEST);
   });
 });

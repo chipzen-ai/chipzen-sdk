@@ -39,7 +39,7 @@ export async function scaffoldBot(name: string, options: ScaffoldOptions = {}): 
 
   await fs.writeFile(path.join(projectDir, "bot.js"), BOT_TEMPLATE, "utf-8");
   await fs.writeFile(path.join(projectDir, "package.json"), packageJsonTemplate(name), "utf-8");
-  await fs.writeFile(path.join(projectDir, "Dockerfile"), DOCKERFILE_PLACEHOLDER, "utf-8");
+  await fs.writeFile(path.join(projectDir, "Dockerfile"), DOCKERFILE_TEMPLATE, "utf-8");
   await fs.writeFile(path.join(projectDir, ".dockerignore"), DOCKERIGNORE, "utf-8");
   await fs.writeFile(path.join(projectDir, ".gitignore"), GITIGNORE, "utf-8");
   await fs.writeFile(path.join(projectDir, "README.md"), readmeTemplate(name), "utf-8");
@@ -80,10 +80,12 @@ export async function main() {
   });
 }
 
-// Top-level await is fine in ESM — keep main() exported so the
-// IP-protected Dockerfile (Phase 2 PR 3) can also call it from a
-// compiled binary entry point.
-if (import.meta.url === \`file://\${process.argv[1]}\`) {
+// Run main() when this file is the entry point — covers both
+// \`node bot.js\` (Node sets import.meta.url to a file:// URL matching
+// argv[1]) and \`bun build --compile\` binaries (Bun sets
+// import.meta.main on the entry module). Importing from a test file
+// makes both checks false so MyBot can be exercised in isolation.
+if (import.meta.main || import.meta.url === \`file://\${process.argv[1]}\`) {
   await main();
 }
 
@@ -113,21 +115,87 @@ function packageJsonTemplate(name: string): string {
   ) + "\n";
 }
 
-const DOCKERFILE_PLACEHOLDER = `# Replace this with the IP-protected starter Dockerfile from
-# packages/javascript/starters/javascript/Dockerfile (ships in
-# Phase 2 PR 3 — bun build --compile multi-stage that emits a single
-# binary with no readable .js source for your strategy).
+// Kept identical to packages/javascript/starters/javascript/Dockerfile so a
+// scaffolded project and the canonical starter directory ship the same recipe.
+// A test enforces this invariant.
+const DOCKERFILE_TEMPLATE = `# syntax=docker/dockerfile:1.7
 #
-# For now, a minimal Node-based development image:
+# IP-protected Chipzen JavaScript bot image.
+#
+# Multi-stage build that bundles bot.js + the SDK into a single
+# statically-linked binary via \`bun build --compile\` in the builder
+# stage, then ships only that binary in the runtime stage. The runtime
+# image contains no readable .js source for your strategy code.
+#
+# See ../../IP-PROTECTION.md for what this protects (and what it doesn't).
+#
+# Build:   docker build -t my-bot:test .
+# Export:  docker save my-bot:test | gzip > my-bot.tar.gz
+#
+# Build context for this directory should be small (bot.js +
+# package.json + this file). The .dockerignore alongside this file
+# keeps node_modules, caches, and lockfile metadata out.
 
-FROM node:20-slim
+# -----------------------------------------------------------------------------
+# Stage 1: Bun bundle + compile. The .js source lives only in this stage and
+# is discarded before the runtime stage starts.
+# -----------------------------------------------------------------------------
+# Base pinned by tag — Dependabot can rotate to digest pinning later. Tag:
+# oven/bun:1-debian (glibc-based; the runtime stage below also uses glibc
+# so the compiled binary's dynamic linker can find what it needs).
+FROM oven/bun:1-debian AS builder
+
+WORKDIR /build
+
+# Bring in the bot source + dependency manifest. Only these are copied —
+# keep the build context narrow so the .dockerignore is the only allowlist.
+COPY package.json bot.js ./
+
+# Resolve @chipzen-ai/bot + ws so \`bun build\` can bundle them. We don't
+# need a lockfile committed; the registry pin in package.json is enough
+# for a fresh install at build time.
+RUN bun install --production
+
+# Compile bot.js -> /build/bot. \`--compile\` emits a single executable
+# that bundles the JS, all deps, and the Bun runtime statically.
+# \`--minify\` shrinks output; \`--sourcemap=none\` excludes maps so the
+# strategy isn't trivially readable from inside the binary.
+RUN bun build --compile --minify --sourcemap=none --target=bun-linux-x64 \\
+        bot.js --outfile=/build/bot \\
+    && rm bot.js \\
+    && rm -rf node_modules
+
+# -----------------------------------------------------------------------------
+# Stage 2: Runtime. Only the compiled binary + ENTRYPOINT.
+# No .js source for the bot's strategy is present.
+# -----------------------------------------------------------------------------
+# Base pinned by tag — Dependabot can rotate to digest pinning later. Tag:
+# debian:12-slim (matches the glibc the Bun --compile output expects).
+FROM debian:12-slim
+
+# CA certs are needed for outbound TLS (the platform's WebSocket
+# endpoint is wss://). dumb-init reaps any subprocesses cleanly on
+# container exit; tiny but useful.
+RUN apt-get update \\
+    && apt-get install -y --no-install-recommends ca-certificates dumb-init \\
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /bot
-COPY package.json ./
-RUN npm install --production
-COPY bot.js ./
-USER node
-ENTRYPOINT ["node", "bot.js"]
+
+# Copy ONLY the compiled binary from the builder stage.
+COPY --from=builder /build/bot /bot/bot
+RUN chmod +x /bot/bot
+
+# Run as non-root (defense in depth — the platform also applies seccomp
+# and cap-drop on top of this).
+RUN groupadd --system --gid 10001 bot \\
+    && useradd --system --uid 10001 --gid bot --home-dir /bot --shell /usr/sbin/nologin bot \\
+    && chown -R bot:bot /bot
+USER 10001
+
+ENTRYPOINT ["dumb-init", "/bot/bot"]
 `;
+export const _DOCKERFILE_TEMPLATE_FOR_TEST = DOCKERFILE_TEMPLATE;
 
 const DOCKERIGNORE = `node_modules/
 .git/

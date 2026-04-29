@@ -23,10 +23,13 @@ python bot.py ws://localhost:8001/ws/match/{match_id}/bot
 
 ### JavaScript
 
+The JavaScript starter has moved to
+[`../packages/javascript/starters/javascript/`](../packages/javascript/starters/javascript/)
+now that the JS SDK ships on npm. Use it via:
+
 ```bash
-cd javascript
-npm install
-node bot.js ws://localhost:8001/ws/match/{match_id}/bot
+npm install @chipzen-ai/bot
+chipzen-sdk init my-bot   # scaffold a project that uses the SDK
 ```
 
 ### Rust
@@ -62,7 +65,7 @@ docker build -t my-bot .
 docker run --rm -e CHIPZEN_TOKEN=... my-bot ws://host.docker.internal:8001/ws/match/{match_id}/bot
 
 # JavaScript example
-cd javascript
+cd ../packages/javascript/starters/javascript
 docker build -t my-bot .
 docker run --rm -e CHIPZEN_TOKEN=... my-bot ws://host.docker.internal:8001/ws/match/{match_id}/bot
 

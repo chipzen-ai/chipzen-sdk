@@ -35,3 +35,8 @@ export {
   type ValidateOptions,
   type ValidationResult,
 } from "./validate.js";
+export {
+  runConformanceChecks,
+  type ConformanceCheck,
+  type RunConformanceOptions,
+} from "./conformance.js";
