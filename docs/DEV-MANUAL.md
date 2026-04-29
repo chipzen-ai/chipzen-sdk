@@ -46,9 +46,8 @@ The Python SDK is published as `chipzen-bot` on PyPI. The public surface is
 intentionally small: one abstract base class, one `GameState` dataclass, one
 `Action` dataclass, and a runner.
 
-Source of truth for the signatures in this section is the published SDK
-package; the in-repo source lives in the platform monorepo at
-`sdk/src/chipzen/{bot,models,client}.py`.
+Source of truth for the signatures in this section is the published
+`chipzen-bot` package on PyPI.
 
 JavaScript and Rust starters under [`starters/`](../starters/) implement the
 same protocol over raw WebSockets. This manual focuses on the Python SDK
@@ -77,8 +76,7 @@ When you build a Chipzen bot there are three distinct pieces:
 
 Subclass `chipzen.Bot` (alias for `chipzen.bot.ChipzenBot`). Every method
 below except `decide()` is optional and defaults to a no-op. Signatures are
-quoted verbatim from the SDK source (`sdk/src/chipzen/bot.py` in the
-platform monorepo).
+quoted verbatim from `chipzen.bot.ChipzenBot` in the published SDK.
 
 #### `decide(state: GameState) -> Action` — required
 
@@ -180,8 +178,7 @@ summary to your bot's log.
 ### 2.3 `GameState`
 
 Built from the `turn_request` message. The full definition is in
-`sdk/src/chipzen/models.py` (platform monorepo) / `chipzen.models` in the
-installed package:
+`chipzen.models` in the installed SDK:
 
 | Field | Type | Description |
 |---|---|---|
@@ -265,14 +262,14 @@ with `pending_request`, and clean exit on `match_end`.
 
 ### 2.6 CLI (`chipzen-sdk`)
 
-See [`../README.md`](../README.md) for the full CLI reference. The
-three commands you will use most:
+The CLI surface is intentionally small — two commands:
 
 | Command | Purpose |
 |---|---|
-| `chipzen-sdk init <name>` | Scaffold a new bot project. |
-| `chipzen-sdk test <module:Class> --opponent random --hands 100` | Run your bot locally against a built-in opponent (no server). |
-| `chipzen-sdk validate <path>` | Run the same checks the upload pipeline runs: size, entry point, imports, smoke test. |
+| `chipzen-sdk init <name>` | Scaffold a new bot project from a starter template. |
+| `chipzen-sdk validate <path>` | Run the same checks the upload pipeline runs: size, entry point, imports, decide() timeout sniff. The supported go/no-go before docker packaging. |
+
+Both commands are documented in `chipzen-sdk <command> --help`.
 
 ---
 
@@ -333,10 +330,8 @@ your information):
   includes `code`, `message`. The SDK logs at `ERROR`. Not all errors are
   fatal — keep reading messages.
 
-The full error-code taxonomy is sourced from the TRANSPORT spec
-([`protocol/TRANSPORT-PROTOCOL.md`](protocol/TRANSPORT-PROTOCOL.md)); a
-standalone error-codes summary lives in `docs/ERROR-CODES.md` in the
-platform monorepo.
+The full error-code taxonomy is sourced from the TRANSPORT spec at
+[`protocol/TRANSPORT-PROTOCOL.md`](protocol/TRANSPORT-PROTOCOL.md).
 
 ### 3.4 Action vocabulary (Layer 2)
 
@@ -362,79 +357,58 @@ them from a bot.
 
 ## 4. Testing your bot
 
-Run your bot against a built-in opponent locally, without a server or
-Docker. The harness lives at `chipzen.testing` (`sdk/src/chipzen/testing.py`
-in the platform monorepo).
+The SDK's job here is narrow and explicit: give you a fast **go/no-go
+conformance check** so you can be confident your bot will be accepted by
+the upload pipeline and survive its first hand without an obvious wire
+error. Bot strength testing — playing your bot against opponents to
+measure win rate — is **not** an SDK concern. The platform runs
+comprehensive bot-vs-bot evaluation after upload.
 
-### 4.1 Programmatic API
-
-This is a verbatim 20-line example (verified to run against SDK
-`0.2.0`):
-
-```python
-from chipzen import Bot, GameState, Action
-from chipzen.testing import run_local_match
-from chipzen.examples.call_bot import CallBot
-
-class MyBot(Bot):
-    def decide(self, state: GameState) -> Action:
-        if "check" in state.valid_actions:
-            return Action.check()
-        return Action.call()
-
-result = run_local_match(
-    MyBot(),
-    CallBot(),
-    num_hands=10,
-    seed=42,
-    verbose=False,
-)
-print(result.summary())
-print(f"Your win rate: {result.win_rate(0):.1%}")
-```
-
-Expected output (for SDK `0.2.0` with `seed=42`):
-
-```
-Match complete: 10 hands played
-  Seat 0: +200 chips, 6 wins
-  Seat 1: -200 chips, 4 wins
-Your win rate: 60.0%
-```
-
-`MatchResult` exposes `win_rate(seat)`, `win_rate_ci(seat, z=1.96)` for
-Wilson score 95% CIs, `net_chips`, `final_stacks`, and per-street
-`action_stats`.
-
-### 4.2 CLI
-
-Same thing, from a shell:
+### 4.1 What `validate` checks
 
 ```bash
-chipzen-sdk test my_bot:MyBot --opponent random --hands 200 --seed 42
+chipzen-sdk validate ./my_bot/
 ```
 
-Available opponents: `random`, `call`, `tight`. The CLI prints a summary
-with colored win rates, 95% CIs, net chips, and a per-street action
-breakdown for your bot.
+`validate` runs the same pre-upload checks the platform performs and
+exits non-zero on any failure. Categories:
 
-### 4.3 Limits of local testing
+- **Image / size budget** — bot directory size, presence of an entry
+  point, no source files larger than the per-tier upload cap.
+- **Imports** — your bot module imports cleanly under the same Python
+  version the platform uses, with only the SDK + your stated deps on the
+  path.
+- **Sandbox-blocked modules** — your code doesn't import modules the
+  runtime sandbox forbids (disk-mutating utilities, network stacks
+  outside `websockets`, subprocess spawners, etc.). Failing here means
+  the bot would `bot_container_failed_to_attach` in production.
+- **`decide()` timeout sniff** — invokes `decide()` once with a canned
+  state and warns if the call took longer than 100 ms (warn) or 500 ms
+  (fail) on the test machine. Real production budget is per-tier (§6.2).
 
-The harness is a simplified engine. It differs from production in three
-ways you should care about:
+### 4.2 Connectivity smoke test
 
-1. **Showdown evaluation is naive** — "sum of top-5 rank values", not a
-   real hand evaluator. Matchups where a lower-ranked hand beats a higher
-   one (flushes, straights) score wrong. Use it to compare bots over 500+
-   hands; don't trust individual hand outcomes.
-2. **No blinds structure** — SB/BB are fixed, no antes, no escalation. For
-   tournament-style testing you need a real server.
-3. **Wire protocol is bypassed** — `round_id` and `request_id` on
-   `GameState` are empty strings. Don't write bot logic that requires
-   these fields to be present locally.
+```bash
+chipzen-sdk validate ./my_bot/ --check-connectivity
+```
 
-For full-fidelity testing, upload to the local Chipzen stack and play
-against the reference bot or PluriBot.
+Layered on top of 4.1: spins up an in-process mock WebSocket server and
+drives your bot through:
+
+- The Layer 1 handshake (`authenticate` / server `hello` / client
+  `hello` / `supported_versions`).
+- A canned Layer 2 hand: `hand_start` → `turn_request` → `turn_action`
+  echo-back → `phase_change` → `turn_result` → `round_result` → `game_end`.
+- Adversarial inputs: a malformed envelope, an `action_rejected` to
+  exercise your retry path, a deliberate timeout overrun, an unknown
+  message type.
+
+The mock judges only protocol conformance — never strategy. A pass means
+"the upload pipeline will not reject this on protocol grounds"; it does
+not mean "your bot is good".
+
+This is the supported test surface. Run it as the final step before
+`docker build`.
 
 ---
 
@@ -459,14 +433,12 @@ Raw access: `tail -f data/bot_logs/<match_id>-<pid>.log`.
 
 UI access: after the match ends, open the match in your replay list,
 scroll to the "Developer tools" row, click "Bot logs · seat N" to open
-the log drawer (#1074). New in #1100: a "Decisions" tab parses the log
-into a timing table.
+the log drawer. A "Decisions" tab parses the log into a timing table.
 
-### 5.2 `DECIDE` trace format (#1075)
+### 5.2 `DECIDE` trace format
 
-The PluriBot adapter and any adapter that opts in emits one structured
-INFO line per decision. The platform-side parser lives at
-`src/chipzen/bots/log_parser.py` in the platform monorepo:
+If your adapter opts in, you can emit one structured INFO line per
+decision. The platform's log parser recognizes this format:
 
 ```
 DECIDE match=<id> hand=<n> phase=<preflop|flop|turn|river> \
@@ -479,7 +451,7 @@ DECIDE match=<id> hand=<n> phase=<preflop|flop|turn|river> \
 Key timing fields:
 
 - **`elapsed_ms`** — your `decide()`'s total wall time.
-- **`drain_ms`** (#1093) — time spent processing queued `on_turn_result`
+- **`drain_ms`** — time spent processing queued `on_turn_result`
   / `on_phase_change` events before search could start. If this is a
   sizable fraction of `elapsed_ms`, your pre-decide bookkeeping is your
   bottleneck, not your strategy code.
@@ -495,7 +467,7 @@ FALLBACK match=<id> hand=<n> phase=<...> reason=<...> \
 Write your own bots to the same kv format if you want the UI parser to
 pick them up.
 
-### 5.3 Server-side round-trip line (#1092)
+### 5.3 Server-side round-trip line
 
 Emitted by the game engine at `WARN` when the round-trip exceeds 80% of
 the budget, otherwise `DEBUG`:
@@ -513,7 +485,7 @@ The round-trip lines go to the API process's own stdout/structlog, not
 the per-match container log. Grep the API logs for `round-trip for match
 <short_match_id_prefix>`.
 
-### 5.4 Parsed-decisions tab (#1100)
+### 5.4 Parsed-decisions tab
 
 The "Decisions" tab in the log drawer renders `DECIDE` / `FALLBACK` rows
 joined with server-side round-trip lines into a table:
@@ -524,7 +496,7 @@ Rows where `round_trip_ms > 0.8 * budget_ms` highlight amber; rows where
 `elapsed_ms > timeout_ms` (fallback fired) are red. Backend source: `GET
 /matches/{match_id}/bots/{participant_id}/logs?format=parsed`.
 
-### 5.5 `bot_error` WebSocket event (#1082)
+### 5.5 `bot_error` WebSocket event
 
 When your bot fails visibly (container never attached, disconnected
 mid-match, decision timeout, invalid action, server-side exception), the
@@ -542,7 +514,7 @@ they are not playing against the bot's real strategy. Structure:
 }
 ```
 
-Reasons (from `chipzen.game.bot_errors`):
+Reasons:
 
 | `reason` | Meaning |
 |---|---|
@@ -553,15 +525,14 @@ Reasons (from `chipzen.game.bot_errors`):
 | `bot_exception` | Server-side exception in the bridge (rare). |
 
 After three consecutive errors in one match, the server aborts with
-`reason=bot_failed` (tunable via `settings.bot_error_abort_threshold`).
-If you see this repeatedly in alpha, file an issue — the server should
-make the reason loud enough that you don't have to guess.
+`reason=bot_failed`. If you see this repeatedly, file an issue — the
+server should make the underlying reason loud enough that you don't
+have to guess.
 
-### 5.6 Per-bot dashboard (#1099)
+### 5.6 Per-bot dashboard
 
-Aggregated cross-match view of timing, fallback counts, `bot_error`
-events. Forward link; lands under #1099. Until then, use the per-match
-drawer plus the API endpoint in §5.4.
+Aggregated cross-match view of timing, fallback counts, and `bot_error`
+events. Use the per-match drawer plus the API endpoint in §5.4.
 
 ---
 
@@ -574,7 +545,7 @@ breakdown below.
 
 ### 6.1 Budget breakdown (observed)
 
-Measured on the PluriBot adapter over real matches:
+Measured on a non-trivial bot adapter over real matches:
 
 | Component | Typical | Notes |
 |---|---|---|
@@ -585,8 +556,8 @@ Measured on the PluriBot adapter over real matches:
 | Server-side bookkeeping | 5-20 ms | Envelope, validation, broadcast. |
 
 If you see server-side `round-trip = 3-4 s` with your own `decide()`
-returning in 100 ms, your drain is the culprit (#1093 was filed for exactly
-this).
+returning in 100 ms, your queue drain is the culprit — your hooks are
+doing more work than you think.
 
 ### 6.2 Tier timeouts (bot-vs-bot)
 
@@ -599,7 +570,7 @@ For ranked bot-vs-bot play, the server uses tighter per-tier budgets:
 | elite | 2000 ms |
 
 Human-vs-bot play uses the global 5000 ms — matches are friendly and a
-slow PluriBot search with a pre-decide queue drain needs the headroom.
+slow bot with a pre-decide queue drain needs the headroom.
 
 ### 6.3 Why the queue drains first
 
@@ -619,9 +590,10 @@ Two fixes:
    SDK does not start threads for you; if you spawn one, you own its
    lifecycle. `loop.run_in_executor` or `asyncio.to_thread` are both fine.
 
-For the platform-owned PluriBot adapter, #1093 moves `observe_action` to a
-background task so `decide()` starts immediately. Adapt the same pattern in
-your own bot if your hooks are slow.
+If your hooks are slow, the standard pattern is to move the expensive work
+into a background task (`asyncio.create_task` or a `ThreadPoolExecutor`)
+queued from the hook, then read its result lazily inside `decide()`. That
+way `decide()` starts immediately when `turn_request` arrives.
 
 ### 6.4 Tips for staying under budget
 
@@ -634,9 +606,11 @@ your own bot if your hooks are slow.
   `decide()`.
 - **Respect the 5 s ceiling.** The server safe-defaults (`check` if legal,
   else `fold`) on timeout and sends `bot_error` with
-  `reason=bot_decision_timeout` to the human. Your bot appears to fold to
-  every raise — which is exactly the #1082 masking pattern that cost real
-  debugging hours.
+  `reason=bot_decision_timeout` to the human. Your bot appears to fold
+  to every raise — a confusing failure mode if you're not watching the
+  logs, because the bot looks like it's playing badly rather than timing
+  out. Always check `DECIDE` traces or the per-match log drawer when a
+  bot's decisions look unexpectedly passive.
 
 ---
 
@@ -686,16 +660,15 @@ Current per-tier resource caps:
 | Decision timeout (ranked) | 500 ms | 1000 ms | 2000 ms |
 | Max bots per user | 1 | 5 | 20 |
 
-Decompressed image size is capped at 100 MB
-(`bot_max_decompressed_mb`) independent of tier. Human-vs-bot play uses
-the global 5000 ms (see §6.2).
+Decompressed image size is capped at 100 MB independent of tier.
+Human-vs-bot play uses the global 5000 ms (see §6.2).
 
 ### 7.3 Size budget
 
 The reference bot (Alpine + SDK + 60-line `bot.py`) is ~20 MB compressed.
-PluriBot (Debian slim + numpy + scipy + a 900k CFR checkpoint) is ~136
-MB compressed — over the free tier cap. If you are hitting the size
-cap:
+A non-trivial bot with numpy/scipy + a small model checkpoint typically
+runs 100–150 MB compressed and may exceed the free tier cap. If you
+are hitting the size cap:
 
 - **`python:3.11-alpine` instead of `slim`.** ~50 MB base vs ~125 MB.
   Only works with pure-Python deps; numpy/scipy need musl wheels or a
@@ -720,14 +693,14 @@ If your container exits immediately with no logs:
    it, that's the symptom.
 2. Strace the offending call (`strace -f -e trace=all -o trace.log …`)
    and identify the blocked syscall.
-3. File an SDK issue with the minimal repro — we'll audit whether the
-   syscall should be allowlisted.
+3. File an SDK issue with the minimal repro and the syscall name. The
+   maintainers can review the seccomp profile and add common syscalls
+   (e.g. `arch_prctl` for glibc-based images) to the allowlist when
+   warranted.
 
-A previous incident (blocked `arch_prctl`) cost us weeks of silent
-PluriBot failures. The platform now has a startup probe that fails
-launches loudly if the container exits in under 2 s. If you see
-`bot_container_failed_to_attach` errors in the human UI, step 1 above
-is the first thing to check.
+A platform startup probe fails launches loudly if the container exits
+in under 2 s, so if you see `bot_container_failed_to_attach` errors in
+the human UI, step 1 above is the first thing to check.
 
 ---
 
@@ -792,9 +765,8 @@ uploading -> pending_review -> reviewing -> approved -> active
   can be `active` at a time; activating another one deactivates
   the previous.
 
-The full state table + the `status`/`is_active` invariant is documented
-in the platform monorepo (`docs/arch/BOT-PIPELINE-ARCHITECTURE.md`,
-"Bot states").
+The full state table and the `status`/`is_active` invariant are
+documented on the developer site (link in the README).
 
 ---
 
@@ -841,8 +813,9 @@ safe default (§6) and sends `bot_error` with
 1. Open the match replay → log drawer → Decisions tab. If `elapsed_ms >
    5000`, your `decide()` body is slow. If `drain_ms` is a large fraction,
    your `on_turn_result` / `on_phase_change` hooks are slow (§6.3).
-2. Reproduce locally with `chipzen-sdk test` and a seeded opponent to
-   time `decide()` without platform overhead.
+2. Time `decide()` directly with your own profiling harness — call your
+   `Bot.decide()` against a representative `GameState` you've recorded
+   from a real match, in a tight loop, and measure the distribution.
 3. If you're using a heavyweight engine (solver, LLM), pre-compute at
    `on_match_start` and cache.
 
@@ -887,8 +860,8 @@ queue drain — see §6.3.
 
 **Where it shows up:** `docker inspect <id>` shows `State.ExitCode != 0`
 and `State.FinishedAt` within ~1 s of `StartedAt`. `docker logs <id>`
-is empty. The executor's `bot_container_failed_to_attach` startup probe
-(#1083 step 3) catches this and fails the launch loudly.
+is empty. The platform's `bot_container_failed_to_attach` startup probe
+catches this and fails the launch loudly.
 
 **Most common cause:** seccomp blocking a required syscall (§7.4). Try:
 
@@ -907,40 +880,20 @@ Other causes:
   `ldd /bot/your_binary` inside the container.
 - **Entrypoint not executable.** `chmod +x` or use
   `ENTRYPOINT ["python", ...]` (which doesn't need the exec bit).
-- **Glibc TLS abort** (from #1083): `Fatal glibc error: Cannot allocate
-  TLS block`. You need `arch_prctl` allowlisted — fixed in seccomp
-  profile 2026-04-14, but related syscalls may still surface.
-
-### 9.6 "Preflop probs are uniform and bot makes weird decisions"
-
-**Where it shows up:** PluriBot specifically — DEBUG lines like
-`beliefs_uniform=true` across multiple streets when the opponent
-clearly has a narrow range.
-
-**Known issue:** [chipzen-ai/PluriBot#91](https://github.com/chipzen-ai/PluriBot/issues/91).
-The search ignores beliefs and samples from a uniform random opponent
-distribution, so "bluffs" always look equally plausible as value bets.
-Partial fix landed (PluriBot#72); deeper marginalize-over-distribution
-fix tracked in PluriBot#73.
-
-If you see this with your own bot, it's probably not this specific
-upstream bug — it's that your belief tracker isn't getting fed. Confirm
-`on_turn_result` is receiving events (add a log line) and that your
-`observe_action` equivalent is actually running.
+- **Glibc TLS abort:** `Fatal glibc error: Cannot allocate TLS block`.
+  Glibc-based images need `arch_prctl` (and a small set of related
+  syscalls) on the seccomp allowlist; the standard profile includes
+  these, but if you see this with a custom profile or a future glibc
+  version, file an issue.
 
 ---
 
 ## 10. Getting help
 
-- **Alpha Discord** — `#alpha-feedback` channel. Fastest path for
-  questions during alpha. Invite from your account page.
-- **Post-match feedback form** — appears after every match in the alpha
-  UI. The team sees feedback within minutes.
 - **SDK / starter / protocol bugs** —
   [chipzen-ai/chipzen-sdk issues](https://github.com/chipzen-ai/chipzen-sdk/issues).
 - **Platform / matchmaking / billing / account issues** —
-  email `support@chipzen.ai` or post in Discord. Don't open them on
-  the SDK repo.
+  email `support@chipzen.ai`. Don't open them on the SDK repo.
 - **Security issues** — email `security@chipzen.ai`, do not post
   publicly. See [SECURITY.md](../SECURITY.md).
 
@@ -951,9 +904,10 @@ When filing a bot-runtime bug, the most useful artifacts are:
 2. The relevant `DECIDE` / `FALLBACK` lines from
    `data/bot_logs/<match_id>-<pid>.log`.
 3. The server-side `round-trip for match …` lines from the API log, if
-   you have access (alpha testers on local stacks do).
-4. A reproducer run under `chipzen-sdk test` if the issue is strategy-
-   level rather than wire-level.
+   you have access to the platform-side logs.
+4. A minimal Python reproducer that constructs the relevant `GameState`
+   and calls your `Bot.decide()` directly — the smaller the snippet,
+   the faster the triage.
 
 ---
 
