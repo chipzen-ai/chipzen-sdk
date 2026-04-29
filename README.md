@@ -51,9 +51,16 @@ and troubleshooting.
 
 ```
 chipzen-sdk/
-  starters/        Language starters (Python, JavaScript, Rust) that
-                   implement the two-layer protocol over raw WebSockets.
-                   Copy one and replace decide().
+  packages/        Per-language SDK packages (Python first, then
+                   JavaScript, then Rust). Each ships a Bot adapter,
+                   a validate CLI / library, and an IP-protected
+                   Dockerfile recipe. Currently placeholders — see
+                   each package README for its target ship phase.
+  starters/        Language starters that implement the two-layer
+                   protocol over raw WebSockets. Useful as a reference
+                   for the protocol; will be superseded by the thin
+                   SDK-based starters under packages/<lang>/starters/
+                   as each language adapter ships.
   examples/        Worked examples. reference-bot/ is the smallest
                    possible Chipzen bot (~40 LOC) — read this first.
   docs/            QUICKSTART, DEV-MANUAL, and the protocol spec.
