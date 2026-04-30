@@ -44,20 +44,31 @@ jobs:
       - name: Syntax check
         run: node --check bot.js
 
-  rust-starter:
-    name: Rust starter (check)
+  rust-sdk:
+    # Renamed from `rust-starter` since the legacy starters/rust/ is
+    # now a one-page redirect README. CI now exercises the actual
+    # workspace at packages/rust which contains chipzen-bot (the SDK
+    # library) and chipzen-sdk (the CLI). The IP-protected starter at
+    # packages/rust/starters/rust/ is intentionally NOT in the
+    # workspace (so users can copy it standalone) and gets covered by
+    # CI once chipzen-bot is published to crates.io.
+    name: Rust SDK (build + test)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: starters/rust
+        working-directory: packages/rust
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal --no-self-update
-      - name: Cargo check
-        run: cargo check --quiet
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
       - name: Cargo fmt check
-        run: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: Cargo check
+        run: cargo check --workspace --all-targets --quiet
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Cargo test
+        run: cargo test --workspace --quiet
 
   reference-bot:
     name: Reference bot (lint)

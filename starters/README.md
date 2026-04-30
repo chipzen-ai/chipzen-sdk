@@ -34,9 +34,13 @@ chipzen-sdk init my-bot   # scaffold a project that uses the SDK
 
 ### Rust
 
+The Rust starter has moved to
+[`../packages/rust/starters/rust/`](../packages/rust/starters/rust/)
+now that the Rust SDK ships on crates.io. Use it via:
+
 ```bash
-cd rust
-cargo run -- ws://localhost:8001/ws/match/{match_id}/bot
+cargo add chipzen-bot
+chipzen-sdk init my-bot   # scaffold a project that uses the SDK
 ```
 
 ## Environment Variables
@@ -70,7 +74,7 @@ docker build -t my-bot .
 docker run --rm -e CHIPZEN_TOKEN=... my-bot ws://host.docker.internal:8001/ws/match/{match_id}/bot
 
 # Rust example
-cd rust
+cd ../packages/rust/starters/rust
 docker build -t my-bot .
 docker run --rm -e CHIPZEN_TOKEN=... my-bot ws://host.docker.internal:8001/ws/match/{match_id}/bot
 ```

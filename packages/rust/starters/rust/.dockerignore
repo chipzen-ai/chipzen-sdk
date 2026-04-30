@@ -1,0 +1,11 @@
+target/
+Cargo.lock
+.git/
+.gitignore
+.env
+.env.*
+*.md
+README*
+LICENSE*
+*.log
+.DS_Store

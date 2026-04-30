@@ -39,6 +39,7 @@
 
 mod bot;
 mod client;
+mod conformance;
 mod error;
 mod models;
 
@@ -47,13 +48,17 @@ pub use client::{
     run_bot, MessageReader, MessageWriter, RunBotOptions, SessionContext,
     SUPPORTED_PROTOCOL_VERSIONS,
 };
+pub use conformance::{
+    run_conformance_checks, ConformanceCheck, RunConformanceOptions,
+    Severity as ConformanceSeverity,
+};
 pub use error::Error;
 pub use models::{
     parse_card, parse_game_state, Action, ActionHistoryEntry, ActionKind, Card, GameState,
 };
 
-// Internals used by the conformance harness in a future PR. Not part of
-// the supported public API; the underscore prefix is a convention copied
-// from the Python and JavaScript SDKs.
+// Internals used by the conformance harness. Not part of the supported
+// public API; the underscore prefix is a convention copied from the
+// Python and JavaScript SDKs.
 #[doc(hidden)]
 pub use client::{_extract_match_id, _run_session, _safe_fallback_action};

@@ -1,0 +1,29 @@
+[package]
+name = "chipzen-starter-bot"
+version = "0.2.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "chipzen_starter_bot"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bot"
+path = "src/main.rs"
+
+[dependencies]
+chipzen-bot = "0.2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+# Smaller release binary — strips debug symbols, enables LTO, single
+# codegen unit. Combined with the multi-stage Dockerfile, this is what
+# keeps the IP-protected runtime image lean.
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
