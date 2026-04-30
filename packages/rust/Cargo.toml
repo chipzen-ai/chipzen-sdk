@@ -1,0 +1,44 @@
+# Workspace root for the Rust SDK.
+#
+# Phase 3, PR 1 ships the library crate `chipzen-bot`. Subsequent PRs
+# add `chipzen-sdk` (the CLI binary that depends on the library) and
+# the IP-protected starter.
+
+[workspace]
+resolver = "2"
+members = [
+    "chipzen-bot",
+]
+
+# Shared package metadata — keeps every member crate's version + author
+# fields in lockstep when we cut a release.
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+authors = ["Chipzen, Inc. <support@chipzen.ai>"]
+homepage = "https://chipzen.ai"
+repository = "https://github.com/chipzen-ai/chipzen-sdk"
+
+# Pin runtime + protocol deps centrally so every crate in the workspace
+# resolves the exact same version.
+[workspace.dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+async-trait = "0.1"
+thiserror = "1"
+
+# Release profile defaults — the IP-protected starter relies on these
+# being present so its compiled binary is small and stripped of debug
+# symbols. Override per-build with `cargo build --profile=...` if you
+# need a heavier debug payload locally.
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"
+codegen-units = 1

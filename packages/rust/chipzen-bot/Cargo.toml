@@ -1,0 +1,27 @@
+[package]
+name = "chipzen-bot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Build, test, and deploy poker bots for the Chipzen AI competition platform"
+documentation = "https://docs.rs/chipzen-bot"
+readme = "../README.md"
+keywords = ["poker", "bot", "ai", "websocket", "chipzen"]
+categories = ["api-bindings", "asynchronous", "games"]
+
+[dependencies]
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
