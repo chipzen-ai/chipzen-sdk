@@ -8,6 +8,7 @@
 resolver = "2"
 members = [
     "chipzen-bot",
+    "chipzen-sdk",
 ]
 
 # Shared package metadata — keeps every member crate's version + author
@@ -29,9 +30,12 @@ tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 url = "2"
 async-trait = "0.1"
 thiserror = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
 
 # Release profile defaults — the IP-protected starter relies on these
 # being present so its compiled binary is small and stripped of debug
