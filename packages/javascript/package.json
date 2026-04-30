@@ -1,0 +1,65 @@
+{
+  "name": "@chipzen-ai/bot",
+  "version": "0.2.0",
+  "description": "Build, test, and deploy poker bots for the Chipzen AI competition platform",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Chipzen, Inc.",
+    "email": "support@chipzen.ai"
+  },
+  "homepage": "https://chipzen.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chipzen-ai/chipzen-sdk.git",
+    "directory": "packages/javascript"
+  },
+  "bugs": {
+    "url": "https://github.com/chipzen-ai/chipzen-sdk/issues"
+  },
+  "keywords": [
+    "poker",
+    "bot",
+    "ai",
+    "competition",
+    "chipzen",
+    "sdk",
+    "websocket"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.12",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "prepack": "pnpm build"
+  }
+}
