@@ -1,0 +1,130 @@
+name: Release JavaScript
+
+# Builds and publishes the @chipzen-ai/bot npm package.
+#
+# Triggers:
+#   1. Push of a tag matching `javascript-v*` (e.g. `javascript-v0.2.0`)
+#      — the normal release path. Tag should match the version in
+#      packages/javascript/package.json.
+#   2. Manual workflow_dispatch — for first-time releases or
+#      emergencies. Use the `dry_run` input to build + upload the
+#      tarball without publishing, or `dist_tag` to publish under a
+#      non-default dist-tag (e.g. `next`) for soft releases.
+#
+# Auth model:
+#   npm Trusted Publishing (OIDC). No NPM_TOKEN secret is needed.
+#   The trusted publisher must be configured on npmjs.com before the
+#   first real publish — see packages/javascript/RELEASING.md for the
+#   one-time setup steps.
+
+on:
+  push:
+    tags:
+      - "javascript-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only, don't publish (for inspecting the tarball)."
+        type: boolean
+        default: false
+      dist_tag:
+        description: "npm dist-tag (default: latest). Use `next` for soft releases."
+        type: string
+        default: "latest"
+
+# Single in-flight publish — avoids racing two parallel tag pushes
+# (would 409 on the second one anyway, but the explicit lock makes
+# the failure mode clearer).
+concurrency:
+  group: release-javascript-${{ inputs.dist_tag || 'latest' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build + pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: packages/javascript/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: packages/javascript
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        working-directory: packages/javascript
+        run: pnpm build
+      - name: Test (sanity)
+        working-directory: packages/javascript
+        run: pnpm test
+      - name: Pack
+        working-directory: packages/javascript
+        # `npm pack --json` emits a parseable manifest of what would be
+        # published; --pack-destination puts the tarball where we expect
+        # it for the upload step below.
+        run: |
+          mkdir -p npm-dist
+          npm pack --pack-destination npm-dist --json > npm-dist/pack-manifest.json
+          ls -la npm-dist/
+      - name: Sanity-check produced tarball
+        working-directory: packages/javascript
+        run: |
+          test -n "$(ls npm-dist/*.tgz 2>/dev/null)" || { echo "::error::no tarball produced"; exit 1; }
+      - name: Upload tarball for downstream jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: chipzen-bot-npm
+          path: packages/javascript/npm-dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to npm (${{ inputs.dist_tag || 'latest' }})
+    needs: build
+    # Skip publish entirely on workflow_dispatch with dry_run=true.
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    environment:
+      # The named environment is what npm Trusted Publishing binds
+      # against — see RELEASING.md. The same env name must be used in
+      # the npm publisher configuration on npmjs.com.
+      name: npm
+      url: https://www.npmjs.com/package/@chipzen-ai/bot
+    permissions:
+      # OIDC token issuance — required for Trusted Publishing.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Download tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: chipzen-bot-npm
+          path: npm-dist/
+      - name: List tarball contents
+        run: |
+          ls -la npm-dist/
+          tar tzvf npm-dist/*.tgz | head -40
+      - name: Publish to npm
+        # `--provenance` enables sigstore signing + npm-side OIDC
+        # verification of the (repo, workflow, environment) triple.
+        # `--access public` is required for the @chipzen-ai/* scope
+        # since scoped packages default to restricted (paid).
+        run: |
+          npm publish npm-dist/*.tgz \
+            --provenance \
+            --access public \
+            --tag "${{ inputs.dist_tag || 'latest' }}"
