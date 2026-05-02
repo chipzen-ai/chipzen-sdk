@@ -44,7 +44,7 @@ pub fn scaffold_bot(name: &str, opts: &ScaffoldOptions) -> Result<PathBuf> {
     write_file(&project_dir.join(".gitignore"), GITIGNORE_TEMPLATE)?;
     write_file(&project_dir.join(".dockerignore"), DOCKERIGNORE_TEMPLATE)?;
     write_file(&project_dir.join("README.md"), &readme_template(name))?;
-    write_file(&project_dir.join("Dockerfile"), DOCKERFILE_PLACEHOLDER)?;
+    write_file(&project_dir.join("Dockerfile"), DOCKERFILE_TEMPLATE)?;
 
     Ok(project_dir)
 }
@@ -66,6 +66,12 @@ fn cargo_toml(name: &str) -> String {
 name = "{name}"
 version = "0.1.0"
 edition = "2021"
+
+# The release binary is named `bot` so the IP-protected Dockerfile can
+# `cp target/release/bot /build/bot` without knowing the package name.
+[[bin]]
+name = "bot"
+path = "src/main.rs"
 
 [dependencies]
 chipzen-bot = "0.2"
@@ -130,25 +136,91 @@ const GITIGNORE_TEMPLATE: &str = "target/\nCargo.lock\n.env\n.env.*\n.DS_Store\n
 const DOCKERIGNORE_TEMPLATE: &str =
     "target/\n.git/\n.gitignore\n.env\n.env.*\n*.md\nREADME*\nLICENSE*\n.DS_Store\n";
 
-const DOCKERFILE_PLACEHOLDER: &str = r#"# Replace this with the IP-protected starter Dockerfile from
-# packages/rust/starters/rust/Dockerfile (ships in Phase 3 PR 3 —
-# multi-stage cargo build that produces a small, statically-linked
-# binary with no readable source for your strategy in the runtime
-# image).
+// Kept identical to packages/rust/starters/rust/Dockerfile so a
+// scaffolded project and the canonical starter directory ship the same
+// recipe. A test enforces this byte-identity invariant.
+const DOCKERFILE_TEMPLATE: &str = r#"# syntax=docker/dockerfile:1.7
 #
-# For now, a minimal cargo-based development image:
+# IP-protected Chipzen Rust bot image.
+#
+# Multi-stage build that compiles the bot to a single, statically-
+# linked release binary in the builder stage, then ships only that
+# binary in the runtime stage. The runtime image contains no readable
+# Rust source for your strategy code — only the stripped binary.
+#
+# See ../../IP-PROTECTION.md for what this protects (and what it doesn't).
+#
+# Build:   docker build -t my-bot:test .
+# Export:  docker save my-bot:test | gzip > my-bot.tar.gz
+#
+# Build context for this directory should be small (Cargo.toml +
+# src/ + this file). The .dockerignore alongside this file keeps the
+# target/ build cache and editor metadata out.
 
+# -----------------------------------------------------------------------------
+# Stage 1: cargo build --release. The .rs source lives only in this stage and
+# is discarded before the runtime stage starts.
+# -----------------------------------------------------------------------------
+# Base pinned by tag — Dependabot can rotate to digest pinning later. Tag:
+# rust:1-slim (debian-bookworm-based; the runtime stage below also uses
+# debian-bookworm so glibc + libssl line up for the compiled binary).
 FROM rust:1-slim AS builder
-WORKDIR /build
-COPY Cargo.toml .
-COPY src/ src/
-RUN cargo build --release
 
+WORKDIR /build
+
+# Build tools needed by tokio-tungstenite's `native-tls` feature
+# (links against system openssl). pkg-config tells the openssl-sys
+# build script where libssl + libcrypto live.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        pkg-config \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bring in the bot source + manifest. Only these are copied — keep
+# the build context narrow so the .dockerignore is the only allowlist.
+COPY Cargo.toml ./
+COPY src/ ./src/
+
+# Build the release binary. The starter's [profile.release] is already
+# tuned for a small, symbol-stripped binary (lto=thin, opt-level=3,
+# codegen-units=1).
+RUN cargo build --release --bin bot \
+    && cp target/release/bot /build/bot \
+    && rm -rf src/ target/ Cargo.toml
+
+# -----------------------------------------------------------------------------
+# Stage 2: Runtime. Only the compiled binary + ENTRYPOINT.
+# No .rs source for the bot's strategy is present.
+# -----------------------------------------------------------------------------
+# Base pinned by tag — Dependabot can rotate to digest pinning later. Tag:
+# debian:12-slim. Matches the glibc the builder stage links against and
+# carries libssl3 + ca-certs for outbound TLS to the platform's wss://.
 FROM debian:12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+        dumb-init \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /bot
-COPY --from=builder /build/target/release/* /bot/bot
-ENTRYPOINT ["/bot/bot"]
+
+# Copy ONLY the compiled binary from the builder stage.
+COPY --from=builder /build/bot /bot/bot
+RUN chmod +x /bot/bot
+
+# Run as non-root (defense in depth — the platform also applies seccomp
+# and cap-drop on top of this).
+RUN groupadd --system --gid 10001 bot \
+    && useradd --system --uid 10001 --gid bot --home-dir /bot --shell /usr/sbin/nologin bot \
+    && chown -R bot:bot /bot
+USER 10001
+
+ENTRYPOINT ["dumb-init", "/bot/bot"]
 "#;
+pub const _DOCKERFILE_TEMPLATE_FOR_TEST: &str = DOCKERFILE_TEMPLATE;
 
 fn readme_template(name: &str) -> String {
     format!(
