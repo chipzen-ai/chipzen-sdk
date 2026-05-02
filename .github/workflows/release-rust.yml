@@ -1,0 +1,111 @@
+name: Release Rust
+
+# Builds and publishes the chipzen-bot library + chipzen-sdk CLI to
+# crates.io.
+#
+# Triggers:
+#   1. Push of a tag matching `rust-v*` (e.g. `rust-v0.2.0`) — the
+#      normal release path. Tag should match the workspace.package
+#      version in packages/rust/Cargo.toml.
+#   2. Manual workflow_dispatch — for first-time releases or
+#      emergencies. Use the `dry_run` input to build + verify the
+#      crate package without publishing.
+#
+# Auth model:
+#   crates.io Trusted Publishing (OIDC). No CARGO_REGISTRY_TOKEN
+#   secret is needed. The trusted publisher must be configured on
+#   crates.io for each crate before the first real publish — see
+#   packages/rust/RELEASING.md for the one-time setup steps.
+
+on:
+  push:
+    tags:
+      - "rust-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + verify the crate package without publishing."
+        type: boolean
+        default: false
+
+# Single in-flight publish — avoids racing two parallel tag pushes
+# (would 409 on the second one anyway, but the explicit lock makes
+# the failure mode clearer).
+concurrency:
+  group: release-rust
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build + test + package-verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+      - name: Cargo fmt check
+        run: cargo fmt --all --check
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Cargo test
+        run: cargo test --workspace --quiet
+      - name: Verify chipzen-bot package builds
+        # `cargo package` produces the same .crate tarball that would
+        # be uploaded to crates.io. Catches missing files / bad
+        # metadata before the publish step.
+        run: cargo package -p chipzen-bot --allow-dirty
+      - name: Verify chipzen-sdk package builds
+        run: cargo package -p chipzen-sdk --allow-dirty
+      - name: List packaged crates
+        run: ls -la target/package/
+
+  publish:
+    name: Publish to crates.io
+    needs: build
+    # Skip publish entirely on workflow_dispatch with dry_run=true.
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    environment:
+      # The named environment is what crates.io Trusted Publishing
+      # binds against — see RELEASING.md. The same env name must be
+      # used in the crates.io publisher configuration for each crate.
+      name: crates-io
+      url: https://crates.io/crates/chipzen-bot
+    permissions:
+      # OIDC token issuance — required for Trusted Publishing.
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update
+      - name: Authenticate with crates.io
+        # Pinned to a major version per crates.io guidance; the action
+        # exchanges the GitHub OIDC token for a short-lived (~30 min)
+        # crates.io API token published to step output `token`.
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish chipzen-bot
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        # `chipzen-bot` ships first because nothing else in the
+        # workspace depends on it. `chipzen-sdk` is independent (the
+        # CLI doesn't import chipzen-bot directly), so publish order
+        # between the two doesn't matter functionally — we go bot
+        # first only for predictable log output.
+        run: cargo publish -p chipzen-bot
+      - name: Publish chipzen-sdk
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish -p chipzen-sdk
