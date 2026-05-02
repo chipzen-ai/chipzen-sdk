@@ -39,9 +39,7 @@ def card_str_strategy():
     return st.tuples(st.sampled_from(RANKS), st.sampled_from(SUITS)).map(lambda t: t[0] + t[1])
 
 
-skipif_no_hypothesis = pytest.mark.skipif(
-    not HAS_HYPOTHESIS, reason="hypothesis not installed"
-)
+skipif_no_hypothesis = pytest.mark.skipif(not HAS_HYPOTHESIS, reason="hypothesis not installed")
 
 
 @skipif_no_hypothesis
@@ -152,9 +150,7 @@ class TestGameStateProperties:
 
     @given(
         board_cards=st.lists(
-            st.tuples(st.sampled_from(RANKS), st.sampled_from(SUITS)).map(
-                lambda t: t[0] + t[1]
-            ),
+            st.tuples(st.sampled_from(RANKS), st.sampled_from(SUITS)).map(lambda t: t[0] + t[1]),
             min_size=0,
             max_size=5,
         )

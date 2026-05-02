@@ -241,8 +241,12 @@ class TestDecideReturnsLegalActions:
         """Pocket aces with raise legal → should open-raise, not just call."""
         bot = ref_module.ReferenceBot()
         state = _state(
-            phase="preflop", hole=("Ah", "As"), valid=("fold", "call", "raise"),
-            to_call=10, min_raise=20, max_raise=1000,
+            phase="preflop",
+            hole=("Ah", "As"),
+            valid=("fold", "call", "raise"),
+            to_call=10,
+            min_raise=20,
+            max_raise=1000,
         )
         action = bot.decide(state)
         assert action.action == "raise"
@@ -251,8 +255,11 @@ class TestDecideReturnsLegalActions:
         """Garbage hand facing a non-trivial bet → fold."""
         bot = ref_module.ReferenceBot()
         state = _state(
-            phase="preflop", hole=("7h", "2c"), valid=("fold", "call"),
-            to_call=200, your_stack=1000,
+            phase="preflop",
+            hole=("7h", "2c"),
+            valid=("fold", "call"),
+            to_call=200,
+            your_stack=1000,
         )
         action = bot.decide(state)
         assert action.action == "fold"
@@ -263,9 +270,14 @@ class TestDecideReturnsLegalActions:
         bot._my_seat = 0
         bot.on_round_start({"state": {"hand_number": 1, "your_hole_cards": ["Ah", "Kd"]}})
         state = _state(
-            phase="flop", hole=("Ah", "Kd"), board=("As", "Kc", "2h"),
+            phase="flop",
+            hole=("Ah", "Kd"),
+            board=("As", "Kc", "2h"),
             valid=("fold", "check", "raise"),
-            to_call=0, min_raise=10, max_raise=1000, pot=60,
+            to_call=0,
+            min_raise=10,
+            max_raise=1000,
+            pot=60,
         )
         action = bot.decide(state)
         assert action.action == "raise"
@@ -273,8 +285,12 @@ class TestDecideReturnsLegalActions:
     def test_no_pair_postflop_facing_bet_folds(self, ref_module):
         bot = ref_module.ReferenceBot()
         state = _state(
-            phase="flop", hole=("7h", "2c"), board=("As", "Kc", "Td"),
-            valid=("fold", "call"), to_call=200, pot=100,
+            phase="flop",
+            hole=("7h", "2c"),
+            board=("As", "Kc", "Td"),
+            valid=("fold", "call"),
+            to_call=200,
+            pot=100,
         )
         action = bot.decide(state)
         assert action.action == "fold"

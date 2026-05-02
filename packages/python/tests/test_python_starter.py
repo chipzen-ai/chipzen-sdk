@@ -35,9 +35,7 @@ def test_starter_has_required_files():
 
 def test_starter_bot_imports_and_has_main():
     """bot.py is valid Python, defines MyBot(Bot), and exposes main()."""
-    spec = importlib.util.spec_from_file_location(
-        "_starter_bot_under_test", STARTER_DIR / "bot.py"
-    )
+    spec = importlib.util.spec_from_file_location("_starter_bot_under_test", STARTER_DIR / "bot.py")
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -67,9 +65,7 @@ def test_starter_passes_check_connectivity():
     """`validate --check-connectivity` against the starter passes too."""
     results = validate_bot(STARTER_DIR, check_connectivity=True)
     failures = [(name, msg) for sev, name, msg in results if sev == "fail"]
-    assert failures == [], (
-        f"Connectivity-check failures on shipped starter: {failures}"
-    )
+    assert failures == [], f"Connectivity-check failures on shipped starter: {failures}"
 
     # And the new check should actually have run (not been skipped).
     names = {name for _sev, name, _msg in results}
