@@ -1,0 +1,17 @@
+{
+  "name": "chipzen-reference-bot-js",
+  "version": "0.2.0",
+  "description": "Reference Chipzen bot — non-trivial JavaScript demonstration",
+  "private": true,
+  "type": "module",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "@chipzen-ai/bot": "^0.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

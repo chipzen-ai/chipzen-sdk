@@ -25,6 +25,17 @@ matches. If you're starting your own bot, copy
 [`packages/python/starters/python/`](../../packages/python/starters/python/)
 — it's a thin scaffold with the IP-protected Cython Dockerfile.
 
+The same logic, ported to the other two SDK languages, lives at:
+
+- [`../reference-bot-js/`](../reference-bot-js/) — JavaScript /
+  `@chipzen-ai/bot`.
+- [`../reference-bot-rust/`](../reference-bot-rust/) — Rust /
+  `chipzen-bot` crate.
+
+All three implement the same strategy and the same lifecycle hook
+shape, so reading any one is enough to understand what the SDK
+exposes; the other two are useful as cross-language references.
+
 ## What's in the image
 
 - `python:3.11-alpine` base.
