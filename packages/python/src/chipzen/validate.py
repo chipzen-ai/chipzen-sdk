@@ -80,13 +80,19 @@ WARN_MODULES = frozenset(
     }
 )
 
-# Allowed pip packages (subset -- the platform Docker image has these)
+# Allowed pip packages (subset -- the platform Docker image has these).
+# Note: the SDK's published PyPI distribution is `chipzen-bot`; the
+# `chipzen-sdk` name is the CLI command (the entry point in pyproject's
+# `[project.scripts]`), not a package on PyPI. Earlier versions of this
+# allowlist had `chipzen-sdk` instead of `chipzen-bot`, which silently
+# rejected the canonical `chipzen-bot` dep until the severity was
+# bumped from `warn` to `fail` and the test caught it.
 ALLOWED_PACKAGES = frozenset(
     {
         "websockets",
         "numpy",
         "scipy",
-        "chipzen-sdk",
+        "chipzen-bot",
     }
 )
 
