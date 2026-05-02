@@ -207,6 +207,7 @@ class TestSizeCheck:
 class TestZipValidation:
     def test_valid_zip(self, tmp_bot, tmp_path):
         import zipfile
+
         zip_path = tmp_path / "bot.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.write(tmp_bot / "main.py", "main.py")

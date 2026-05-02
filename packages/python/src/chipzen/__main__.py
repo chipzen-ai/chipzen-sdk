@@ -38,9 +38,11 @@ def main() -> None:
 
     if command == "validate":
         from chipzen.validate import validate_cli
+
         validate_cli(remaining)
     elif command == "init":
         from chipzen.scaffold import init_cli
+
         init_cli(remaining)
     else:
         print(f"Unknown command: {command}")

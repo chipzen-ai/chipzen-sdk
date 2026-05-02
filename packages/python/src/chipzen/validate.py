@@ -149,9 +149,7 @@ def validate_bot(
     elif bot_path.is_dir():
         # Check what the zip size would be
         results.extend(_check_dir_size(bot_path, max_upload_bytes))
-        results.extend(
-            _check_directory(bot_path, entry_point, timeout_warn_ms, check_connectivity)
-        )
+        results.extend(_check_directory(bot_path, entry_point, timeout_warn_ms, check_connectivity))
     else:
         results.append(
             ("fail", "file_structure", f"Path not found or not a directory/zip: {bot_path}")
@@ -267,9 +265,7 @@ def _check_directory(
     # instantiated and called once, the wire-level scenario can't tell
     # us anything new and would just produce a noisier failure.
     if check_connectivity:
-        smoke_passed = all(
-            sev != "fail" for sev, name, _ in results if name == "smoke_test"
-        )
+        smoke_passed = all(sev != "fail" for sev, name, _ in results if name == "smoke_test")
         if smoke_passed:
             results.extend(_connectivity_check(bot_dir, ep, bot_class_name))
         else:
@@ -318,8 +314,7 @@ def _connectivity_check(
             (
                 "fail",
                 "connectivity",
-                f"failed to load bot for connectivity check: "
-                f"{type(exc).__name__}: {exc}",
+                f"failed to load bot for connectivity check: {type(exc).__name__}: {exc}",
             )
         ]
     finally:
@@ -618,10 +613,7 @@ def validate_cli(args: list[str] | None = None) -> None:
         "--max-size-mb",
         type=int,
         default=DEFAULT_MAX_UPLOAD_BYTES // (1024 * 1024),
-        help=(
-            "Maximum upload size in MB (default: "
-            f"{DEFAULT_MAX_UPLOAD_BYTES // (1024 * 1024)})"
-        ),
+        help=(f"Maximum upload size in MB (default: {DEFAULT_MAX_UPLOAD_BYTES // (1024 * 1024)})"),
     )
     parser.add_argument(
         "--timeout-warn-ms",
@@ -698,10 +690,7 @@ def _print_results(results: list[tuple[Severity, str, str]], *, color: bool = Tr
             print(f"{GREEN}All checks passed!{RESET} Your bot is ready to upload.")
     else:
         suffix = "s" if fails != 1 else ""
-        print(
-            f"{RED}{fails} check{suffix} failed.{RESET} "
-            "Fix the issues above before uploading."
-        )
+        print(f"{RED}{fails} check{suffix} failed.{RESET} Fix the issues above before uploading.")
 
 
 def _supports_color() -> bool:

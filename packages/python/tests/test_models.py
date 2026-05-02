@@ -113,9 +113,7 @@ class TestGameState:
             "action_history": [{"seat": 1, "action": "raise", "amount": 200}],
         }
         hole = [Card.from_str("Ah"), Card.from_str("Kd")]
-        state = GameState.from_action_request(
-            payload, hole_cards=hole, your_seat=0, dealer_seat=1
-        )
+        state = GameState.from_action_request(payload, hole_cards=hole, your_seat=0, dealer_seat=1)
 
         assert state.hand_number == 5
         assert state.phase == "flop"

@@ -338,9 +338,7 @@ async def _run_full_match_scenario(bot: ChipzenBot, timeout_s: float) -> Conform
 # ---------------------------------------------------------------------------
 
 
-def run_conformance_checks(
-    bot: ChipzenBot, *, timeout_s: float = 10.0
-) -> list[ConformanceCheck]:
+def run_conformance_checks(bot: ChipzenBot, *, timeout_s: float = 10.0) -> list[ConformanceCheck]:
     """Run every conformance scenario against ``bot`` and return per-check results.
 
     Args:

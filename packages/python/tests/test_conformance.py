@@ -11,12 +11,11 @@ from chipzen.bot import ChipzenBot
 from chipzen.conformance import (
     ConformanceCheck,
     _classify_turn_action,
-    _MockWebSocket,
     _full_match_script,
+    _MockWebSocket,
     run_conformance_checks,
 )
 from chipzen.models import Action, GameState
-
 
 # ---------------------------------------------------------------------------
 # Bots used as test fixtures — each exhibits a specific behavior the
@@ -128,9 +127,7 @@ class TestClassifyTurnAction:
         """Non-turn_action messages (e.g. authenticate, hello) shouldn't fail."""
         import json
 
-        ok, msg = _classify_turn_action(
-            json.dumps({"type": "authenticate", "token": "x"})
-        )
+        ok, msg = _classify_turn_action(json.dumps({"type": "authenticate", "token": "x"}))
         assert ok, msg
 
 

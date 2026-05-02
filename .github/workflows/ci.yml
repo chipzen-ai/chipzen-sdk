@@ -10,39 +10,59 @@ permissions:
   contents: read
 
 jobs:
-  python-starter:
-    name: Python starter (lint + smoke)
+  python-sdk:
+    # Renamed from `python-starter` (issue #17). The legacy
+    # starters/python/ is now a one-page redirect README, so the
+    # previous job's `ruff check .` ran against an empty directory
+    # and passed vacuously. This job exercises the actual SDK
+    # package at packages/python/.
+    name: Python SDK (lint + test)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: starters/python
+        working-directory: packages/python
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install ruff
-        run: pip install ruff
+          python-version: "3.12"
+      - name: Install package + dev deps
+        run: pip install -e ".[dev]"
       - name: Lint
         run: ruff check .
       - name: Format check
         run: ruff format --check .
-      - name: Import smoke
-        run: python -c "import importlib, ast, pathlib; [ast.parse(p.read_text()) for p in pathlib.Path('.').glob('*.py')]"
+      - name: Test
+        run: pytest -q
 
-  javascript-starter:
-    name: JavaScript starter (lint)
+  javascript-sdk:
+    # Renamed from `javascript-starter` (issue #17). The previous
+    # job only ran `node --check bot.js` against a single starter
+    # file. This job runs the actual SDK package's typecheck +
+    # build + full vitest suite against packages/javascript/.
+    name: JavaScript SDK (build + test)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/javascript/starters/javascript
+        working-directory: packages/javascript
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Syntax check
-        run: node --check bot.js
+          cache: "pnpm"
+          cache-dependency-path: packages/javascript/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build
+      - name: Test
+        run: pnpm test
 
   rust-sdk:
     # Renamed from `rust-starter` since the legacy starters/rust/ is
