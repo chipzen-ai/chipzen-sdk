@@ -80,13 +80,19 @@ WARN_MODULES = frozenset(
     }
 )
 
-# Allowed pip packages (subset -- the platform Docker image has these)
+# Allowed pip packages (subset -- the platform Docker image has these).
+# Note: the SDK's published PyPI distribution is `chipzen-bot`; the
+# `chipzen-sdk` name is the CLI command (the entry point in pyproject's
+# `[project.scripts]`), not a package on PyPI. Earlier versions of this
+# allowlist had `chipzen-sdk` instead of `chipzen-bot`, which silently
+# rejected the canonical `chipzen-bot` dep until the severity was
+# bumped from `warn` to `fail` and the test caught it.
 ALLOWED_PACKAGES = frozenset(
     {
         "websockets",
         "numpy",
         "scipy",
-        "chipzen-sdk",
+        "chipzen-bot",
     }
 )
 
@@ -441,11 +447,11 @@ def _check_requirements(
     if disallowed:
         results.append(
             (
-                "warn",
+                "fail",
                 "requirements",
                 f"Packages not in the platform allow-list: {', '.join(disallowed)}. "
                 f"Allowed: {', '.join(sorted(ALLOWED_PACKAGES))}. "
-                "These may fail to install in the sandbox.",
+                "The platform sandbox will reject the bot at install time.",
             )
         )
     else:
