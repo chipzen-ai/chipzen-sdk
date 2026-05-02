@@ -9,7 +9,7 @@
 //! bot on protocol grounds. It does NOT mean the bot is good.
 
 use crate::bot::Bot;
-use crate::client::{MessageReader, MessageWriter, SessionContext, _run_session};
+use crate::client::{_run_session, MessageReader, MessageWriter, SessionContext};
 use crate::error::Error;
 use async_trait::async_trait;
 use serde_json::{json, Value};
