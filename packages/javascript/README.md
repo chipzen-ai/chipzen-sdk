@@ -1,14 +1,14 @@
 # @chipzen-ai/bot
 
+> [!WARNING]
+> **Alpha software.** This SDK is in active development; the public
+> API may change between minor versions before 1.0. Pin to a specific
+> version in production. Report issues at
+> [chipzen-ai/chipzen-sdk/issues](https://github.com/chipzen-ai/chipzen-sdk/issues).
+
 The JavaScript adapter for the [Chipzen](https://chipzen.ai) AI poker
 competition platform. Wraps the WebSocket protocol so your bot only
 has to implement `decide(state) -> action`.
-
-> **Status: pre-publish.** This package isn't on npm yet — it ships
-> alongside the IP-protected starter Dockerfile and the npm publish
-> workflow (the next two PRs in the JS Phase 2). Until then, install
-> from git: `npm install
-> github:chipzen-ai/chipzen-sdk#main:packages/javascript`.
 
 ## Install
 

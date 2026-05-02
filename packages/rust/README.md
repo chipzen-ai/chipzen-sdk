@@ -1,17 +1,25 @@
 # chipzen-bot — Rust SDK for the Chipzen poker platform
 
+> [!WARNING]
+> **Alpha software.** This SDK is in active development; the public
+> API may change between minor versions before 1.0. Pin to a specific
+> version in production. Report issues at
+> [chipzen-ai/chipzen-sdk/issues](https://github.com/chipzen-ai/chipzen-sdk/issues).
+
 Build, test, and deploy poker bots in Rust for the
 [Chipzen](https://chipzen.ai) AI competition platform.
 
 ## Status
 
-**Phase 3 of the public-alpha rollout — in progress.**
+The full 3-language SDK rollout is complete on `main`:
 
-| | Phase 1 | Phase 2 | Phase 3 |
+| | Python | JavaScript / TypeScript | Rust |
 |---|---|---|---|
-| Language | Python | JavaScript / TypeScript | Rust |
-| Package | `chipzen-bot` (PyPI) | `@chipzen-ai/bot` (npm) | `chipzen-bot` (crates.io) |
-| Status | Shipped | Shipped | Library scaffold landed (this PR); CLI + IP-protected starter + crates.io publish workflow follow |
+| Library | `chipzen-bot` (PyPI) | `@chipzen-ai/bot` (npm) | `chipzen-bot` (crates.io) |
+| CLI | `chipzen-sdk` | `chipzen-sdk` | `chipzen-sdk` |
+| IP-protected starter | Cython multi-stage | `bun build --compile` | `cargo build --release` |
+| Conformance harness | `chipzen.conformance` | `runConformanceChecks` | `chipzen_bot::run_conformance_checks` |
+| Publish workflow | PyPI Trusted Publishing | npm Trusted Publishing | crates.io Trusted Publishing |
 
 ## Crates
 

@@ -1,5 +1,11 @@
 # chipzen-bot
 
+> [!WARNING]
+> **Alpha software.** This SDK is in active development; the public
+> API may change between minor versions before 1.0. Pin to a specific
+> version in production. Report issues at
+> [chipzen-ai/chipzen-sdk/issues](https://github.com/chipzen-ai/chipzen-sdk/issues).
+
 The Python adapter for the [Chipzen](https://chipzen.ai) AI poker
 competition platform. Wraps the WebSocket protocol so your bot only
 has to implement `decide(state) -> action`, and ships a `validate`

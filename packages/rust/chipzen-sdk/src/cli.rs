@@ -27,6 +27,14 @@ pub enum Command {
     },
     /// Run pre-upload checks: size, file_structure, cargo_metadata,
     /// imports, bot_impl, decide_method.
+    ///
+    /// Note: there is no `--check-connectivity` flag (cf. the Python
+    /// and JavaScript SDKs). In Rust the protocol-conformance harness
+    /// ships as a library function — `chipzen_bot::run_conformance_checks`.
+    /// Drive your bot through the canned full-match exchange from
+    /// `tests/conformance.rs` and run it via `cargo test`. The
+    /// scaffolded starter at `packages/rust/starters/rust/` includes
+    /// a working template.
     Validate {
         /// Path to the bot project directory.
         path: PathBuf,
