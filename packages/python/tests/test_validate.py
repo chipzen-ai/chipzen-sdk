@@ -164,11 +164,14 @@ class TestRequirementsCheck:
         req_results = [(sev, msg) for sev, name, msg in results if name == "requirements"]
         assert all(sev == "pass" for sev, _ in req_results)
 
-    def test_disallowed_package_warns(self, tmp_bot):
+    def test_disallowed_package_fails(self, tmp_bot):
+        # The platform sandbox will reject the bot at install time if a
+        # disallowed package is in requirements.txt — surface that as a
+        # hard fail in the validator, not a warning.
         (tmp_bot / "requirements.txt").write_text("pandas>=1.0\n")
         results = validate_bot(tmp_bot)
         req_results = [(sev, msg) for sev, name, msg in results if name == "requirements"]
-        assert any(sev == "warn" for sev, _ in req_results)
+        assert any(sev == "fail" for sev, _ in req_results)
 
     def test_comments_and_blanks_ignored(self, tmp_bot):
         (tmp_bot / "requirements.txt").write_text("# a comment\n\nnumpy\n")

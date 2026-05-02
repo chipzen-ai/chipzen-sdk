@@ -36,6 +36,18 @@ Cargo.lock
 .env
 .env.local
 .env.*.local
+.envrc
+
+# Credentials and secrets — defense in depth, the platform's threat
+# model assumes uploaded bot images carry no per-user secrets but a
+# leaked dotfile in a contributor's working tree is still bad.
+*.key
+*.pem
+*.cert
+*.crt
+secrets.*
+credentials.*
+.aws/credentials
 
 # Build artifacts
 *.tar.gz

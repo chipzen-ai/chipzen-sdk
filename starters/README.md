@@ -15,10 +15,13 @@ Pick your language and start hacking.
 
 ### Python
 
+The Python starter has moved to
+[`../packages/python/starters/python/`](../packages/python/starters/python/)
+now that the Python SDK ships on PyPI. Use it via:
+
 ```bash
-cd python
-pip install -r requirements.txt
-python bot.py ws://localhost:8001/ws/match/{match_id}/bot
+pip install chipzen-bot
+chipzen-sdk init my-bot   # scaffold a project that uses the SDK
 ```
 
 ### JavaScript
@@ -64,7 +67,7 @@ Each starter includes a Dockerfile:
 
 ```bash
 # Python example
-cd python
+cd ../packages/python/starters/python
 docker build -t my-bot .
 docker run --rm -e CHIPZEN_TOKEN=... my-bot ws://host.docker.internal:8001/ws/match/{match_id}/bot
 

@@ -441,11 +441,11 @@ def _check_requirements(
     if disallowed:
         results.append(
             (
-                "warn",
+                "fail",
                 "requirements",
                 f"Packages not in the platform allow-list: {', '.join(disallowed)}. "
                 f"Allowed: {', '.join(sorted(ALLOWED_PACKAGES))}. "
-                "These may fail to install in the sandbox.",
+                "The platform sandbox will reject the bot at install time.",
             )
         )
     else:
