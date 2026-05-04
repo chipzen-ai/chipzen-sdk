@@ -38,7 +38,9 @@ async fn passes_when_bot_completes_canned_full_match() {
         .expect("full_match scenario missing");
     assert_eq!(full_match.severity, ConformanceSeverity::Pass);
     assert!(
-        full_match.message.contains("handshake + 1 hand + match_end"),
+        full_match
+            .message
+            .contains("handshake + 1 hand + match_end"),
         "unexpected message: {}",
         full_match.message
     );

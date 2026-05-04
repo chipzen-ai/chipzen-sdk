@@ -9,7 +9,7 @@
 //! bot on protocol grounds. It does NOT mean the bot is good.
 
 use crate::bot::Bot;
-use crate::client::{_run_session, MessageReader, MessageWriter, SessionContext};
+use crate::client::{MessageReader, MessageWriter, SessionContext, _run_session};
 use crate::error::Error;
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -573,7 +573,10 @@ async fn run_action_rejected_scenario<B: Bot>(
     }
 
     let (_, retry) = &turn_actions[1];
-    let retry_request_id = retry.get("request_id").and_then(|v| v.as_str()).unwrap_or("");
+    let retry_request_id = retry
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if retry_request_id != "req_1" {
         return ConformanceCheck {
             severity: Severity::Fail,

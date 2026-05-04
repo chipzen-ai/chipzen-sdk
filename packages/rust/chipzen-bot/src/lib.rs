@@ -49,8 +49,8 @@ pub use client::{
     SUPPORTED_PROTOCOL_VERSIONS,
 };
 pub use conformance::{
-    run_conformance_checks, ConformanceCheck, RunConformanceOptions, Severity as ConformanceSeverity,
-    SCENARIO_NAMES,
+    run_conformance_checks, ConformanceCheck, RunConformanceOptions,
+    Severity as ConformanceSeverity, SCENARIO_NAMES,
 };
 pub use error::Error;
 pub use models::{
