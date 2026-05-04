@@ -21,7 +21,7 @@ import asyncio
 import concurrent.futures
 import json
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Literal
+from typing import Any, Callable, Coroutine, Literal
 
 from chipzen.bot import ChipzenBot
 from chipzen.client import _run_session
@@ -622,7 +622,7 @@ async def _run_retry_storm_scenario(bot: ChipzenBot, timeout_s: float) -> Confor
 
 def _run_with_hard_timeout(
     name: str,
-    coro_factory: Callable[[], Awaitable[ConformanceCheck]],
+    coro_factory: Callable[[], Coroutine[Any, Any, ConformanceCheck]],
     *,
     inner_timeout_s: float,
     hard_timeout_s: float,
@@ -669,12 +669,31 @@ def _run_with_hard_timeout(
 # ---------------------------------------------------------------------------
 
 
-SCENARIOS: list[tuple[str, Callable[[ChipzenBot, float], Awaitable[ConformanceCheck]]]] = [
+_ScenarioFn = Callable[[ChipzenBot, float], Coroutine[Any, Any, ConformanceCheck]]
+
+SCENARIOS: list[tuple[str, _ScenarioFn]] = [
     ("connectivity_full_match", _run_full_match_scenario),
     ("multi_turn_request_id_echo", _run_multi_turn_scenario),
     ("action_rejected_recovery", _run_action_rejected_scenario),
     ("retry_storm_bounded", _run_retry_storm_scenario),
 ]
+
+
+def _make_factory(
+    fn: _ScenarioFn, bot: ChipzenBot, timeout_s: float
+) -> Callable[[], Coroutine[Any, Any, ConformanceCheck]]:
+    """Bind a scenario function to its arguments without losing precise types.
+
+    The lambda equivalent of this function is rejected by mypy because
+    its return type cannot be inferred when the lambda is built inside a
+    list comprehension. This nested function makes the binding explicit
+    and types check cleanly.
+    """
+
+    def factory() -> Coroutine[Any, Any, ConformanceCheck]:
+        return fn(bot, timeout_s)
+
+    return factory
 
 
 def run_conformance_checks(bot: ChipzenBot, *, timeout_s: float = 10.0) -> list[ConformanceCheck]:
@@ -697,7 +716,7 @@ def run_conformance_checks(bot: ChipzenBot, *, timeout_s: float = 10.0) -> list[
     return [
         _run_with_hard_timeout(
             name,
-            lambda b=bot, t=timeout_s, fn=fn: fn(b, t),
+            _make_factory(fn, bot, timeout_s),
             inner_timeout_s=timeout_s,
             hard_timeout_s=hard_timeout,
         )
