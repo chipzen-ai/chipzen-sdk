@@ -54,8 +54,10 @@ chipzen-sdk/
   packages/        Per-language SDK packages (Python first, then
                    JavaScript, then Rust). Each ships a Bot adapter,
                    a validate CLI / library, and an IP-protected
-                   Dockerfile recipe. Currently placeholders — see
-                   each package README for its target ship phase.
+                   Dockerfile recipe. Python is published on PyPI as
+                   `chipzen-bot` (alpha); JavaScript and Rust are still
+                   in development — see each package README for its
+                   target ship phase.
   starters/        Per-language scaffolds. The Python starter has
                    moved to packages/python/starters/python/ now that
                    the SDK has shipped (it compiles bot.py to a Cython

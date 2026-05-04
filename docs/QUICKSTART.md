@@ -17,8 +17,18 @@ Want more detail? Read the full developer manual at
 ## 1. Prerequisites
 
 - **Docker** installed and running (`docker version` prints Client + Server).
-- **Python 3.11+** on PATH.
+- **Python 3.10+** on PATH.
 - **~5 GB free disk** for image layers + base images + a buffer.
+
+Install the SDK locally so the `chipzen-sdk` CLI (used in step 7) is on
+your PATH:
+
+```bash
+pip install chipzen-bot
+chipzen-sdk --help    # sanity check
+```
+
+The package is published on PyPI at https://pypi.org/project/chipzen-bot/.
 
 ## 2. Get the SDK + reference bot
 
