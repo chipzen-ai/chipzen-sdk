@@ -1,6 +1,8 @@
 """Abstract base class for Chipzen poker bots.
 
-Subclass ``ChipzenBot`` and implement ``decide()`` to create your bot.
+Subclass :class:`chipzen.Bot` and implement ``decide()`` to create your bot.
+The class lives here as :class:`ChipzenBot` for historical reasons; ``Bot``
+is the canonical public name and what every example uses.
 
 The public developer-facing API is stable across protocol revisions.
 ``decide()`` still receives a :class:`GameState` regardless of whether the
@@ -17,6 +19,12 @@ from chipzen.models import Action, Card, GameState
 
 class ChipzenBot(ABC):
     """Base class for all Chipzen poker bots.
+
+    .. note::
+        The canonical public name for this class is :class:`chipzen.Bot`.
+        ``ChipzenBot`` is the longer internal name; ``chipzen.Bot`` is a
+        re-export of the same class object and is what every example,
+        starter, and the developer manual use. Prefer ``Bot`` in user code.
 
     At minimum you must implement :meth:`decide`. The other lifecycle hooks
     are optional but useful for tracking state across hands.

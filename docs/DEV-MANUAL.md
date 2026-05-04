@@ -74,9 +74,16 @@ When you build a Chipzen bot there are three distinct pieces:
 
 ### 2.2 `Bot` lifecycle hooks
 
-Subclass `chipzen.Bot` (alias for `chipzen.bot.ChipzenBot`). Every method
-below except `decide()` is optional and defaults to a no-op. Signatures are
-quoted verbatim from `chipzen.bot.ChipzenBot` in the published SDK.
+Subclass `chipzen.Bot`. Every method below except `decide()` is optional and
+defaults to a no-op. Signatures are quoted verbatim from the published SDK.
+
+> The class is also exported under its historical internal name
+> `chipzen.bot.ChipzenBot` — they refer to the same object. Always prefer
+> `chipzen.Bot` in user code; `ChipzenBot` is kept only for backward
+> compatibility with early 0.2.0 imports. If you are translating a bot
+> between the Python, JavaScript, and Rust SDKs, see
+> [`PORTING-BETWEEN-SDKS.md`](PORTING-BETWEEN-SDKS.md) for the per-language
+> name mappings.
 
 #### `decide(state: GameState) -> Action` — required
 
