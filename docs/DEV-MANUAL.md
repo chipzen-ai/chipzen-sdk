@@ -478,8 +478,8 @@ Bot turn_action round-trip for match <short_id>: <rt_ms>ms (budget=<budget_ms>ms
 
 This measures from server sending `turn_request` to receiving
 `turn_action`, so it includes: network WS roundtrip + SDK queue drain +
-your `decide()` + WS serialize back. The server's 5 s `bot_decision_timeout_ms`
-(§6) is what this is measured against.
+your `decide()` + WS serialize back. The server's per-match-type decision
+timeout (§6) is what this is measured against.
 
 The round-trip lines go to the API process's own stdout/structlog, not
 the per-match container log. Grep the API logs for `round-trip for match
@@ -538,10 +538,10 @@ events. Use the per-match drawer plus the API endpoint in §5.4.
 
 ## 6. Performance
 
-Your `decide()` must respond end-to-end within `bot_decision_timeout_ms`
-(= 5000 ms). The timeout covers everything from server-side send to
-server-side receive, not just your Python body — see the round-trip
-breakdown below.
+Your `decide()` must respond end-to-end within the **per-match-type
+decision timeout** (§6.2 below). The timeout covers everything from
+server-side send to server-side receive, not just your Python body — see
+the round-trip breakdown below.
 
 ### 6.1 Budget breakdown (observed)
 
@@ -559,18 +559,27 @@ If you see server-side `round-trip = 3-4 s` with your own `decide()`
 returning in 100 ms, your queue drain is the culprit — your hooks are
 doing more work than you think.
 
-### 6.2 Tier timeouts (bot-vs-bot)
+### 6.2 Decision timeout by match type
 
-For ranked bot-vs-bot play, the server uses tighter per-tier budgets:
+The server resolves your bot's per-decision timeout by **match type**,
+not by user tier:
 
-| Tier | `tier_decision_timeout_ms` |
-|---|---|
-| free | 500 ms |
-| pro | 1000 ms |
-| elite | 2000 ms |
+| Match type | Server field | Default |
+|---|---|---|
+| Ranked bot-vs-bot challenges | `bot_match_decision_timeout_ms` | 2000 ms |
+| Tournament bot-vs-bot | `bot_tournament_decision_timeout_ms` | 2000 ms |
+| Human-vs-bot (free `/play`) | `bot_decision_timeout_ms` | 5000 ms |
+| Absolute fallback (any path with no per-match-type knob) | `bot_decision_timeout_ms` | 5000 ms |
 
-Human-vs-bot play uses the global 5000 ms — matches are friendly and a
-slow bot with a pre-decide queue drain needs the headroom.
+Bot-vs-bot is intentionally tighter than human-vs-bot — competitive play
+demands snappier decisions; free human-vs-bot play allows the bot extra
+headroom for pre-decide queue drain (§6.3) so the experience stays
+forgiving for in-development bots.
+
+> Earlier versions of this manual referenced a per-user-tier table
+> (`tier_decision_timeout_ms_{free,pro,elite}`). Those knobs were
+> removed in favor of match-type resolution; tier no longer affects
+> decision timeout.
 
 ### 6.3 Why the queue drains first
 
@@ -604,8 +613,8 @@ way `decide()` starts immediately when `turn_request` arrives.
   charts, solver tables) at `on_match_start` time.
 - **Watch `drain_ms`.** If it's > 20% of `elapsed_ms`, fix the hooks, not
   `decide()`.
-- **Respect the 5 s ceiling.** The server safe-defaults (`check` if legal,
-  else `fold`) on timeout and sends `bot_error` with
+- **Respect the match-type ceiling** (§6.2). The server safe-defaults
+  (`check` if legal, else `fold`) on timeout and sends `bot_error` with
   `reason=bot_decision_timeout` to the human. Your bot appears to fold
   to every raise — a confusing failure mode if you're not watching the
   logs, because the bot looks like it's playing badly rather than timing
