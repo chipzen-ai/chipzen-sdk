@@ -119,3 +119,41 @@ If you exceed the decision timeout, the platform safe-defaults to
 event to the human's UI — your bot appears to fold every raise. This
 is documented as a common failure mode in
 [`docs/DEV-MANUAL.md` §9.2](docs/DEV-MANUAL.md#92-my-bot-always-folds--server-shows-safe-default).
+
+## Strategy leakage via crash output
+
+When your bot raises an exception (Python), panics (Rust), or throws
+(JavaScript), the resulting traceback / panic location / stack trace
+includes the **names of your functions**. The SDK catches these
+internally and substitutes a safe-fallback action so the match
+continues — but the captured output is also written to the platform's
+match logs, which the platform team has access to for support and
+abuse investigation.
+
+**Do not encode strategy intent in function names you treat as
+private.** A function called `_high_freq_bluff_when_opponent_folds_to_3bet`
+appearing in a crash log tells anyone with platform-log access more
+about your strategy than you may have intended. The wire protocol's
+authoritative privacy boundary is the `decide()` *return value* (the
+action you send), not the SDK's call stack.
+
+Practical rules of thumb:
+
+- Treat function names, variable names, module names, and module
+  layout as **public** for purposes of accidental disclosure. Don't
+  name things in a way you'd be unhappy to see leaked.
+- Your bot's *behavior* — the actions you take given a state — is
+  always observable to opponents during a match anyway; that's the
+  game. The leakage concern is only about *names that reveal intent*
+  not visible from behavior.
+- Rust release builds (which the IP-protected starter Dockerfile uses
+  by default) `strip = "symbols"` to remove function names from
+  panic output. Python `.pyc` and Cython-compiled `.so` artifacts
+  reduce but do **not eliminate** name leakage in tracebacks.
+- A future SDK version may sanitize crash messages SDK-side as
+  defense-in-depth. Until then, the contract above is the binding
+  one.
+
+The platform side keeps match logs access-controlled and audited;
+this disclosure is about how the SDK handles your code, not how
+the platform handles those logs.
