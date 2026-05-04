@@ -114,14 +114,24 @@ async function validateCli(args: string[]): Promise<void> {
     console.log("  smoke_test      Bot can be instantiated; decide() returns an Action");
     console.log("  timeout         decide() completes within time limits");
     console.log("");
+    console.log("With --check-connectivity, four protocol scenarios also run:");
+    console.log("  connectivity_full_match    Drive 1 canned match end-to-end");
+    console.log("  multi_turn_request_id_echo Drive 3 turn_requests across phases");
+    console.log("                             and verify request_id echo on each");
+    console.log("  action_rejected_recovery   Verify safe-fallback retry on rejection");
+    console.log("  retry_storm_bounded        Verify reactive response to 3 back-to-back");
+    console.log("                             action_rejected messages");
+    console.log("");
+    console.log("The validator is a courtesy linter -- the authoritative gate is");
+    console.log("server-side seccomp + cap-drop on the bot container.");
+    console.log("");
     console.log("Options:");
     console.log("  --entry-point <name>      Override entry-point filename");
     console.log("  --max-size-mb <int>       Max upload size in MB (default: " +
       `${DEFAULT_MAX_UPLOAD_BYTES / (1024 * 1024)})`);
     console.log("  --timeout-warn-ms <int>   Warn-threshold for decide() in ms (default: " +
       `${DEFAULT_TIMEOUT_WARN_MS})`);
-    console.log("  --check-connectivity      Run the protocol-conformance harness");
-    console.log("                            (drives the bot through 1 canned match)");
+    console.log("  --check-connectivity      Run the 4 protocol-conformance scenarios");
     console.log("  --no-color                Disable colored output");
     return;
   }

@@ -6,6 +6,43 @@ SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Three new conformance scenarios in `validate --check-connectivity`,
+  bringing the total from 1 to 4. The previously-shipped scenario only
+  covered a clean handshake + 1 hand + match_end; bots could pass it
+  and still crash in production. The new scenarios are:
+  - `multi_turn_request_id_echo` — drives 3 `turn_request`s across
+    preflop/flop/turn and verifies the SDK echoes each `request_id`
+    correctly (the previous harness only checked the first action).
+  - `action_rejected_recovery` — verifies the SDK retries with a
+    safe-fallback `check`/`fold` and the original `request_id` when the
+    server sends `action_rejected` (a routine production code path
+    that had no harness coverage).
+  - `retry_storm_bounded` — verifies the SDK responds reactively to 3
+    back-to-back `action_rejected` messages without hanging or entering
+    an unbounded send loop.
+  - Closes part of
+    [#28](https://github.com/chipzen-ai/chipzen-sdk/issues/28) for the
+    JavaScript SDK.
+- Public `SCENARIOS` export from `conformance.ts` listing each
+  scenario name and runner function. Lets tests and downstream tooling
+  enumerate the registered scenarios without parsing CLI output.
+
+### Documentation
+
+- `chipzen-sdk validate --help` now enumerates all 4 conformance
+  scenarios and notes that the validator is a courtesy linter — the
+  authoritative gate is server-side seccomp + cap-drop. Closes part of
+  [#28](https://github.com/chipzen-ai/chipzen-sdk/issues/28).
+- Documented a known limitation in `runConformanceChecks`: the
+  JavaScript harness does not yet include a hard wall-clock watchdog
+  against bots that synchronously block the event loop (busy-loop,
+  `Atomics.wait`). The Python SDK has a daemon-thread watchdog; the
+  JS equivalent (a Worker) is heavier-weight and deferred.
+
 ## [0.2.0] — Initial public release
 
 First release of `@chipzen-ai/bot` to npm. Mirrors the Python SDK's
