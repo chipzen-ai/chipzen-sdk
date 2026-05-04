@@ -30,11 +30,21 @@ pub enum Command {
     ///
     /// Note: there is no `--check-connectivity` flag (cf. the Python
     /// and JavaScript SDKs). In Rust the protocol-conformance harness
-    /// ships as a library function — `chipzen_bot::run_conformance_checks`.
-    /// Drive your bot through the canned full-match exchange from
-    /// `tests/conformance.rs` and run it via `cargo test`. The
-    /// scaffolded starter at `packages/rust/starters/rust/` includes
-    /// a working template.
+    /// ships as a library function — `chipzen_bot::run_conformance_checks`
+    /// — which runs 4 canned scenarios:
+    ///
+    /// * `connectivity_full_match` — handshake + 1 hand + match_end
+    /// * `multi_turn_request_id_echo` — 3 turn_requests, request_id echo
+    /// * `action_rejected_recovery` — safe-fallback retry on rejection
+    /// * `retry_storm_bounded` — reactive response to 3 back-to-back
+    ///   action_rejected messages
+    ///
+    /// Drive your bot through these from `tests/conformance.rs` and run
+    /// via `cargo test`. The scaffolded starter at
+    /// `packages/rust/starters/rust/` includes a working template.
+    ///
+    /// The validator is a courtesy linter — the authoritative gate is
+    /// server-side seccomp + cap-drop on the bot container.
     Validate {
         /// Path to the bot project directory.
         path: PathBuf,

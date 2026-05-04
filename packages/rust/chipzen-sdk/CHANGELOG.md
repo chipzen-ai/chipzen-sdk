@@ -6,6 +6,24 @@ documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Documentation
+
+- Updated `chipzen-sdk validate --help` to mention all 4 conformance
+  scenarios available via `chipzen_bot::run_conformance_checks` and
+  to clarify that the validator is a courtesy linter — the
+  authoritative gate is server-side seccomp + cap-drop on the bot
+  container. Closes part of
+  [#28](https://github.com/chipzen-ai/chipzen-sdk/issues/28).
+- Documented the known limitations of `BLOCKED_DEPS` in
+  `validate.rs`: the most common Rust process-spawn vector is
+  `std::process::Command`, which is built-in and cannot be blocked at
+  the Cargo dep level. Build-deps and macro-generated code are also
+  outside this list. The runtime sandbox (cap-drop + seccomp) is the
+  authoritative gate. Closes part of
+  [#28](https://github.com/chipzen-ai/chipzen-sdk/issues/28).
+
 ## [0.2.0] — Initial public release
 
 First release of `chipzen-sdk` to crates.io. Companion CLI for the
