@@ -47,8 +47,26 @@ pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
 
 /// Crates whose presence in `Cargo.toml` indicates a class of bot we
 /// don't allow. Mirrors the BLOCKED_MODULES sets in the Python and
-/// JavaScript validators; not exhaustive — caught here as a fast
-/// pre-flight. The platform sandbox is the authoritative gate.
+/// JavaScript validators.
+///
+/// **This is a courtesy linter, not a security gate.** Notable
+/// limitations:
+///
+/// - The most common Rust process-spawn vector is
+///   [`std::process::Command`], which is part of the standard library
+///   and **cannot be blocked at the Cargo dep level at all**. The
+///   server-side seccomp policy is what actually prevents `execve` /
+///   `clone` / `fork` syscalls.
+/// - Anything reachable through a `[build-dependencies]` or transitive
+///   dep is also outside this list.
+/// - Macro-generated code can hide what looks like a banned API
+///   behind a sanctioned one.
+///
+/// The runtime sandbox (`--cap-drop=ALL` + read-only rootfs +
+/// seccomp-bpf restricting outbound network egress to the platform
+/// WebSocket endpoint) is the authoritative gate. This list catches
+/// the most common upload-blocking issues a developer's laptop can
+/// surface in 100ms; relying on it for security would be a mistake.
 const BLOCKED_DEPS: &[&str] = &[
     // Process spawning / OS escape
     "subprocess", // (placeholder; cargo deps don't usually have this name)

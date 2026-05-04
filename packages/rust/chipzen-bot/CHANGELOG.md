@@ -6,6 +6,48 @@ documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Three new conformance scenarios in `run_conformance_checks`,
+  bringing the total from 1 to 4. The previously-shipped scenario only
+  covered a clean handshake + 1 hand + match_end; bots could pass it
+  and still crash in production. The new scenarios are:
+  - `multi_turn_request_id_echo` — drives 3 `turn_request`s across
+    preflop/flop/turn and verifies the SDK echoes each `request_id`
+    correctly (the previous harness only checked the first action).
+  - `action_rejected_recovery` — verifies the SDK retries with a
+    safe-fallback `check`/`fold` and the original `request_id` when
+    the server sends `action_rejected` (a routine production code
+    path that had no harness coverage).
+  - `retry_storm_bounded` — verifies the SDK responds reactively to 3
+    back-to-back `action_rejected` messages without hanging or
+    entering an unbounded send loop.
+  - Closes part of
+    [#28](https://github.com/chipzen-ai/chipzen-sdk/issues/28) for the
+    Rust SDK.
+- Public `SCENARIO_NAMES` constant exporting the registered scenario
+  names in execution order. Lets downstream tooling enumerate
+  scenarios programmatically.
+
+### Changed
+
+- `run_conformance_checks` now consumes the bot once but borrows it
+  internally for each scenario. Callers don't need to re-construct
+  the bot between scenarios; the lifetime contract from a single
+  `B: Bot` argument is preserved.
+
+### Documentation
+
+- Documented a known limitation in `run_conformance_checks`: the
+  Rust harness uses `tokio::time::timeout`, which cancels at await
+  points. A bot whose `decide()` synchronously busy-loops or calls a
+  long-blocking non-async function starves the tokio runtime task
+  and prevents the timeout from firing. The Python SDK has a
+  daemon-thread hard watchdog for this; the Rust equivalent
+  (`tokio::task::spawn_blocking`) is more invasive and deferred.
+
 ## [0.2.0] — Initial public release
 
 First release of `chipzen-bot` to crates.io. Mirrors the Python

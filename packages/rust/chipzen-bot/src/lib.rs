@@ -50,7 +50,7 @@ pub use client::{
 };
 pub use conformance::{
     run_conformance_checks, ConformanceCheck, RunConformanceOptions,
-    Severity as ConformanceSeverity,
+    Severity as ConformanceSeverity, SCENARIO_NAMES,
 };
 pub use error::Error;
 pub use models::{
