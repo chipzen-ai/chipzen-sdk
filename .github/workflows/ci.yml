@@ -32,6 +32,12 @@ jobs:
         run: ruff check .
       - name: Format check
         run: ruff format --check .
+      - name: Type-check
+        # Static type-check before tests run — catches type errors
+        # without needing a full test cycle. The SDK is fully typed
+        # (the `Typing :: Typed` classifier in pyproject.toml is the
+        # downstream-facing promise this gate keeps honest).
+        run: mypy src/
       - name: Test
         run: pytest -q
 
