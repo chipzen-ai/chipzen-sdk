@@ -53,6 +53,3 @@ credentials.*
 *.tar.gz
 *.zip
 *.whl
-
-# CLA signatures storage
-.cla-signatures.json

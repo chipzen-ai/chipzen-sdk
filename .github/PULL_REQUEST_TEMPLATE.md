@@ -10,11 +10,12 @@ Thanks for opening a PR! A few quick checks before reviewers can act.
 
 <!-- "Closes #N" or "Refs #N". -->
 
-## CLA
+## DCO
 
-- [ ] I have signed the Contributor License Agreement on a previous PR
-      to this repo, or I will sign it via the CLA Assistant comment
-      that appears on this PR.
+- [ ] Every commit in this PR carries a `Signed-off-by:` trailer
+      matching the commit author -- use `git commit -s` (or
+      `git rebase --signoff main` to fix existing commits). See
+      [CONTRIBUTING.md](../CONTRIBUTING.md#dco-sign-off).
 
 ## Scope check
 

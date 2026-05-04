@@ -1,0 +1,67 @@
+name: DCO
+
+# Verifies every non-merge commit in a PR carries a `Signed-off-by:`
+# trailer whose name + email match the commit author. This is the
+# Developer Certificate of Origin sign-off — see
+# https://developercertificate.org for the text contributors are
+# agreeing to. CONTRIBUTING.md explains the flow.
+#
+# Replaces the previous CLA Assistant flow (#31). Self-hosted /
+# in-tree on purpose: no third-party action, no secrets, no SaaS
+# dependency, no signatures-file branch-protection workaround.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco:
+    name: Verify DCO sign-off
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR commits
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # `fetch-depth: 0` so we can walk the commit range
+          # `base..head` even on a freshly-rebased branch.
+          fetch-depth: 0
+
+      - name: Verify Signed-off-by trailers
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          while read -r sha; do
+            author_name=$(git log -1 --format="%an" "$sha")
+            author_email=$(git log -1 --format="%ae" "$sha")
+            expected="Signed-off-by: ${author_name} <${author_email}>"
+            body=$(git log -1 --format="%B" "$sha")
+            if ! grep -Fxq "$expected" <<<"$body"; then
+              echo "::error::Commit $sha is missing a matching Signed-off-by trailer."
+              echo "  author:    ${author_name} <${author_email}>"
+              echo "  expected:  ${expected}"
+              echo "  trailers found:"
+              if echo "$body" | grep -E "^Signed-off-by:" >/dev/null; then
+                echo "$body" | grep -E "^Signed-off-by:" | sed 's/^/    /'
+              else
+                echo "    (none)"
+              fi
+              missing=$((missing + 1))
+            fi
+          done < <(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}")
+
+          if [ "$missing" -gt 0 ]; then
+            echo "::notice::To fix, run 'git rebase --signoff ${BASE_SHA}' and force-push,"
+            echo "::notice::or amend each commit with 'git commit --amend --signoff --no-edit'."
+            echo "::notice::See https://developercertificate.org/ for the DCO text and"
+            echo "::notice::CONTRIBUTING.md for the full sign-off flow."
+            exit 1
+          fi
+          echo "All commits carry a matching Signed-off-by trailer. Thanks!"

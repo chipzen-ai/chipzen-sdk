@@ -5,9 +5,9 @@ practical parts of submitting a change.
 
 ## Quick summary
 
-1. Sign the Contributor License Agreement (CLA) on your first PR. The
-   CLA Assistant bot will comment on the PR with instructions; reply
-   with the magic phrase it asks for and your signature is recorded.
+1. Sign off every commit with the Developer Certificate of Origin --
+   `git commit -s` adds the `Signed-off-by:` trailer (see "DCO sign-off"
+   below).
 2. Open issues / PRs that fit this repo's scope (see "Scope" below).
    Platform issues go to `support@chipzen.ai` or Discord, not here.
 3. Run the local checks before pushing: `ruff check`, `ruff format
@@ -16,24 +16,45 @@ practical parts of submitting a change.
 4. Use a clear commit message. Conventional Commits (`feat:`, `fix:`,
    `docs:`, `chore:`) are encouraged but not required.
 
-## CLA
+## DCO sign-off
 
-We require all contributors to sign a Contributor License Agreement
-before we can merge their first PR. The agreement is the standard
-[Apache Individual CLA wording](.github/CLA.md), adapted only with our
-name and contact info.
+We use the [Developer Certificate of Origin](https://developercertificate.org/)
+instead of a Contributor License Agreement. The DCO is a lightweight
+statement that you wrote the contribution (or have the right to submit
+it) and that you're submitting it under the project's license
+(Apache-2.0). Read the full text at the link above -- it's eight lines.
 
-The CLA is enforced by [CLA Assistant Lite](https://github.com/contributor-assistant/github-action),
-running as a GitHub Action in this repo. On every PR, the bot leaves a
-comment with the CLA text and the magic-phrase line you need to post
-to sign. CI gates merge on signature.
+You sign by adding a `Signed-off-by:` trailer to every commit. Git
+adds it automatically when you commit with `-s`:
 
-If you've already signed once for this repo, future PRs from the same
-GitHub account skip the prompt.
+```bash
+git commit -s -m "fix: …"
+```
 
-If your contribution is on behalf of an employer, you may also need to
-have your employer sign a Corporate CLA -- contact us at
-`legal@chipzen.ai` to set that up.
+The trailer must match your commit author identity:
+
+```
+Signed-off-by: Jane Doe <jane@example.com>
+```
+
+CI's DCO workflow (`.github/workflows/dco.yml`) verifies every
+non-merge commit in your PR has a matching trailer. Mismatched or
+missing trailers fail the check.
+
+If you forgot to sign earlier commits, fix them with:
+
+```bash
+git rebase --signoff main
+git push --force-with-lease
+```
+
+There's no separate per-account registration -- every PR is checked
+on its own commits.
+
+If your contribution is on behalf of an employer with IP rights, make
+sure you have their permission before opening the PR. The DCO covers
+the assertion that you have the right to submit; the legal exposure
+sits with you and your employer, not with the project.
 
 ## Scope
 
@@ -73,7 +94,7 @@ Discord on purpose. Don't try to bypass that by filing as a "bug".
 Before opening a PR:
 
 - [ ] Branch from `main`.
-- [ ] CLA signed (the bot will tell you if you haven't).
+- [ ] Every commit signed off (`git commit -s`) -- DCO check enforces this.
 - [ ] One logical change per PR. Refactors and feature work in
       separate PRs.
 - [ ] Tests added or updated where it makes sense. The protocol test
