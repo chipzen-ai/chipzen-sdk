@@ -84,10 +84,10 @@ chipzen-sdk/
 ## Contributing
 
 Yes please. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution
-flow, including the **Contributor License Agreement** that all
-contributors must sign before their first PR can be merged. Pull
-requests run a fast CI matrix (lint + protocol test fixture) for each
-starter language.
+flow, including the **Developer Certificate of Origin** sign-off that
+every commit needs (`git commit -s` adds the trailer). Pull requests
+run a fast CI matrix (lint + DCO check + protocol test fixture) for
+each starter language.
 
 ## License
 
