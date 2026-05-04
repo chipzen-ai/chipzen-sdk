@@ -3,7 +3,10 @@
 from chipzen.bot import ChipzenBot
 from chipzen.models import Action, Card, GameState, Player, RoundStart, TurnResult
 
-# Convenience alias matching the public API: `from chipzen import Bot`
+# `Bot` is the canonical public name. `ChipzenBot` is the historical
+# internal class name and remains exported for backward compatibility;
+# they are the *same* class object (`Bot is ChipzenBot` evaluates True).
+# Always prefer `from chipzen import Bot` in user code.
 Bot = ChipzenBot
 
 __all__ = [

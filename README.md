@@ -67,7 +67,9 @@ chipzen-sdk/
                    once each adapter ships.
   examples/        Worked examples. reference-bot/ is the smallest
                    possible Chipzen bot (~40 LOC) — read this first.
-  docs/            QUICKSTART, DEV-MANUAL, and the protocol spec.
+  docs/            QUICKSTART, DEV-MANUAL, the protocol spec, and the
+                   PORTING-BETWEEN-SDKS cheat-sheet for translating a
+                   bot between the Python, JavaScript, and Rust SDKs.
   docs/protocol/   Layer 1 (TRANSPORT-PROTOCOL.md) + Layer 2
                    (POKER-GAME-STATE-PROTOCOL.md). Authoritative.
 ```

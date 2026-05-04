@@ -6,6 +6,22 @@ in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Documentation
+
+- Clarified that `chipzen.Bot` is the canonical public name for the bot
+  base class. `chipzen.bot.ChipzenBot` continues to refer to the same
+  class object and is kept for backward compatibility with 0.2.0
+  imports, but new code should always use `chipzen.Bot`. Added a
+  pointer in `DEV-MANUAL.md` and a clarifying docstring on the
+  `ChipzenBot` class itself.
+- Added [`docs/PORTING-BETWEEN-SDKS.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/PORTING-BETWEEN-SDKS.md):
+  cross-language cheat-sheet for Python ↔ JavaScript ↔ Rust covering
+  base class, lifecycle hook names, action construction idiom,
+  `GameState` field naming, card construction, and async/threading
+  model. Closes [#27](https://github.com/chipzen-ai/chipzen-sdk/issues/27).
+
 ## [0.2.0] — Initial public release
 
 First release of `chipzen-bot` to PyPI. The package was previously
@@ -41,8 +57,9 @@ Two commands. Both have detailed `--help` output.
 
 ### Public API
 
-- **`chipzen.Bot`** — abstract base class (alias for
-  `chipzen.bot.ChipzenBot`). Override `decide(state) -> action`.
+- **`chipzen.Bot`** — abstract base class (also exported as
+  `chipzen.bot.ChipzenBot` — same class object, prefer `Bot`). Override
+  `decide(state) -> action`.
   Optional lifecycle hooks: `on_match_start`, `on_round_start`,
   `on_hand_start`, `on_phase_change`, `on_turn_result`,
   `on_round_result`, `on_hand_result`, `on_match_end`.
