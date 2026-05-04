@@ -600,9 +600,23 @@ def validate_cli(args: list[str] | None = None) -> None:
             "  smoke_test             Bot can be instantiated and returns an Action\n"
             "  timeout                decide() completes within time limits\n"
             "  size                   Artifact size within upload limits\n"
-            "  connectivity_full_match  (with --check-connectivity) Drive the bot\n"
-            "                         through a canned handshake + 1 hand + match_end\n"
-            "                         via an in-process mock WebSocket\n"
+            "  connectivity_full_match    (with --check-connectivity) Drive the bot\n"
+            "                             through a canned handshake + 1 hand + match_end\n"
+            "                             via an in-process mock WebSocket\n"
+            "  multi_turn_request_id_echo (with --check-connectivity) Drive 3 turn_requests\n"
+            "                             across preflop/flop/turn and verify request_id\n"
+            "                             is echoed correctly on each\n"
+            "  action_rejected_recovery   (with --check-connectivity) Verify the SDK\n"
+            "                             retries with a safe-fallback action when the\n"
+            "                             server sends action_rejected\n"
+            "  retry_storm_bounded        (with --check-connectivity) Verify the SDK\n"
+            "                             responds reactively to 3 back-to-back\n"
+            "                             action_rejected messages without hanging\n"
+            "\n"
+            "The validator is a courtesy linter: it catches the most common\n"
+            "upload-blocking issues before you ship. The authoritative gate is\n"
+            "server-side -- the platform runs its own seccomp + cap-drop sandbox\n"
+            "on bot containers and re-checks size, imports, and conformance.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -631,9 +645,11 @@ def validate_cli(args: list[str] | None = None) -> None:
         "--check-connectivity",
         action="store_true",
         help=(
-            "Drive the bot through a canned protocol exchange via an "
-            "in-process mock WebSocket (pure connectivity / wire-protocol "
-            "conformance — no judgement of strategy strength)"
+            "Drive the bot through 4 canned protocol scenarios via an "
+            "in-process mock WebSocket (handshake + 1 hand, multi-turn "
+            "request_id echo, action_rejected recovery, retry-storm "
+            "reactivity). Pure connectivity / wire-protocol conformance — "
+            "no judgement of strategy strength."
         ),
     )
     parser.add_argument(
