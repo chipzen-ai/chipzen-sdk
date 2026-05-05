@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `action_rejected` retry now uses the `valid_actions` field from the
+  rejection payload (Chipzen v0.3.53+) when present, instead of always
+  guessing `["check", "fold"]`. The legacy blind retry caused a
+  consecutive-rejection loop in matches where neither `check` nor
+  `fold` was legal at the rejected decision point: bot sends `call`
+  (rejected because legal=`[check, raise]`), client retries blindly
+  with `check` (also rejected because legal=`[fold, call, raise]` next
+  street), each rejection counts toward the server's
+  `BOT_UNRESPONSIVE_AUTO_SUBSTITUTE_LIMIT` streak, eventually killing
+  the match. Pre-v0.3.53 servers omit `valid_actions` and the client
+  falls back to the legacy behavior — older bots remain compatible.
+
 ### Added
 
 - Three new conformance scenarios in `validate --check-connectivity`,

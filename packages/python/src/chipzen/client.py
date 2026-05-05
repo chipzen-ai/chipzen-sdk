@@ -278,17 +278,23 @@ async def _run_session(
             reason = payload.get("reason")
             message = payload.get("message", "")
             remaining = payload.get("remaining_ms", 0)
+            # Chipzen v0.3.53+ includes ``valid_actions`` in the rejection
+            # payload so the SDK can pick a legal retry instead of guessing.
+            # Older servers omit the field; fall back to ["check","fold"]
+            # — the previous behavior — which still beats no retry at all
+            # but produces a second rejection when neither is legal (the
+            # auto-substitute streak observed in the alpha matrix
+            # 2026-05-04/05).
+            valid = payload.get("valid_actions") or ["check", "fold"]
             logger.warning(
-                "Action rejected (%s): %s -- %dms remaining, retrying with safe fallback",
+                "Action rejected (%s): %s -- %dms remaining, "
+                "retrying with safe fallback (valid=%s)",
                 reason,
                 message,
                 remaining,
+                valid,
             )
-            # For the safe fallback we need to know what's still legal; the
-            # rejection message does not include valid_actions, so we fall
-            # back to check-or-fold which is always safe per the server's
-            # auto-action policy.
-            safe = _safe_fallback_action(["check", "fold"])
+            safe = _safe_fallback_action(valid)
             await _send_json(
                 ws,
                 {
