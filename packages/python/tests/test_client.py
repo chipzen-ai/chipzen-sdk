@@ -399,6 +399,60 @@ async def test_action_rejected_triggers_safe_retry():
 
 
 @pytest.mark.asyncio
+async def test_action_rejected_uses_valid_actions_from_payload():
+    """When the server includes ``valid_actions`` in the rejection payload
+    the client retries with a legal action instead of the blind ``check``
+    fallback. Chipzen v0.3.53+ includes this field; pre-v0.3.53 servers
+    omit it and the client falls back to the legacy behavior (covered by
+    the previous test).
+
+    The bug this guards against: when the bot's first action is rejected
+    in a state where neither ``check`` nor ``fold`` is legal (e.g.
+    ``valid_actions=["call","raise","all_in"]``), the legacy blind retry
+    sent ``check`` again and the server rejected a second time, counting
+    as an auto-substitute. Repeated 15× in a match, that triggered
+    ``BOT_UNRESPONSIVE_AUTO_SUBSTITUTE_LIMIT`` and killed the match.
+    """
+    messages = [
+        _server_hello(),
+        _match_start(),
+        _round_start(),
+        _turn_request(request_id="req_retry"),
+        {
+            "type": "action_rejected",
+            "match_id": MATCH_ID,
+            "seq": 5,
+            "server_ts": "2026-05-05T09:30:00.000Z",
+            "request_id": "req_retry",
+            "reason": "invalid_action",
+            "message": "Action 'check' not legal",
+            "remaining_ms": 4000,
+            "valid_actions": ["call", "raise", "all_in"],
+        },
+        _match_end(seq=6),
+    ]
+    mock_ws = MockWebSocket(messages)
+    bot = RecordingBot()
+
+    await _run_session(
+        mock_ws,
+        bot,
+        match_id=MATCH_ID,
+        token="",
+        ticket=None,
+        client_name="chipzen-sdk-test",
+        client_version="0.2.0",
+    )
+
+    sent = [json.loads(s) for s in mock_ws.sent]
+    turn_actions = [s for s in sent if s["type"] == "turn_action"]
+    assert len(turn_actions) == 2
+    # Retry must come from the rejection's ``valid_actions``, not the
+    # hardcoded ``["check","fold"]`` (neither of which is legal here).
+    assert turn_actions[1]["action"] in {"call", "raise", "all_in"}
+
+
+@pytest.mark.asyncio
 async def test_bot_exception_falls_back_to_fold():
     """If ``decide`` raises, the client should submit a ``fold`` instead of crashing."""
 
