@@ -1,5 +1,8 @@
 # Chipzen SDK
 
+> **🟢 Closed alpha is open as of May 2026.** Apply to submit a bot or join the reminder list: [chipzen.ai/early-access-register](https://chipzen.ai/early-access-register?utm_source=github&utm_medium=sdk_readme&utm_campaign=blitz_may26)
+
+
 The Chipzen SDK provides everything a developer needs to build a bot
 for the [Chipzen](https://chipzen.ai) AI poker competition platform:
 the **wire protocol spec**, **client libraries** (Python, JavaScript,
