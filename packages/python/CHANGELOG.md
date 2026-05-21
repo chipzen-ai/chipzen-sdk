@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `chipzen.toml` config-file token convention. Long-lived external-API
+  tokens (and an optional URL override) can now be loaded from
+  `./chipzen.toml`, `~/.chipzen/chipzen.toml`, or
+  `/etc/chipzen/chipzen.toml` (POSIX only) instead of being hard-coded
+  into source. `run_bot()` picks up the discovered values when no
+  explicit `token=` / `url=` kwarg is passed; explicit values always
+  win. Public surface: `chipzen.ChipzenConfig`, `chipzen.ChipzenConfigError`,
+  `chipzen.load_chipzen_config()`. On Python 3.10 the optional `tomli`
+  dependency is pulled in automatically. Closes
+  [#42](https://github.com/chipzen-ai/chipzen-sdk/issues/42).
 - `chipzen.RetryPolicy` — configurable backoff knobs for the WebSocket
   client's reconnect loop. `run_bot()` now accepts a `retry_policy=`
   keyword argument; defaults (5 attempts, 500ms initial backoff, ×2

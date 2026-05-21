@@ -46,6 +46,49 @@ Lifecycle hooks (`on_match_start`, `on_round_start`, `on_phase_change`,
 override them if you need to maintain per-match or per-hand state
 between turns.
 
+## Configuration (`chipzen.toml`)
+
+Long-lived API tokens for external-API bots can be loaded from a
+`chipzen.toml` config file instead of being hard-coded into source.
+The SDK searches, first match wins:
+
+1. `./chipzen.toml` (current working directory)
+2. `~/.chipzen/chipzen.toml`
+3. `/etc/chipzen/chipzen.toml` (POSIX only; silently skipped on Windows)
+
+File format:
+
+```toml
+[external_api]
+token = "cz_extbot_<32-char-base62-random>"
+url   = "wss://chipzen.ai/ws/external/bot/<bot_id>"  # optional URL override
+```
+
+Precedence rules:
+
+- An explicit `token=` (or `url=`) kwarg to `run_bot()` always wins.
+- Otherwise, the value from `chipzen.toml` is used.
+- If neither is present, `run_bot()` raises a clear `ValueError`
+  pointing at the config-file convention.
+
+A `chipzen.toml` that is **found but malformed** (bad TOML syntax,
+missing `[external_api]` section, wrong value types) raises
+`chipzen.ChipzenConfigError` rather than silently falling back to
+defaults — typos in the config file should be surfaced, not hidden.
+
+```python
+import asyncio
+from chipzen import Bot, Action, GameState
+from chipzen.client import run_bot
+
+class MyBot(Bot):
+    def decide(self, state: GameState) -> Action:
+        return Action.fold()
+
+# Token comes from chipzen.toml on the search path.
+asyncio.run(run_bot("wss://chipzen.ai/ws/external/bot/<bot_id>", MyBot()))
+```
+
 ## CLI
 
 The `chipzen-sdk` CLI is installed alongside the Python package:

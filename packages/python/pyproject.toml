@@ -28,6 +28,12 @@ classifiers = [
 ]
 dependencies = [
     "websockets>=12.0",
+    # ``tomli`` is the third-party predecessor / backport of stdlib
+    # ``tomllib`` (3.11+). The SDK reads ``chipzen.toml`` (External-API
+    # Issue 23 / chipzen-sdk#42) via ``chipzen.config`` and falls back
+    # to ``tomli`` only on 3.10. Drop this entry when 3.10 leaves
+    # ``requires-python``.
+    "tomli>=2.0 ; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
