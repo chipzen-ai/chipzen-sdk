@@ -1,6 +1,7 @@
 """Chipzen Poker Bot SDK -- build, test, and deploy poker bots for the Chipzen platform."""
 
 from chipzen.bot import ChipzenBot
+from chipzen.config import ChipzenConfig, ChipzenConfigError, load_chipzen_config
 from chipzen.models import Action, Card, GameState, Player, RoundStart, TurnResult
 from chipzen.retry import RetryPolicy
 
@@ -15,11 +16,14 @@ __all__ = [
     "ChipzenBot",
     "Action",
     "Card",
+    "ChipzenConfig",
+    "ChipzenConfigError",
     "GameState",
     "Player",
     "RetryPolicy",
     "RoundStart",
     "TurnResult",
+    "load_chipzen_config",
 ]
 
 __version__ = "0.2.0"

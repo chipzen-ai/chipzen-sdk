@@ -22,6 +22,12 @@ from typing import Any
 
 import chipzen
 from chipzen.bot import ChipzenBot
+from chipzen.config import (
+    ChipzenConfig,
+    load_chipzen_config,
+    resolve_token,
+    resolve_url,
+)
 from chipzen.models import Action, GameState
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
 
@@ -68,8 +74,8 @@ async def _send_json(ws: Any, message: dict) -> None:
 
 
 async def run_bot(
-    url: str,
-    bot: ChipzenBot,
+    url: str | None = None,
+    bot: ChipzenBot | None = None,
     *,
     max_retries: int | None = None,
     retry_policy: RetryPolicy | None = None,
@@ -78,6 +84,7 @@ async def run_bot(
     match_id: str | None = None,
     client_name: str = "chipzen-sdk",
     client_version: str = "0.2.0",
+    config: ChipzenConfig | None = None,
 ) -> None:
     """Connect a bot to the Chipzen server and play until the match ends.
 
@@ -85,6 +92,9 @@ async def run_bot(
         url: WebSocket URL, e.g.
              ``ws://localhost:8001/ws/match/{match_id}/{participant_id}``
              or ``.../ws/match/{match_id}/bot`` for internal bots.
+             If ``None``, falls back to ``[external_api].url`` from the
+             discovered ``chipzen.toml`` (see :mod:`chipzen.config`); if
+             still ``None``, a :class:`ValueError` is raised.
         bot: Your bot instance.
         max_retries: Deprecated convenience override for
             ``retry_policy.max_reconnect_attempts``. If provided,
@@ -95,12 +105,59 @@ async def run_bot(
             :data:`chipzen.retry.DEFAULT_RETRY_POLICY` (5 attempts,
             500ms initial backoff, ×2 multiplier, capped at 30s — the
             same as the server-side grace window).
-        token: Bot API token (for the ``/bot`` endpoint).
-        ticket: Single-use ticket (for competitive endpoints).
+        token: Bot API token (for the ``/bot`` endpoint). If ``None``,
+            falls back to ``[external_api].token`` from the discovered
+            ``chipzen.toml`` (see :mod:`chipzen.config`). An explicit
+            value — even an empty string — always wins over the config
+            file. Pass ``token=""`` to override the config file with an
+            empty token (useful for the sidecar / localhost flow that
+            accepts unauthenticated connections).
+        ticket: Single-use ticket (for competitive endpoints). When set,
+            takes precedence over ``token`` on the wire.
         match_id: Match UUID. Extracted from the URL if not provided.
         client_name: Client software name sent in the ``hello`` handshake.
         client_version: Client software version sent in the ``hello`` handshake.
+        config: Pre-loaded :class:`ChipzenConfig`. If ``None`` and
+            either ``token`` or ``url`` is not explicitly provided, the
+            SDK invokes :func:`chipzen.config.load_chipzen_config` to
+            discover one. Pass an explicit ``ChipzenConfig(path=Path("/dev/null"))``
+            to bypass discovery in environments where stray
+            ``chipzen.toml`` files would surprise the dev.
+
+    Raises:
+        ValueError: If neither ``url`` is explicitly passed nor a URL
+            is discoverable from the config file. ``bot`` is also
+            required and a missing-``bot`` call raises here.
+        chipzen.config.ChipzenConfigError: If a ``chipzen.toml`` is
+            found on the search path but cannot be parsed or is
+            missing the ``[external_api]`` section.
     """
+    if bot is None:
+        raise ValueError(
+            "run_bot() requires a Bot instance. Pass it as the second "
+            "positional argument: run_bot(url, MyBot(), token=...)."
+        )
+
+    # Discover ``chipzen.toml`` exactly once. We only invoke discovery
+    # when at least one of url/token is missing — bots that pass both
+    # explicitly should not pay the cost of a filesystem stat sweep.
+    if config is None and (token is None or url is None):
+        config = load_chipzen_config()
+
+    resolved_token = resolve_token(
+        explicit_token=token,
+        explicit_ticket=ticket,
+        config=config,
+    )
+    resolved_url = resolve_url(explicit_url=url, config=config)
+
+    if resolved_url is None:
+        raise ValueError(
+            "run_bot() requires a WebSocket URL. Either pass url=... "
+            "explicitly or set [external_api].url in chipzen.toml "
+            "(searched: ./chipzen.toml, ~/.chipzen/chipzen.toml, "
+            "/etc/chipzen/chipzen.toml on POSIX)."
+        )
     try:
         from websockets.asyncio.client import connect
     except ImportError:
@@ -112,7 +169,7 @@ async def run_bot(
             ) from exc
 
     if match_id is None:
-        match_id = _extract_match_id(url)
+        match_id = _extract_match_id(resolved_url)
 
     policy = retry_policy if retry_policy is not None else DEFAULT_RETRY_POLICY
     if max_retries is not None:
@@ -136,13 +193,13 @@ async def run_bot(
             # defense, this is belt-and-braces so bots talking to the
             # platform through Cloudflare keep working even if the
             # allowlist regresses or covers a different path.
-            async with connect(url, user_agent_header=USER_AGENT) as ws:
+            async with connect(resolved_url, user_agent_header=USER_AGENT) as ws:
                 attempt = 0  # reset on successful connect
                 await _run_session(
                     ws,
                     bot,
                     match_id=match_id,
-                    token=token,
+                    token=resolved_token,
                     ticket=ticket,
                     client_name=client_name,
                     client_version=client_version,

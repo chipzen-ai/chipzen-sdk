@@ -212,7 +212,10 @@ class _ConnectStub:
         self.fail_count = fail_count
         self.calls = 0
 
-    def __call__(self, _url):  # noqa: D401 -- mimics websockets.connect signature
+    def __call__(self, _url, **_kwargs):  # noqa: D401 -- mimics websockets.connect signature
+        # ``**_kwargs`` swallows ``user_agent_header=`` (added in #46) and
+        # any future ``websockets.connect`` kwargs the SDK starts passing
+        # — keeps the stub compatible across SDK revisions.
         self.calls += 1
         if self.calls <= self.fail_count:
             return _RaisingCM()
