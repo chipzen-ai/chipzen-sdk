@@ -54,6 +54,7 @@ Changelog = "https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/python
 
 [project.scripts]
 chipzen-sdk = "chipzen.__main__:main"
+chipzen = "chipzen.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chipzen"]

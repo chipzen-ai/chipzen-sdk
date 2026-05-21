@@ -32,12 +32,15 @@ File format
 ::
 
     [external_api]
-    token = "cz_extbot_<32-char-base62-random>"
-    url   = "wss://chipzen.ai/ws/external/bot/<bot_id>"  # optional
+    token  = "cz_extbot_<32-char-base62-random>"
+    url    = "wss://chipzen.ai/ws/external/bot/<bot_id>"  # optional
+    bot_id = "<bot-uuid>"                                 # optional
 
-The ``url`` field is optional; the SDK defaults to an env-aware lobby
-URL helper (External-API Issue 24) once that ships, but for now the
-field is just plumbed through to :func:`run_bot` if present.
+All three fields are optional. ``url`` (when set) overrides the
+env-aware lobby URL helper (External-API Issue 24). ``bot_id`` is the
+external-API bot UUID; it's consumed by the ``chipzen run-external``
+CLI wrapper (External-API Issue 25) to build the env-derived URL when
+no explicit ``url`` is configured.
 
 Precedence rules
 ----------------
@@ -87,11 +90,19 @@ class ChipzenConfig:
         token: Value of ``[external_api] token`` if present, else
             ``None``.
         url: Value of ``[external_api] url`` if present, else ``None``.
+        bot_id: Value of ``[external_api] bot_id`` if present, else
+            ``None``. Consumed by the ``chipzen run-external`` CLI
+            wrapper (External-API Issue 25) to build the env-derived
+            lobby URL via :func:`chipzen.connect.connect_to_chipzen`
+            when no explicit ``url`` override is set. Not used at the
+            :func:`chipzen.client.run_bot` layer (which only needs the
+            already-fully-formed URL).
     """
 
     path: Path
     token: str | None = None
     url: str | None = None
+    bot_id: str | None = None
 
 
 class ChipzenConfigError(ValueError):
@@ -226,7 +237,13 @@ def load_chipzen_config(
             f"{path}: [{SECTION_NAME}].url must be a string, got {type(url).__name__}."
         )
 
-    return ChipzenConfig(path=path, token=token, url=url)
+    bot_id = section.get("bot_id")
+    if bot_id is not None and not isinstance(bot_id, str):
+        raise ChipzenConfigError(
+            f"{path}: [{SECTION_NAME}].bot_id must be a string, got {type(bot_id).__name__}."
+        )
+
+    return ChipzenConfig(path=path, token=token, url=url, bot_id=bot_id)
 
 
 def resolve_token(
