@@ -72,4 +72,29 @@ export abstract class Bot {
   onMatchEnd(_results: Record<string, unknown>): void {
     /* default: no-op */
   }
+
+  /**
+   * Called after each `turn_action` is sent with the wall-clock latency,
+   * in milliseconds, between the `turn_request` arriving and the
+   * `turn_action` being sent.
+   *
+   * Default implementation is a no-op. Override to log per-turn decision
+   * times locally — useful for keeping yourself well under the
+   * `turnTimeoutMs` budget announced in `match_start`, and for catching
+   * pathological tail latency before it produces server-side `auto_action`
+   * substitutes.
+   *
+   * The value is measured around your `decide` call plus the WebSocket
+   * send, so it reflects the wall time the server sees when deciding
+   * whether to time you out. The server records its own copy of this
+   * telemetry independently; the SDK hook is for the developer's own
+   * logging / metrics.
+   *
+   * @param latencyMs Milliseconds elapsed between `turn_request` received
+   *                  and `turn_action` sent. Rounded to the nearest
+   *                  millisecond, never negative.
+   */
+  onDecisionLatency(_latencyMs: number): void {
+    /* default: no-op */
+  }
 }

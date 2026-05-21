@@ -77,7 +77,29 @@ fn bot_default_hooks_are_no_ops() {
     bot.on_turn_result(&msg); // no-op
     bot.on_round_result(&msg); // no-op
     bot.on_match_end(&msg); // no-op
+    bot.on_decision_latency(0); // no-op
+    bot.on_decision_latency(42); // no-op
     assert!(matches!(bot.decide(&make_state()), Action::Check));
+}
+
+#[test]
+fn bot_on_decision_latency_is_overridable_and_records_value() {
+    struct LatencyBot {
+        samples: Vec<u64>,
+    }
+    impl Bot for LatencyBot {
+        fn decide(&mut self, _state: &GameState) -> Action {
+            Action::Fold
+        }
+        fn on_decision_latency(&mut self, latency_ms: u64) {
+            self.samples.push(latency_ms);
+        }
+    }
+    let mut bot = LatencyBot { samples: vec![] };
+    bot.on_decision_latency(7);
+    bot.on_decision_latency(123);
+    bot.on_decision_latency(0);
+    assert_eq!(bot.samples, vec![7, 123, 0]);
 }
 
 fn make_state() -> GameState {

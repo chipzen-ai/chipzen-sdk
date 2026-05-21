@@ -17,6 +17,24 @@ import { Action, parseGameState } from "./models.js";
 // ---------------------------------------------------------------------------
 
 /**
+ * SDK package version, mirrored from package.json. Kept in sync at
+ * release time (see RELEASING.md). Used to build the `User-Agent`
+ * header on the WebSocket handshake.
+ */
+export const SDK_VERSION = "0.2.0";
+
+/**
+ * `User-Agent` the SDK sends on the WebSocket handshake.
+ *
+ * Defense-in-depth alongside the Chipzen-side Cloudflare path allowlist
+ * (Chipzen #2222 / external-API Issue 19): default `ws` library UAs
+ * (`ws/X.Y.Z`) can trip Cloudflare bot-fight HTTP 1010 on the
+ * `chipzen.ai` zone. Identifying as `chipzen-sdk-javascript/<version>`
+ * gives the platform a stable string to allowlist on.
+ */
+export const USER_AGENT = `chipzen-sdk-javascript/${SDK_VERSION}`;
+
+/**
  * Optional knobs for `runBot`. All fields default to sensible values
  * matching the platform's expectations.
  */
@@ -61,7 +79,12 @@ export async function runBot(
   for (;;) {
     let ws: WebSocket | null = null;
     try {
-      ws = new WebSocket(url);
+      // Identify the SDK on the handshake. Default `ws` UA strings
+      // can trip Cloudflare bot-fight on the chipzen.ai zone; the
+      // platform-side path allowlist (Chipzen #2222) is the primary
+      // defense, this is belt-and-braces so JS bots keep connecting
+      // even if the allowlist regresses or covers a different path.
+      ws = new WebSocket(url, { headers: { "User-Agent": USER_AGENT } });
       await _waitForOpen(ws);
       retries = 0; // reset on successful connect
       await _runSession(ws, bot, {
@@ -201,6 +224,10 @@ export async function _runSession(
 
       case "turn_request": {
         const requestId = (msg.request_id as string | undefined) ?? "";
+        // Time the round-trip decide+send so the bot can self-report
+        // per-turn latency. `performance.now()` is monotonic and gives
+        // sub-millisecond resolution on Node ≥20.
+        const turnStart = performance.now();
         let action: Action;
         try {
           const state = parseGameState(msg);
@@ -221,6 +248,13 @@ export async function _runSession(
           request_id: requestId,
           ...action.toWire(),
         });
+        const latencyMs = Math.max(0, Math.round(performance.now() - turnStart));
+        try {
+          bot.onDecisionLatency(latencyMs);
+        } catch {
+          // User hook crashed — never let observability take down the
+          // session loop. Swallow silently; user code controls logging.
+        }
         break;
       }
 
@@ -249,6 +283,7 @@ export async function _runSession(
           // call ourselves with a synthesized iterator for one message.
           let action: Action;
           const requestId = (pending.request_id as string | undefined) ?? "";
+          const turnStart = performance.now();
           try {
             action = bot.decide(parseGameState(pending));
             if (!(action instanceof Action)) {
@@ -263,6 +298,13 @@ export async function _runSession(
             request_id: requestId,
             ...action.toWire(),
           });
+          const latencyMs = Math.max(0, Math.round(performance.now() - turnStart));
+          try {
+            bot.onDecisionLatency(latencyMs);
+          } catch {
+            // User hook crashed — never let observability take down
+            // the session loop.
+          }
         }
         break;
       }

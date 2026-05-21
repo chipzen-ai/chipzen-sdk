@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still works as a convenience override for the attempt cap; new code
   should pass a full `RetryPolicy` instead. Closes
   [#45](https://github.com/chipzen-ai/chipzen-sdk/issues/45).
+- `Bot.on_decision_latency(latency_ms)` lifecycle hook. Fires after
+  every `turn_action` is sent with the wall-clock milliseconds elapsed
+  since the corresponding `turn_request` arrived. Override to log
+  per-turn decision times locally and catch tail latency before it
+  produces server-side `auto_action` substitutes. Default is a no-op,
+  so existing bots are unaffected. (#46)
+- Non-default `User-Agent` header on the WebSocket handshake:
+  `chipzen-sdk-python/<version>`. Defense-in-depth alongside the
+  platform-side Cloudflare path allowlist so the default
+  `websockets` library UA doesn't trip the bot-fight rule on the
+  `chipzen.ai` zone. (#46)
 
 ## [0.2.1] — 2026-05-05
 

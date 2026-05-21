@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use chipzen_bot::{
-    _extract_match_id, _run_session, _safe_fallback_action, Action, Bot, Error, GameState,
-    MessageReader, MessageWriter, SessionContext, SUPPORTED_PROTOCOL_VERSIONS,
+    _extract_match_id, _run_session, _safe_fallback_action, user_agent, Action, Bot, Error,
+    GameState, MessageReader, MessageWriter, SessionContext, SDK_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -330,6 +331,306 @@ async fn run_session_skips_malformed_envelope_and_continues() {
         result.is_ok(),
         "expected garbage to be skipped, not bubble: {result:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// User-Agent header + on_decision_latency hook (Issue #46)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn user_agent_identifies_as_chipzen_sdk_rust_with_version() {
+    let ua = user_agent();
+    // Non-default UA so Cloudflare bot-fight doesn't reject the
+    // handshake on the chipzen.ai zone. The SDK_VERSION constant
+    // documents what's baked in.
+    assert_eq!(ua, format!("chipzen-sdk-rust/{SDK_VERSION}"));
+    assert!(ua.starts_with("chipzen-sdk-rust/"));
+    // No spaces — keeps the header valid and avoids substrings that
+    // a default-library heuristic would still flag.
+    assert!(!ua.contains(' '));
+    // Not the default tungstenite UA.
+    assert!(!ua.starts_with("tungstenite"));
+    // SDK_VERSION matches CARGO_PKG_VERSION at build time.
+    assert_eq!(SDK_VERSION, env!("CARGO_PKG_VERSION"));
+}
+
+/// Bot that records latency samples for verification.
+#[derive(Default)]
+struct LatencyRecordingBot {
+    samples: Vec<u64>,
+}
+
+impl Bot for LatencyRecordingBot {
+    fn decide(&mut self, state: &GameState) -> Action {
+        if state.valid_actions.iter().any(|a| a == "check") {
+            Action::Check
+        } else {
+            Action::Fold
+        }
+    }
+    fn on_decision_latency(&mut self, latency_ms: u64) {
+        self.samples.push(latency_ms);
+    }
+}
+
+#[tokio::test]
+async fn on_decision_latency_fires_after_turn_action() {
+    let server_hello = json!({"type": "hello", "match_id": "m_test", "seq": 1});
+    let turn_request = json!({
+        "type": "turn_request",
+        "seq": 2,
+        "request_id": "req_lat",
+        "valid_actions": ["fold", "check"],
+        "state": {"phase": "preflop", "valid_actions": ["fold", "check"]},
+    });
+    let match_end = json!({"type": "match_end", "seq": 3, "reason": "complete"});
+    let mut reader = ScriptedReader {
+        messages: vec![
+            server_hello.to_string(),
+            turn_request.to_string(),
+            match_end.to_string(),
+        ],
+        index: 0,
+    };
+    let mut writer = CapturingWriter::default();
+    let mut bot = LatencyRecordingBot::default();
+    let context = ctx();
+
+    _run_session(&mut reader, &mut writer, &mut bot, &context)
+        .await
+        .unwrap();
+
+    // Exactly one turn_request -> exactly one latency sample.
+    assert_eq!(bot.samples.len(), 1);
+    // A trivial decide+mock-send should land well under one second.
+    assert!(
+        bot.samples[0] < 5000,
+        "expected latency under 5s, got {}ms",
+        bot.samples[0]
+    );
+
+    // And the turn_action was emitted on the wire.
+    let sent = writer.sent.lock().unwrap().clone();
+    let turn_action: Value = serde_json::from_str(&sent[2]).unwrap();
+    assert_eq!(turn_action["type"], "turn_action");
+    assert_eq!(turn_action["request_id"], "req_lat");
+}
+
+#[tokio::test]
+async fn on_decision_latency_reflects_slow_decide() {
+    /// Bot that sleeps in `decide` to simulate a heavyweight strategy.
+    struct SlowBot {
+        sleep: std::time::Duration,
+        latencies: Vec<u64>,
+    }
+    impl Bot for SlowBot {
+        fn decide(&mut self, _state: &GameState) -> Action {
+            std::thread::sleep(self.sleep);
+            Action::Fold
+        }
+        fn on_decision_latency(&mut self, latency_ms: u64) {
+            self.latencies.push(latency_ms);
+        }
+    }
+
+    async fn run_once(bot: &mut SlowBot) {
+        let server_hello = json!({"type": "hello", "match_id": "m_test", "seq": 1});
+        let turn_request = json!({
+            "type": "turn_request",
+            "seq": 2,
+            "request_id": "req_x",
+            "valid_actions": ["fold", "check"],
+            "state": {"phase": "preflop", "valid_actions": ["fold", "check"]},
+        });
+        let match_end = json!({"type": "match_end", "seq": 3, "reason": "complete"});
+        let mut reader = ScriptedReader {
+            messages: vec![
+                server_hello.to_string(),
+                turn_request.to_string(),
+                match_end.to_string(),
+            ],
+            index: 0,
+        };
+        let mut writer = CapturingWriter::default();
+        let context = ctx();
+        _run_session(&mut reader, &mut writer, bot, &context)
+            .await
+            .unwrap();
+    }
+
+    let mut fast = SlowBot {
+        sleep: std::time::Duration::from_millis(0),
+        latencies: vec![],
+    };
+    let mut slow = SlowBot {
+        sleep: std::time::Duration::from_millis(40),
+        latencies: vec![],
+    };
+    run_once(&mut fast).await;
+    run_once(&mut slow).await;
+
+    assert_eq!(fast.latencies.len(), 1);
+    assert_eq!(slow.latencies.len(), 1);
+    assert!(
+        slow.latencies[0] >= 30,
+        "expected slow.latencies[0] >= 30, got {}",
+        slow.latencies[0]
+    );
+    assert!(
+        slow.latencies[0] > fast.latencies[0],
+        "expected slow latency > fast latency, got slow={} fast={}",
+        slow.latencies[0],
+        fast.latencies[0]
+    );
+}
+
+#[tokio::test]
+async fn on_decision_latency_fires_for_reconnected_pending_request() {
+    let server_hello = json!({"type": "hello", "match_id": "m_test", "seq": 1});
+    let reconnected = json!({
+        "type": "reconnected",
+        "seq": 2,
+        "round_number": 1,
+        "pending_request": {
+            "type": "turn_request",
+            "request_id": "req_reconn",
+            "valid_actions": ["fold", "check"],
+            "state": {"phase": "preflop", "valid_actions": ["fold", "check"]},
+        },
+    });
+    let match_end = json!({"type": "match_end", "seq": 3, "reason": "complete"});
+    let mut reader = ScriptedReader {
+        messages: vec![
+            server_hello.to_string(),
+            reconnected.to_string(),
+            match_end.to_string(),
+        ],
+        index: 0,
+    };
+    let mut writer = CapturingWriter::default();
+    let mut bot = LatencyRecordingBot::default();
+    let context = ctx();
+
+    _run_session(&mut reader, &mut writer, &mut bot, &context)
+        .await
+        .unwrap();
+
+    // The pending request gets dispatched -> latency fires.
+    assert_eq!(bot.samples.len(), 1);
+    let sent = writer.sent.lock().unwrap().clone();
+    let turn_action: Value = serde_json::from_str(&sent[2]).unwrap();
+    assert_eq!(turn_action["type"], "turn_action");
+    assert_eq!(turn_action["request_id"], "req_reconn");
+}
+
+/// End-to-end test: spin up a localhost WebSocket server that
+/// captures the incoming request headers, drive `run_bot` against it,
+/// and assert the `User-Agent` we sent matches `chipzen-sdk-rust/<v>`.
+#[tokio::test]
+#[allow(clippy::result_large_err)]
+async fn run_bot_sends_chipzen_sdk_rust_user_agent_header() {
+    use chipzen_bot::{run_bot, RunBotOptions};
+    use std::sync::{Arc, Mutex};
+    use tokio::net::TcpListener;
+
+    let captured_ua: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let captured_for_server = captured_ua.clone();
+
+    // Bind to an ephemeral port so the test never collides with
+    // anything else running locally.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("ws://{addr}/ws/match/m_test/bot");
+
+    // Server task: accept one connection, capture the User-Agent
+    // header during the handshake, deliver server hello + match_end
+    // so the client exits cleanly.
+    let server = tokio::spawn(async move {
+        use futures_util::SinkExt;
+        use tokio_tungstenite::accept_hdr_async;
+        use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = accept_hdr_async(stream, |req: &Request, resp: Response| {
+            let ua = req
+                .headers()
+                .get("User-Agent")
+                .and_then(|h| h.to_str().ok())
+                .map(String::from);
+            *captured_for_server.lock().unwrap() = ua;
+            Ok(resp)
+        })
+        .await
+        .unwrap();
+        let hello = json!({"type": "hello", "match_id": "m_test", "seq": 1});
+        let end =
+            json!({"type": "match_end", "match_id": "m_test", "seq": 2, "reason": "complete"});
+        SinkExt::<Message>::send(&mut ws, Message::Text(hello.to_string()))
+            .await
+            .unwrap();
+        SinkExt::<Message>::send(&mut ws, Message::Text(end.to_string()))
+            .await
+            .unwrap();
+        // Allow the client to drain before we drop and tear down.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    });
+
+    struct NoopBot;
+    impl Bot for NoopBot {
+        fn decide(&mut self, _state: &GameState) -> Action {
+            Action::Fold
+        }
+    }
+
+    run_bot(
+        &url,
+        NoopBot,
+        RunBotOptions {
+            token: Some(String::new()),
+            max_retries: 0,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    server.await.unwrap();
+
+    let ua = captured_ua.lock().unwrap().clone();
+    assert!(ua.is_some(), "server never recorded a User-Agent header");
+    let ua = ua.unwrap();
+    assert!(
+        ua.starts_with("chipzen-sdk-rust/"),
+        "unexpected User-Agent header: {ua}"
+    );
+    assert_eq!(ua, user_agent());
+}
+
+#[tokio::test]
+async fn on_decision_latency_does_not_fire_for_non_turn_messages() {
+    // A session that only sees ping + match_end should never invoke
+    // on_decision_latency.
+    let server_hello = json!({"type": "hello", "match_id": "m_test", "seq": 1});
+    let ping = json!({"type": "ping", "seq": 2});
+    let match_end = json!({"type": "match_end", "seq": 3, "reason": "complete"});
+    let mut reader = ScriptedReader {
+        messages: vec![
+            server_hello.to_string(),
+            ping.to_string(),
+            match_end.to_string(),
+        ],
+        index: 0,
+    };
+    let mut writer = CapturingWriter::default();
+    let mut bot = LatencyRecordingBot::default();
+    let context = ctx();
+
+    _run_session(&mut reader, &mut writer, &mut bot, &context)
+        .await
+        .unwrap();
+
+    assert!(bot.samples.is_empty());
 }
 
 #[tokio::test]

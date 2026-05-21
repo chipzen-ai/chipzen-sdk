@@ -12,10 +12,10 @@ use crate::models::{parse_game_state, Action};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Error as WsError, Message},
+    tungstenite::{client::IntoClientRequest, http::HeaderValue, Error as WsError, Message},
 };
 
 /// Protocol versions this client claims to support in the handshake.
@@ -24,6 +24,22 @@ pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["1.0"];
 const DEFAULT_CLIENT_NAME: &str = "chipzen-sdk";
 const DEFAULT_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_MAX_RETRIES: u32 = 3;
+
+/// SDK package version, baked in at compile time from Cargo.toml.
+/// Used in the `User-Agent` header sent on the WebSocket handshake.
+pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `User-Agent` string the SDK sends on the WebSocket handshake.
+///
+/// Defense-in-depth alongside the Chipzen-side Cloudflare path
+/// allowlist (Chipzen #2222 / external-API Issue 19): the default
+/// `tokio-tungstenite` UA (`tungstenite-rs/X.Y.Z`) can trip Cloudflare
+/// bot-fight HTTP 1010 on the `chipzen.ai` zone. Identifying as
+/// `chipzen-sdk-rust/<version>` gives the platform a stable string
+/// to allowlist on.
+pub fn user_agent() -> String {
+    format!("chipzen-sdk-rust/{}", SDK_VERSION)
+}
 
 /// Optional knobs for [`run_bot`]. Defaults match the platform's
 /// expectations.
@@ -96,7 +112,19 @@ pub async fn run_bot<B: Bot>(url: &str, mut bot: B, options: RunBotOptions) -> R
     let mut retries: u32 = 0;
     loop {
         let result: Result<(), Error> = async {
-            let (ws_stream, _) = connect_async(url).await?;
+            // Build a request with a non-default `User-Agent` so the
+            // Cloudflare bot-fight rule on the `chipzen.ai` zone
+            // doesn't reject the handshake. The platform-side path
+            // allowlist (Chipzen #2222) is the primary defense, this
+            // is belt-and-braces in case the allowlist regresses or
+            // covers a different path.
+            let mut request = url
+                .into_client_request()
+                .map_err(|e| Error::Protocol(format!("invalid websocket url: {e}")))?;
+            let ua = HeaderValue::from_str(&user_agent())
+                .map_err(|e| Error::Protocol(format!("invalid user-agent: {e}")))?;
+            request.headers_mut().insert("User-Agent", ua);
+            let (ws_stream, _) = connect_async(request).await?;
             let (mut write_half, mut read_half) = ws_stream.split();
             let mut reader = WsReader {
                 inner: &mut read_half,
@@ -231,6 +259,10 @@ where
                     .unwrap_or("")
                     .to_string();
                 let state = parse_game_state(&msg);
+                // Time the round-trip decide+send so the bot can self-
+                // report per-turn latency. `Instant` is monotonic so
+                // wall-clock drift doesn't poison the value.
+                let turn_start = Instant::now();
                 let action = catch_decide(bot, &state, &msg);
                 let (action_str, params) = action.to_wire();
                 let payload = json!({
@@ -241,6 +273,8 @@ where
                     "params": params,
                 });
                 writer.send(payload.to_string()).await?;
+                let latency_ms = turn_start.elapsed().as_millis() as u64;
+                bot.on_decision_latency(latency_ms);
             }
             "action_rejected" => {
                 let request_id = msg
@@ -277,6 +311,7 @@ where
                             .unwrap_or("")
                             .to_string();
                         let state = parse_game_state(pending);
+                        let turn_start = Instant::now();
                         let action = catch_decide(bot, &state, pending);
                         let (action_str, params) = action.to_wire();
                         let payload = json!({
@@ -287,6 +322,8 @@ where
                             "params": params,
                         });
                         writer.send(payload.to_string()).await?;
+                        let latency_ms = turn_start.elapsed().as_millis() as u64;
+                        bot.on_decision_latency(latency_ms);
                     }
                 }
             }
