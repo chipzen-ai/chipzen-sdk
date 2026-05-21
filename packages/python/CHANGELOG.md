@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `chipzen.RetryPolicy` — configurable backoff knobs for the WebSocket
+  client's reconnect loop. `run_bot()` now accepts a `retry_policy=`
+  keyword argument; defaults (5 attempts, 500ms initial backoff, ×2
+  multiplier, 30s cap) match the External-API Issue 26 spec and apply
+  to both connection-drop and heartbeat-miss reconnect attempts within
+  the server's 30s grace window. The legacy `max_retries=` keyword
+  still works as a convenience override for the attempt cap; new code
+  should pass a full `RetryPolicy` instead. Closes
+  [#45](https://github.com/chipzen-ai/chipzen-sdk/issues/45).
+
 ## [0.2.1] — 2026-05-05
 
 ### Fixed

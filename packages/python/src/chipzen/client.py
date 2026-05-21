@@ -21,6 +21,7 @@ from typing import Any
 
 from chipzen.bot import ChipzenBot
 from chipzen.models import Action, GameState
+from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
 
 logger = logging.getLogger("chipzen")
 
@@ -62,7 +63,8 @@ async def run_bot(
     url: str,
     bot: ChipzenBot,
     *,
-    max_retries: int = 3,
+    max_retries: int | None = None,
+    retry_policy: RetryPolicy | None = None,
     token: str | None = None,
     ticket: str | None = None,
     match_id: str | None = None,
@@ -76,7 +78,15 @@ async def run_bot(
              ``ws://localhost:8001/ws/match/{match_id}/{participant_id}``
              or ``.../ws/match/{match_id}/bot`` for internal bots.
         bot: Your bot instance.
-        max_retries: Number of reconnection attempts on unexpected disconnect.
+        max_retries: Deprecated convenience override for
+            ``retry_policy.max_reconnect_attempts``. If provided,
+            replaces the attempt cap on the policy (other knobs
+            preserved). Prefer passing ``retry_policy=`` instead.
+        retry_policy: :class:`RetryPolicy` controlling reconnect pacing
+            on connection drops + heartbeat misses. Defaults to
+            :data:`chipzen.retry.DEFAULT_RETRY_POLICY` (5 attempts,
+            500ms initial backoff, ×2 multiplier, capped at 30s — the
+            same as the server-side grace window).
         token: Bot API token (for the ``/bot`` endpoint).
         ticket: Single-use ticket (for competitive endpoints).
         match_id: Match UUID. Extracted from the URL if not provided.
@@ -96,11 +106,23 @@ async def run_bot(
     if match_id is None:
         match_id = _extract_match_id(url)
 
-    retries = 0
-    while retries <= max_retries:
+    policy = retry_policy if retry_policy is not None else DEFAULT_RETRY_POLICY
+    if max_retries is not None:
+        # Legacy ``max_retries`` kw overrides the attempt cap but keeps
+        # the rest of the policy intact. New code should pass
+        # ``retry_policy=RetryPolicy(...)`` directly.
+        policy = RetryPolicy(
+            max_reconnect_attempts=max_retries,
+            initial_backoff_ms=policy.initial_backoff_ms,
+            max_backoff_ms=policy.max_backoff_ms,
+            backoff_multiplier=policy.backoff_multiplier,
+        )
+
+    attempt = 0
+    while True:
         try:
             async with connect(url) as ws:
-                retries = 0  # reset on successful connect
+                attempt = 0  # reset on successful connect
                 await _run_session(
                     ws,
                     bot,
@@ -116,18 +138,18 @@ async def run_bot(
         except asyncio.CancelledError:
             raise
         except Exception:
-            retries += 1
-            if retries > max_retries:
+            attempt += 1
+            if attempt > policy.max_reconnect_attempts:
                 logger.exception("Max reconnection attempts reached, giving up")
                 raise
-            wait = min(2**retries, 8)
+            wait_ms = policy.backoff_ms(attempt)
             logger.warning(
-                "Connection lost, retrying in %ds (attempt %d/%d)",
-                wait,
-                retries,
-                max_retries,
+                "Connection lost, retrying in %dms (attempt %d/%d)",
+                wait_ms,
+                attempt,
+                policy.max_reconnect_attempts,
             )
-            await asyncio.sleep(wait)
+            await asyncio.sleep(wait_ms / 1000)
 
 
 async def _run_session(

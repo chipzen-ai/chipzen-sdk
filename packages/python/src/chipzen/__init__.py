@@ -2,6 +2,7 @@
 
 from chipzen.bot import ChipzenBot
 from chipzen.models import Action, Card, GameState, Player, RoundStart, TurnResult
+from chipzen.retry import RetryPolicy
 
 # `Bot` is the canonical public name. `ChipzenBot` is the historical
 # internal class name and remains exported for backward compatibility;
@@ -16,6 +17,7 @@ __all__ = [
     "Card",
     "GameState",
     "Player",
+    "RetryPolicy",
     "RoundStart",
     "TurnResult",
 ]
