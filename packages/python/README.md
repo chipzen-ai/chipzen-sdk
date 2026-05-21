@@ -89,6 +89,47 @@ class MyBot(Bot):
 asyncio.run(run_bot("wss://chipzen.ai/ws/external/bot/<bot_id>", MyBot()))
 ```
 
+## Env-aware connection helper (`connect_to_chipzen`)
+
+For external-API bots, `connect_to_chipzen()` removes the need to
+remember the lobby URL per environment. It returns a
+`ConnectionConfig` containing the resolved URL, optional config-file
+token, and a default `RetryPolicy`:
+
+| `env=` value | Resolved URL |
+|---|---|
+| `"prod"` (default) | `wss://chipzen.ai/ws/external/bot/<bot_id>` |
+| `"staging"` | `wss://staging.chipzen.ai/ws/external/bot/<bot_id>` |
+| `"local"` | `ws://localhost:8001/ws/external/bot/<bot_id>` |
+
+The `CHIPZEN_ENV` environment variable is consulted when no explicit
+`env=` is passed, so you can `export CHIPZEN_ENV=staging` once per
+shell and every bot in that shell talks to staging. An explicit
+`env=` argument always wins over `CHIPZEN_ENV`. A `[external_api].url`
+in a discovered `chipzen.toml` wins over both — matching the
+config-file precedence pattern.
+
+```python
+import asyncio
+from chipzen import Bot, Action, GameState, connect_to_chipzen
+from chipzen.client import run_bot
+
+class MyBot(Bot):
+    def decide(self, state: GameState) -> Action:
+        return Action.fold()
+
+cfg = connect_to_chipzen(bot_id="<your-bot-uuid>", env="staging")
+asyncio.run(
+    run_bot(
+        cfg.url,
+        MyBot(),
+        token=cfg.token,
+        retry_policy=cfg.retry_policy,
+        config=cfg.config,
+    )
+)
+```
+
 ## CLI
 
 The `chipzen-sdk` CLI is installed alongside the Python package:
