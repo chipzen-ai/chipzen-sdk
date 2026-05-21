@@ -2,6 +2,7 @@
 
 from chipzen.bot import ChipzenBot
 from chipzen.config import ChipzenConfig, ChipzenConfigError, load_chipzen_config
+from chipzen.connect import ConnectionConfig, connect_to_chipzen
 from chipzen.models import Action, Card, GameState, Player, RoundStart, TurnResult
 from chipzen.retry import RetryPolicy
 
@@ -18,11 +19,13 @@ __all__ = [
     "Card",
     "ChipzenConfig",
     "ChipzenConfigError",
+    "ConnectionConfig",
     "GameState",
     "Player",
     "RetryPolicy",
     "RoundStart",
     "TurnResult",
+    "connect_to_chipzen",
     "load_chipzen_config",
 ]
 

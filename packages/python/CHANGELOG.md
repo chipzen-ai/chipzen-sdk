@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `chipzen.connect_to_chipzen(bot_id, env=...)` — env-aware lobby URL
+  helper. Returns a `ConnectionConfig` carrying the resolved WebSocket
+  URL, optional `chipzen.toml` token, and a default `RetryPolicy`,
+  ready to hand off to `run_bot()`. Maps `env="prod"` → `wss://chipzen.ai/...`,
+  `env="staging"` → `wss://staging.chipzen.ai/...`, `env="local"` →
+  `ws://localhost:8001/...`, all under the external-API lobby path
+  `/ws/external/bot/{bot_id}`. Honors the `CHIPZEN_ENV` environment
+  variable when no explicit `env=` is passed; an explicit argument
+  always wins over the env var. A `[external_api].url` from a
+  discovered `chipzen.toml` takes precedence over both — matching the
+  precedence pattern established by the `chipzen.toml` token in #42.
+  Public surface: `chipzen.connect_to_chipzen`, `chipzen.ConnectionConfig`.
+  Closes [#43](https://github.com/chipzen-ai/chipzen-sdk/issues/43).
 - `chipzen.toml` config-file token convention. Long-lived external-API
   tokens (and an optional URL override) can now be loaded from
   `./chipzen.toml`, `~/.chipzen/chipzen.toml`, or
