@@ -3,18 +3,22 @@
 import json
 import os
 import sys
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
+import chipzen
 from chipzen.bot import ChipzenBot
 from chipzen.client import (
     SUPPORTED_PROTOCOL_VERSIONS,
+    USER_AGENT,
     _extract_match_id,
     _import_bot,
     _run_session,
     _safe_fallback_action,
+    run_bot,
 )
 from chipzen.models import Action, Card, GameState
 
@@ -31,6 +35,7 @@ class RecordingBot(ChipzenBot):
         self.hand_results: list[dict] = []
         self.phase_changes: list[dict] = []
         self.turn_results: list[dict] = []
+        self.decision_latencies: list[int] = []
 
     def decide(self, state: GameState) -> Action:
         self.events.append("decide")
@@ -73,6 +78,10 @@ class RecordingBot(ChipzenBot):
     def on_match_end(self, results: dict) -> None:
         self.events.append("match_end")
         self.match_end_results = results
+
+    def on_decision_latency(self, latency_ms: int) -> None:
+        self.events.append("decision_latency")
+        self.decision_latencies.append(latency_ms)
 
 
 class MockWebSocket:
@@ -283,12 +292,20 @@ async def test_full_match_lifecycle():
         "round_start",
         "hand_start",  # fired by default on_round_start
         "decide",
+        "decision_latency",  # fired after turn_action is sent
         "turn_result",
         "phase_change",
         "round_result",
         "hand_result",  # fired by default on_round_result
         "match_end",
     ]
+    # The recorded latency should be a non-negative int (perf_counter
+    # rounded to milliseconds). A no-op decide on a mock socket will
+    # land in [0, ~few] ms in practice.
+    assert len(bot.decision_latencies) == 1
+    assert isinstance(bot.decision_latencies[0], int)
+    assert bot.decision_latencies[0] >= 0
+    assert bot.decision_latencies[0] < 5000  # very loose sanity bound
 
     # The client sent: authenticate, client hello, turn_action.
     sent = [json.loads(s) for s in mock_ws.sent]
@@ -599,3 +616,320 @@ class TestImportBot:
     def test_valid_specifier_with_nonexistent_module(self):
         with pytest.raises((ImportError, ModuleNotFoundError)):
             _import_bot("nonexistent_module_xyz:SomeBot")
+
+
+# ---------------------------------------------------------------------------
+# on_decision_latency hook (Issue #46)
+# ---------------------------------------------------------------------------
+
+
+def test_user_agent_header_uses_chipzen_sdk_python_with_version():
+    """The SDK identifies itself with a non-default UA so Cloudflare
+    bot-fight doesn't reject the handshake on the chipzen.ai zone.
+
+    This is defense-in-depth alongside the server-side path allowlist
+    (Chipzen #2222 / Issue 19); if either side regresses the other
+    keeps bots connecting.
+    """
+    assert USER_AGENT.startswith("chipzen-sdk-python/")
+    # Ends with the SDK version, not the default ``Python/X.Y websockets/Z.Z``.
+    assert USER_AGENT.endswith(chipzen.__version__)
+    # No spaces — keeps the header valid and avoids accidental
+    # ``Python/...`` substrings that would still match Cloudflare's
+    # default-library heuristic.
+    assert " " not in USER_AGENT
+
+
+def test_on_decision_latency_default_is_noop():
+    """Subclasses that don't override the hook still work."""
+
+    class MinimalBot(ChipzenBot):
+        def decide(self, state: GameState) -> Action:
+            return Action.fold()
+
+    bot = MinimalBot()
+    # Must not raise, must not return anything meaningful.
+    assert bot.on_decision_latency(0) is None
+    assert bot.on_decision_latency(123) is None
+
+
+@pytest.mark.asyncio
+async def test_on_decision_latency_fires_with_nonneg_value():
+    """The hook fires exactly once per turn_action and reports a
+    non-negative integer latency.
+    """
+    messages = [
+        _server_hello(),
+        _match_start(),
+        _round_start(),
+        _turn_request(),
+        _match_end(seq=5),
+    ]
+    mock_ws = MockWebSocket(messages)
+    bot = RecordingBot()
+
+    await _run_session(
+        mock_ws,
+        bot,
+        match_id=MATCH_ID,
+        token="",
+        ticket=None,
+        client_name="chipzen-sdk-test",
+        client_version="0.2.0",
+    )
+
+    # Exactly one turn was dispatched -> exactly one latency sample.
+    assert len(bot.decision_latencies) == 1
+    sample = bot.decision_latencies[0]
+    assert isinstance(sample, int)
+    assert sample >= 0
+    # decide() is trivial and the socket is a Python mock -- a real
+    # turn on a real socket would still land well under one second.
+    assert sample < 5000
+
+
+@pytest.mark.asyncio
+async def test_on_decision_latency_reflects_slow_decide():
+    """A deliberately slow ``decide`` shows up as a noticeably larger
+    latency value than a fast one. We verify both ordering and
+    magnitude — a 50ms sleep should be measured as >= ~40ms (allowing
+    for clock fuzz on busy CI runners).
+    """
+    import asyncio as _asyncio
+
+    class SlowBot(ChipzenBot):
+        def __init__(self, sleep_seconds: float) -> None:
+            self.sleep_seconds = sleep_seconds
+            self.latencies: list[int] = []
+
+        def decide(self, state: GameState) -> Action:
+            # Synchronous sleep so perf_counter advances the same way
+            # a real CPU-bound bot would.
+            import time as _time
+
+            _time.sleep(self.sleep_seconds)
+            return Action.fold()
+
+        def on_decision_latency(self, latency_ms: int) -> None:
+            self.latencies.append(latency_ms)
+
+    fast = SlowBot(sleep_seconds=0.0)
+    slow = SlowBot(sleep_seconds=0.05)  # ~50ms
+
+    for bot in (fast, slow):
+        messages = [
+            _server_hello(),
+            _match_start(),
+            _round_start(),
+            _turn_request(),
+            _match_end(seq=5),
+        ]
+        await _run_session(
+            MockWebSocket(messages),
+            bot,
+            match_id=MATCH_ID,
+            token="",
+            ticket=None,
+            client_name="chipzen-sdk-test",
+            client_version="0.2.0",
+        )
+
+    assert len(fast.latencies) == 1
+    assert len(slow.latencies) == 1
+    # The slow bot's measured latency is at least 40ms.
+    assert slow.latencies[0] >= 40, f"expected slow.latencies[0] >= 40, got {slow.latencies[0]}"
+    # And meaningfully larger than the fast one.
+    assert slow.latencies[0] > fast.latencies[0]
+
+
+@pytest.mark.asyncio
+async def test_on_decision_latency_hook_exception_does_not_kill_session():
+    """A user hook that raises must not bring down the session loop --
+    observability should never break gameplay.
+    """
+
+    class BadHookBot(ChipzenBot):
+        def __init__(self) -> None:
+            self.decide_count = 0
+
+        def decide(self, state: GameState) -> Action:
+            self.decide_count += 1
+            return Action.fold()
+
+        def on_decision_latency(self, latency_ms: int) -> None:
+            raise RuntimeError("user-hook explosion")
+
+    messages = [
+        _server_hello(),
+        _match_start(),
+        _round_start(),
+        _turn_request(),
+        _match_end(seq=5),
+    ]
+    mock_ws = MockWebSocket(messages)
+    bot = BadHookBot()
+
+    # Should resolve cleanly despite the hook raising.
+    await _run_session(
+        mock_ws,
+        bot,
+        match_id=MATCH_ID,
+        token="",
+        ticket=None,
+        client_name="chipzen-sdk-test",
+        client_version="0.2.0",
+    )
+
+    # The session still completed, so decide was called and the
+    # turn_action was sent.
+    assert bot.decide_count == 1
+    sent = [json.loads(s) for s in mock_ws.sent]
+    assert any(s["type"] == "turn_action" for s in sent)
+
+
+@pytest.mark.asyncio
+async def test_on_decision_latency_reconnected_path_hook_exception_does_not_kill_session():
+    """The reconnect path also has its own latency-hook call; verify
+    a raising hook there doesn't take down the session either.
+    """
+
+    class BadHookBot(ChipzenBot):
+        def __init__(self) -> None:
+            self.decide_count = 0
+
+        def decide(self, state: GameState) -> Action:
+            self.decide_count += 1
+            return Action.fold()
+
+        def on_decision_latency(self, latency_ms: int) -> None:
+            raise RuntimeError("user-hook explosion on reconnect")
+
+    pending = _turn_request(seq=99, request_id="req_pending_bad")
+    pending = {k: v for k, v in pending.items() if k != "seq"}
+    messages = [
+        _server_hello(),
+        _match_start(),
+        _round_start(),
+        {
+            "type": "reconnected",
+            "match_id": MATCH_ID,
+            "seq": 4,
+            "round_number": 1,
+            "pending_request": pending,
+        },
+        _match_end(seq=5),
+    ]
+    mock_ws = MockWebSocket(messages)
+    bot = BadHookBot()
+
+    await _run_session(
+        mock_ws,
+        bot,
+        match_id=MATCH_ID,
+        token="",
+        ticket=None,
+        client_name="chipzen-sdk-test",
+        client_version="0.2.0",
+    )
+
+    assert bot.decide_count == 1
+    sent = [json.loads(s) for s in mock_ws.sent]
+    assert any(s.get("type") == "turn_action" for s in sent)
+
+
+@pytest.mark.asyncio
+async def test_on_decision_latency_fires_for_reconnected_pending_request():
+    """The ``reconnected`` path also dispatches a turn_action — the
+    latency hook must fire there too so devs see every decision.
+    """
+    pending = _turn_request(seq=99, request_id="req_pending")
+    # Strip ``seq`` so it doesn't conflict with the outer envelope.
+    pending = {k: v for k, v in pending.items() if k != "seq"}
+    messages = [
+        _server_hello(),
+        _match_start(),
+        _round_start(),
+        {
+            "type": "reconnected",
+            "match_id": MATCH_ID,
+            "seq": 4,
+            "round_number": 1,
+            "pending_request": pending,
+        },
+        _match_end(seq=5),
+    ]
+    mock_ws = MockWebSocket(messages)
+    bot = RecordingBot()
+
+    await _run_session(
+        mock_ws,
+        bot,
+        match_id=MATCH_ID,
+        token="",
+        ticket=None,
+        client_name="chipzen-sdk-test",
+        client_version="0.2.0",
+    )
+
+    # Exactly one decision was made (the pending one).
+    assert len(bot.decision_latencies) == 1
+    assert bot.decision_latencies[0] >= 0
+
+
+@pytest.mark.asyncio
+async def test_run_bot_passes_chipzen_user_agent_to_connect():
+    """``run_bot`` must propagate the chipzen-sdk-python UA into the
+    ``websockets.connect`` handshake — otherwise the Cloudflare bot-
+    fight workaround is silently inert.
+    """
+    # Fake ``connect`` async context manager that captures the kwargs.
+    captured: dict = {}
+
+    class _FakeWS:
+        async def send(self, data: str) -> None:  # pragma: no cover - unused
+            pass
+
+        async def recv(self) -> str:  # pragma: no cover - unused
+            return json.dumps(_server_hello())
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    class _FakeConnect:
+        def __init__(self, url, **kwargs):
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return _FakeWS()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    fake_module = MagicMock()
+    fake_module.connect = _FakeConnect
+
+    # Patch the import inside run_bot. The function tries
+    # ``from websockets.asyncio.client import connect`` first; replace
+    # that module so our fake is used.
+    with patch.dict(
+        sys.modules,
+        {"websockets.asyncio.client": fake_module},
+    ):
+        # _run_session will exit immediately on the StopAsyncIteration
+        # from our fake reader because the only frame is the server
+        # hello and the loop terminates when no further messages arrive.
+        bot = RecordingBot()
+        await run_bot(
+            "ws://localhost:8001/ws/match/m_test/bot",
+            bot,
+            max_retries=0,
+            token="",
+        )
+
+    assert "user_agent_header" in captured["kwargs"]
+    assert captured["kwargs"]["user_agent_header"] == USER_AGENT
+    assert captured["kwargs"]["user_agent_header"].startswith("chipzen-sdk-python/")

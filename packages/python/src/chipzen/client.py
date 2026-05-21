@@ -17,13 +17,21 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from typing import Any
 
+import chipzen
 from chipzen.bot import ChipzenBot
 from chipzen.models import Action, GameState
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
 
 logger = logging.getLogger("chipzen")
+
+# User-Agent the SDK identifies itself with on the WebSocket handshake.
+# Defense-in-depth alongside the Chipzen-side Cloudflare path allowlist:
+# default library UAs (websockets-python's "Python/X.Y websockets/Z.Z")
+# trip Cloudflare bot-fight HTTP 1010 on the ``chipzen.ai`` zone.
+USER_AGENT = f"chipzen-sdk-python/{chipzen.__version__}"
 
 # Protocol versions this client implements. Sent in the ``authenticate`` /
 # client ``hello`` so the server can negotiate a mutually supported version.
@@ -121,7 +129,14 @@ async def run_bot(
     attempt = 0
     while True:
         try:
-            async with connect(url) as ws:
+            # Identify the SDK on the handshake. Default ``websockets``
+            # UA looks like ``Python/3.12 websockets/16.0`` which trips
+            # Cloudflare bot-fight on the ``chipzen.ai`` zone — the path
+            # allowlist (Chipzen Issue 19 / CZ#2222) is the primary
+            # defense, this is belt-and-braces so bots talking to the
+            # platform through Cloudflare keep working even if the
+            # allowlist regresses or covers a different path.
+            async with connect(url, user_agent_header=USER_AGENT) as ws:
                 attempt = 0  # reset on successful connect
                 await _run_session(
                     ws,
@@ -279,6 +294,10 @@ async def _run_session(
                 your_seat=your_seat,
                 dealer_seat=dealer_seat,
             )
+            # Time the round-trip decide+send so the bot can self-report
+            # per-turn latency. Use ``perf_counter`` (monotonic, ~µs
+            # resolution) so wall-clock drift doesn't poison the value.
+            turn_start = time.perf_counter()
             try:
                 action = bot.decide(state)
             except Exception:
@@ -294,6 +313,13 @@ async def _run_session(
                     **action.to_wire(),
                 },
             )
+            latency_ms = max(0, int(round((time.perf_counter() - turn_start) * 1000)))
+            try:
+                bot.on_decision_latency(latency_ms)
+            except Exception:
+                # User hook crashed -- never let observability take down
+                # the session loop.
+                logger.exception("Bot.on_decision_latency() raised, ignoring")
 
         elif msg_type == "action_rejected":
             # Retry within ``remaining_ms`` using the SAME request_id.
@@ -367,6 +393,7 @@ async def _run_session(
                     your_seat=your_seat,
                     dealer_seat=dealer_seat,
                 )
+                turn_start = time.perf_counter()
                 try:
                     action = bot.decide(state)
                 except Exception:
@@ -381,6 +408,11 @@ async def _run_session(
                         **action.to_wire(),
                     },
                 )
+                latency_ms = max(0, int(round((time.perf_counter() - turn_start) * 1000)))
+                try:
+                    bot.on_decision_latency(latency_ms)
+                except Exception:
+                    logger.exception("Bot.on_decision_latency() raised, ignoring")
 
         elif msg_type == "match_end":
             bot.on_match_end(payload)

@@ -19,7 +19,9 @@ export {
 } from "./models.js";
 export {
   runBot,
+  SDK_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
+  USER_AGENT,
   type RunBotOptions,
 } from "./client.js";
 export {

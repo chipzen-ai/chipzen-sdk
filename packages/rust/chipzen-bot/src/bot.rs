@@ -51,4 +51,21 @@ pub trait Bot: Send + 'static {
     /// Called when the match ends. Last chance to flush state if you
     /// were persisting anything to disk.
     fn on_match_end(&mut self, _results: &Value) {}
+
+    /// Called after each `turn_action` is sent with the wall-clock
+    /// latency, in milliseconds, between the `turn_request` arriving
+    /// and the `turn_action` being sent.
+    ///
+    /// Default implementation is a no-op. Override to log per-turn
+    /// decision times locally — useful for keeping yourself well under
+    /// the `turn_timeout_ms` budget announced in `match_start`, and
+    /// for catching pathological tail latency before it produces
+    /// server-side `auto_action` substitutes.
+    ///
+    /// The value is measured around your `decide` call plus the
+    /// WebSocket send, so it reflects the wall time the server sees
+    /// when deciding whether to time you out. The server records its
+    /// own copy of this telemetry independently; the SDK hook is for
+    /// the developer's own logging / metrics.
+    fn on_decision_latency(&mut self, _latency_ms: u64) {}
 }

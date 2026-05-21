@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Bot.onDecisionLatency(latencyMs)` lifecycle hook. Fires after every
+  `turn_action` is sent with the wall-clock milliseconds elapsed since
+  the corresponding `turn_request` arrived. Override to log per-turn
+  decision times locally and catch tail latency before it produces
+  server-side `auto_action` substitutes. Default is a no-op, so
+  existing bots are unaffected. (#46)
+- Non-default `User-Agent` header on the WebSocket handshake:
+  `chipzen-sdk-javascript/<version>`. Defense-in-depth alongside the
+  platform-side Cloudflare path allowlist so the default `ws` library
+  UA doesn't trip the bot-fight rule on the `chipzen.ai` zone. (#46)
+- Public `SDK_VERSION` and `USER_AGENT` exports from `client.ts` so
+  downstream tooling can introspect the handshake identity.
 - Three new conformance scenarios in `validate --check-connectivity`,
   bringing the total from 1 to 4. The previously-shipped scenario only
   covered a clean handshake + 1 hand + match_end; bots could pass it

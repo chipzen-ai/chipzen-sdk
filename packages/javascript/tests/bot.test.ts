@@ -44,5 +44,10 @@ describe("Bot subclass", () => {
     expect(() => bot.onTurnResult({})).not.toThrow();
     expect(() => bot.onRoundResult({})).not.toThrow();
     expect(() => bot.onMatchEnd({})).not.toThrow();
+    // onDecisionLatency default must accept any non-negative number
+    // without raising — subclasses that don't override it should still
+    // work end-to-end.
+    expect(() => bot.onDecisionLatency(0)).not.toThrow();
+    expect(() => bot.onDecisionLatency(123)).not.toThrow();
   });
 });

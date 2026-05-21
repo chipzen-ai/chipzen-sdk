@@ -5,6 +5,8 @@ import {
   _extractMatchId,
   _runSession,
   _safeFallbackAction,
+  SDK_VERSION,
+  USER_AGENT,
   type AsyncMessageReader,
   type SessionWebSocket,
 } from "../src/client.js";
@@ -83,6 +85,7 @@ class CapturingSocket implements SessionWebSocket {
 
 class RecordingBot extends Bot {
   events: string[] = [];
+  latencies: number[] = [];
   decide(state: GameState): Action {
     this.events.push("decide");
     if (state.validActions.includes("check")) return Action.check();
@@ -106,6 +109,10 @@ class RecordingBot extends Bot {
   }
   override onMatchEnd(_r: Record<string, unknown>): void {
     this.events.push("match_end");
+  }
+  override onDecisionLatency(latencyMs: number): void {
+    this.events.push("decision_latency");
+    this.latencies.push(latencyMs);
   }
 }
 
@@ -202,11 +209,17 @@ describe("_runSession full match lifecycle", () => {
       "match_start",
       "round_start",
       "decide",
+      "decision_latency", // fired after turn_action is sent
       "turn_result",
       "phase_change",
       "round_result",
       "match_end",
     ]);
+    // The recorded latency should be a non-negative number measured
+    // around the decide+send loop.
+    expect(bot.latencies).toHaveLength(1);
+    expect(bot.latencies[0]).toBeGreaterThanOrEqual(0);
+    expect(bot.latencies[0]).toBeLessThan(5000);
 
     // Bot sent authenticate, hello, and one turn_action
     const types = ws.sentParsed.map((m) => m.type);
@@ -307,5 +320,216 @@ describe("_runSession robustness", () => {
     await expect(
       _runSession(ws, new RecordingBot(), SESSION_CTX, reader),
     ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onDecisionLatency hook + User-Agent header (Issue #46)
+// ---------------------------------------------------------------------------
+
+describe("User-Agent header", () => {
+  it("identifies as chipzen-sdk-javascript with the SDK version", () => {
+    // Non-default UA is required so Cloudflare bot-fight doesn't reject
+    // the handshake on the chipzen.ai zone. The SDK_VERSION export
+    // documents what's baked in.
+    expect(USER_AGENT).toBe(`chipzen-sdk-javascript/${SDK_VERSION}`);
+    expect(USER_AGENT).toMatch(/^chipzen-sdk-javascript\/[0-9]+\.[0-9]+\.[0-9]+/);
+    // No spaces — keeps the header valid and avoids substrings the
+    // default-library heuristic looks for.
+    expect(USER_AGENT).not.toContain(" ");
+    // Not the default `ws` UA (which would be just `ws/X.Y.Z`).
+    expect(USER_AGENT).not.toMatch(/^ws\//);
+  });
+});
+
+describe("onDecisionLatency hook", () => {
+  it("fires after turn_action with a non-negative integer latency", async () => {
+    const reader = new ScriptedReader([
+      { type: "hello", match_id: "m_test", seq: 1 },
+      {
+        type: "turn_request",
+        match_id: "m_test",
+        seq: 2,
+        request_id: "req_lat",
+        valid_actions: ["fold", "check"],
+        state: { hand_number: 1, phase: "preflop" },
+      },
+      { type: "match_end", match_id: "m_test", seq: 3 },
+    ]);
+    const ws = new CapturingSocket();
+    const bot = new RecordingBot();
+
+    await _runSession(ws, bot, SESSION_CTX, reader);
+
+    expect(bot.latencies).toHaveLength(1);
+    const sample = bot.latencies[0]!;
+    expect(Number.isInteger(sample)).toBe(true);
+    expect(sample).toBeGreaterThanOrEqual(0);
+    expect(sample).toBeLessThan(5000);
+    // The hook fires *after* the turn_action is enqueued.
+    expect(ws.sent.length).toBeGreaterThan(0);
+  });
+
+  it("reflects slower decide() with a noticeably higher latency", async () => {
+    class SlowBot extends Bot {
+      latencies: number[] = [];
+      constructor(private readonly sleepMs: number) {
+        super();
+      }
+      decide(state: GameState): Action {
+        // Busy-wait so performance.now() advances the same way a
+        // real CPU-bound bot would. setTimeout isn't an option since
+        // `decide` is synchronous.
+        const start = performance.now();
+        while (performance.now() - start < this.sleepMs) {
+          /* spin */
+        }
+        if (state.validActions.includes("check")) return Action.check();
+        return Action.fold();
+      }
+      override onDecisionLatency(latencyMs: number): void {
+        this.latencies.push(latencyMs);
+      }
+    }
+
+    const fast = new SlowBot(0);
+    const slow = new SlowBot(40); // ~40ms
+
+    for (const bot of [fast, slow]) {
+      const reader = new ScriptedReader([
+        { type: "hello", match_id: "m_test", seq: 1 },
+        {
+          type: "turn_request",
+          match_id: "m_test",
+          seq: 2,
+          request_id: "req_x",
+          valid_actions: ["fold", "check"],
+          state: { hand_number: 1, phase: "preflop" },
+        },
+        { type: "match_end", match_id: "m_test", seq: 3 },
+      ]);
+      await _runSession(new CapturingSocket(), bot, SESSION_CTX, reader);
+    }
+
+    expect(fast.latencies).toHaveLength(1);
+    expect(slow.latencies).toHaveLength(1);
+    expect(slow.latencies[0]!).toBeGreaterThanOrEqual(30);
+    expect(slow.latencies[0]!).toBeGreaterThan(fast.latencies[0]!);
+  });
+
+  it("does not crash the session when the user hook throws", async () => {
+    class BadHookBot extends Bot {
+      decideCount = 0;
+      decide(_state: GameState): Action {
+        this.decideCount++;
+        return Action.fold();
+      }
+      override onDecisionLatency(_latencyMs: number): void {
+        throw new Error("user hook explosion");
+      }
+    }
+
+    const reader = new ScriptedReader([
+      { type: "hello", match_id: "m_test", seq: 1 },
+      {
+        type: "turn_request",
+        match_id: "m_test",
+        seq: 2,
+        request_id: "req_y",
+        valid_actions: ["fold", "check"],
+        state: { hand_number: 1, phase: "preflop" },
+      },
+      { type: "match_end", match_id: "m_test", seq: 3 },
+    ]);
+    const ws = new CapturingSocket();
+    const bot = new BadHookBot();
+
+    // Must resolve cleanly despite the hook raising.
+    await expect(
+      _runSession(ws, bot, SESSION_CTX, reader),
+    ).resolves.toBeUndefined();
+
+    expect(bot.decideCount).toBe(1);
+    expect(ws.sentParsed.some((m) => m.type === "turn_action")).toBe(true);
+  });
+
+  it("fires for the reconnected.pending_request path too", async () => {
+    const reader = new ScriptedReader([
+      { type: "hello", match_id: "m_test", seq: 1 },
+      {
+        type: "reconnected",
+        match_id: "m_test",
+        seq: 2,
+        round_number: 1,
+        pending_request: {
+          type: "turn_request",
+          request_id: "req_reconn",
+          valid_actions: ["fold", "check"],
+          state: { hand_number: 1, phase: "preflop" },
+        },
+      },
+      { type: "match_end", match_id: "m_test", seq: 3 },
+    ]);
+    const ws = new CapturingSocket();
+    const bot = new RecordingBot();
+
+    await _runSession(ws, bot, SESSION_CTX, reader);
+
+    // One pending request -> one latency sample.
+    expect(bot.latencies).toHaveLength(1);
+    expect(bot.latencies[0]).toBeGreaterThanOrEqual(0);
+    // And a turn_action was emitted echoing the pending request_id.
+    const turnAction = ws.sentParsed.find((m) => m.type === "turn_action");
+    expect(turnAction?.request_id).toBe("req_reconn");
+  });
+
+  it("reconnect-path hook exception does not crash the session", async () => {
+    class BadHookBot extends Bot {
+      decideCount = 0;
+      decide(_state: GameState): Action {
+        this.decideCount++;
+        return Action.fold();
+      }
+      override onDecisionLatency(_latencyMs: number): void {
+        throw new Error("user hook explosion on reconnect");
+      }
+    }
+
+    const reader = new ScriptedReader([
+      { type: "hello", match_id: "m_test", seq: 1 },
+      {
+        type: "reconnected",
+        match_id: "m_test",
+        seq: 2,
+        round_number: 1,
+        pending_request: {
+          type: "turn_request",
+          request_id: "req_reconn_bad",
+          valid_actions: ["fold", "check"],
+          state: { hand_number: 1, phase: "preflop" },
+        },
+      },
+      { type: "match_end", match_id: "m_test", seq: 3 },
+    ]);
+    const ws = new CapturingSocket();
+    const bot = new BadHookBot();
+
+    await expect(
+      _runSession(ws, bot, SESSION_CTX, reader),
+    ).resolves.toBeUndefined();
+    expect(bot.decideCount).toBe(1);
+    expect(ws.sentParsed.some((m) => m.type === "turn_action")).toBe(true);
+  });
+
+  it("does not fire when there is no turn_request (e.g. ping-only sessions)", async () => {
+    const reader = new ScriptedReader([
+      { type: "hello", match_id: "m_test", seq: 1 },
+      { type: "ping", match_id: "m_test", seq: 2 },
+      { type: "match_end", match_id: "m_test", seq: 3 },
+    ]);
+    const ws = new CapturingSocket();
+    const bot = new RecordingBot();
+    await _runSession(ws, bot, SESSION_CTX, reader);
+    expect(bot.latencies).toHaveLength(0);
   });
 });

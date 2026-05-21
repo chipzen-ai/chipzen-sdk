@@ -45,7 +45,7 @@ mod models;
 
 pub use bot::Bot;
 pub use client::{
-    run_bot, MessageReader, MessageWriter, RunBotOptions, SessionContext,
+    run_bot, user_agent, MessageReader, MessageWriter, RunBotOptions, SessionContext, SDK_VERSION,
     SUPPORTED_PROTOCOL_VERSIONS,
 };
 pub use conformance::{
