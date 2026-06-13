@@ -123,8 +123,13 @@ jobs:
         # verification of the (repo, workflow, environment) triple.
         # `--access public` is required for the @chipzen-ai/* scope
         # since scoped packages default to restricted (paid).
+        #
+        # The tarball path MUST be `./`-prefixed: npm treats a bare
+        # `dir/file.tgz` (contains `/`, no leading `./`) as a GitHub
+        # shorthand `<user>/<repo>` and runs `git ls-remote` instead of
+        # publishing the local file. `./` forces filesystem resolution.
         run: |
-          npm publish npm-dist/*.tgz \
+          npm publish ./npm-dist/*.tgz \
             --provenance \
             --access public \
             --tag "${{ inputs.dist_tag || 'latest' }}"
