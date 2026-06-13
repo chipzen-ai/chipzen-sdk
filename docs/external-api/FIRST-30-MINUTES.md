@@ -9,14 +9,22 @@ This is the long-form counterpart to the in-dashboard onboarding page
 bot kind). The onboarding page lists the steps; this doc explains each
 step in enough detail that you don't have to guess.
 
-> **There is no `pip install` package for the External-API client.** The
-> canonical client is the in-repo **reference client** at
-> [`examples/external-api-bot/`](../../examples/external-api-bot/), run
-> with `python run.py` from that directory. Packaging it into the
-> published SDKs / CLI is future work — see
-> [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../EXTERNAL-API-BOT-PROTOCOL.md) §9.
-> Every command below is against that reference client and is runnable as
-> written.
+> **The fast path is `pip install chipzen-bot` (0.3.0+).** The published
+> Python SDK ships the whole external-API flow as `run_external_bot()` and the
+> `chipzen run-external` CLI — write one `chipzen.Bot` subclass and the SDK
+> handles the lobby, matching, gateway, and reconnect:
+>
+> ```bash
+> pip install chipzen-bot
+> chipzen run-external my_bot.py --env staging   # token in chipzen.toml
+> ```
+>
+> This walkthrough uses the in-repo **reference client**
+> ([`examples/external-api-bot/`](../../examples/external-api-bot/), run with
+> `python run.py`) because it speaks raw JSON over WebSockets so every protocol
+> frame is visible — the right thing to read when learning the wire format or
+> porting to another language. Every command below is runnable as written; for
+> production, prefer the packaged SDK above.
 
 > **Sandboxed vs. external-API.** If you'd rather upload a Docker image
 > and let the platform run it for you, you want the **sandboxed** path

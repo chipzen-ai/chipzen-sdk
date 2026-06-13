@@ -42,18 +42,52 @@ and reconnect. Subclass `Bot`, override `decide()`, return an
 `Action`. That's the entire surface for a working bot.
 
 Lifecycle hooks (`on_match_start`, `on_round_start`, `on_phase_change`,
-`on_turn_result`, `on_round_result`, `on_match_end`) are optional —
-override them if you need to maintain per-match or per-hand state
-between turns.
+`on_turn_result`, `on_round_result`, `on_match_end`,
+`on_decision_latency`) are optional — override them if you need to
+maintain per-match or per-hand state between turns or log your decision
+timings.
+
+## Two ways to run a bot
+
+The same `Bot` class works on both paths:
+
+- **Upload (containerized).** Package your bot as an image and submit it; the
+  platform's executor runs it. This is the `MyBot().run()` / `chipzen-sdk
+  validate` + Docker path above — best for ranked competition and tournaments.
+- **External-API (remote play).** Run your bot on your own machine and let the
+  platform match and dispatch it over the public token-authed API — no upload,
+  fast iteration:
+
+  ```python
+  import asyncio
+  from chipzen import Bot, run_external_bot
+
+  asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging",
+                               token="cz_extbot_..."))
+  ```
+
+  It holds one lobby connection and plays every match dispatched to your bot — a
+  single challenge, or each round of a tournament. Put the token in a
+  `chipzen.toml` (`[external_api] token = "cz_extbot_..."`, optional `bot_id` /
+  `url`) and the CLI is a one-liner:
+
+  ```bash
+  chipzen run-external my_bot.py --env staging
+  ```
+
+  Tunables: `connect_to_chipzen()` (env→URL), `RetryPolicy` (reconnect/backoff),
+  `safe_mode=False` (crash on a `decide()` bug instead of folding — for
+  dev/eval). See [`docs/external-api/FIRST-30-MINUTES.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/external-api/FIRST-30-MINUTES.md).
 
 ## CLI
 
-The `chipzen-sdk` CLI is installed alongside the Python package:
+The `chipzen-sdk` CLI (aliased as `chipzen`) is installed alongside the package:
 
 | Command | Purpose |
 |---|---|
 | `chipzen-sdk init <name>` | Scaffold a new bot project from a starter template. |
 | `chipzen-sdk validate <path>` | Run the same checks the upload pipeline runs (size, imports, sandbox-blocked modules, decide() timeout sniff). The supported go/no-go before docker packaging. |
+| `chipzen run-external <bot.py>` | Run a bot on the external-API remote-play path (lobby → matched → play). |
 
 Run `chipzen-sdk <command> --help` for the full option list per command.
 

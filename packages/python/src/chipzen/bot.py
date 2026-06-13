@@ -154,3 +154,18 @@ class ChipzenBot(ABC):
         Default implementation is a no-op. Override to track opponent
         action frequencies, timing patterns, etc.
         """
+
+    def on_decision_latency(self, latency_ms: float) -> None:
+        """Called after each ``turn_action`` is sent, with your decision time.
+
+        ``latency_ms`` is the wall-clock time :meth:`decide` took for the turn
+        just sent. The platform enforces a per-turn timeout (default 5000ms,
+        announced in ``match_start.turn_timeout_ms``); logging this lets you
+        catch a bot drifting toward the limit before it starts timing out.
+
+        Default implementation is a no-op. Override to record / log timings::
+
+            def on_decision_latency(self, latency_ms: float) -> None:
+                if latency_ms > 1000:
+                    print(f"slow turn: {latency_ms:.0f}ms")
+        """
