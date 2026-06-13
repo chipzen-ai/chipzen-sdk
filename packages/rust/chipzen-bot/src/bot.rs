@@ -51,4 +51,16 @@ pub trait Bot: Send + 'static {
     /// Called when the match ends. Last chance to flush state if you
     /// were persisting anything to disk.
     fn on_match_end(&mut self, _results: &Value) {}
+
+    /// Called after each `turn_action` is sent, with your decision time
+    /// in milliseconds.
+    ///
+    /// `latency_ms` is the wall-clock time [`Bot::decide`] took for the turn
+    /// just sent. The platform enforces a per-turn timeout (default 5000ms,
+    /// announced in `match_start.turn_timeout_ms`); logging this lets you
+    /// catch a bot drifting toward the limit before it starts timing out.
+    ///
+    /// Default impl is a no-op. Override to record / log timings
+    /// (chipzen-ai/chipzen-sdk#46).
+    fn on_decision_latency(&mut self, _latency_ms: f64) {}
 }

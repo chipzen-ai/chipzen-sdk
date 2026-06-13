@@ -14,7 +14,7 @@ members = [
 # Shared package metadata — keeps every member crate's version + author
 # fields in lockstep when we cut a release.
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"

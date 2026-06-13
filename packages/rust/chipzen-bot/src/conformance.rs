@@ -284,13 +284,13 @@ fn retry_storm_script() -> Vec<String> {
 }
 
 fn ctx() -> SessionContext {
-    SessionContext {
-        match_id: MATCH_ID.to_string(),
-        token: Some("conformance".to_string()),
-        ticket: None,
-        client_name: "chipzen-sdk-conformance".to_string(),
-        client_version: "0.0.0".to_string(),
-    }
+    SessionContext::new(
+        MATCH_ID.to_string(),
+        Some("conformance".to_string()),
+        None,
+        "chipzen-sdk-conformance".to_string(),
+        "0.0.0".to_string(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +414,7 @@ async fn drive_session<B: Bot>(
         Ok(Err(e)) => DriveOutcome::Failed {
             fail_message: format!("session returned {e:?}"),
         },
-        Ok(Ok(())) => {
+        Ok(Ok(_match_end)) => {
             let sent = writer
                 .sent
                 .lock()

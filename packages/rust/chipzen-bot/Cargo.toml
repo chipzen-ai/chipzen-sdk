@@ -19,9 +19,11 @@ tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
 url = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"

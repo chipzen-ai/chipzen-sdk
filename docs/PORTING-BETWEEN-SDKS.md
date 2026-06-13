@@ -158,6 +158,57 @@ that work runs *between* turns and doesn't eat into your decide budget.
 
 ---
 
+## 7. Running a bot: containerized vs external-API remote-play
+
+There are two ways to run a bot, and all three SDKs expose both.
+
+**Containerized / direct-match** — the platform's executor runs your
+compiled bot in a container and hands it the match URL. This is the upload
+path.
+
+| | Entry point |
+|---|---|
+| Python | `run_bot(url, bot, ...)` |
+| JavaScript | `runBot(url, bot, ...)` |
+| Rust | `run_bot(url, bot, options)` |
+
+**External-API remote-play** — you run the bot on your own machine with a
+long-lived `cz_extbot_` token; the platform matches and dispatches you
+exactly like any other competitor (lobby → `matched` → per-match gateway
+WS). One persistent lobby connection serves a whole tournament.
+
+| | Entry point | Config / env helper | CLI |
+|---|---|---|---|
+| Python | `run_external_bot(bot, bot_id=, env=, token=, ...)` | `connect_to_chipzen(bot_id, env)` | `chipzen run-external my_bot.py` |
+| Rust | `run_external_bot(factory, RunExternalOptions { .. })` | `connect_to_chipzen(bot_id, env, ..)` | `chipzen_bot::run_external_cli(factory, args)` — a library helper; the scaffolded starter's `bot run-external` mode calls it |
+
+Shared semantics across both languages: a `chipzen.toml` (`[external_api]`
+`token` / `url` / `bot_id`) discovered at cwd → `~/.chipzen/` →
+`/etc/chipzen/` (explicit args win); a `RetryPolicy` (defaults 5 attempts /
+500 ms initial / 30 s cap / 2.0 multiplier) pacing both lobby and mid-match
+gateway reconnects; `safe_mode` (default on) folding a `decide()` failure,
+off making it terminal; the token carried in the `Sec-WebSocket-Protocol`
+header (sentinel `chipzen-bot-token`), never the query string; and a
+non-default `User-Agent` (`chipzen-sdk-<lang>/<version>`).
+
+**The one real difference is the CLI.** Python's `chipzen run-external
+my_bot.py` dynamically imports a bot from a `.py` file. Rust can't — a Rust
+bot is compiled into its own binary, and there's no safe equivalent of
+`dlopen` for Rust types (the same reason `chipzen-sdk validate` has no
+`--check-connectivity` flag and the conformance harness ships as a library
+function). So the Rust equivalent is `chipzen_bot::run_external_cli(factory,
+args)`, which you wire into your own bot binary's `main` the same way you
+wire `run_bot` — the scaffolded starter ships a `run-external` mode that
+does this for you. The standalone `chipzen-sdk run-external` subcommand is a
+config doctor: it resolves + prints the connection (token redacted) so you
+can verify your `chipzen.toml` / env setup before running.
+
+In Rust, `run_external_bot` takes a **bot factory** (`Fn() -> impl Bot`)
+rather than a single bot instance, because each match runs in its own task
+and may need its own per-match state — pass `|| MyBot::default()`. Python
+accepts either an instance (reused) or a callable / the class (fresh per
+match).
+
 ## See also
 
 - [`DEV-MANUAL.md`](DEV-MANUAL.md) — the full developer manual for the

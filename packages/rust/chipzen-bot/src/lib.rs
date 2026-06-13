@@ -26,9 +26,13 @@
 //!
 //! # async fn _doctest() -> Result<(), chipzen_bot::Error> {
 //! let url = std::env::var("CHIPZEN_WS_URL").unwrap();
-//! run_bot(&url, MyBot, RunBotOptions::default()).await?;
+//! let _match_end = run_bot(&url, MyBot, RunBotOptions::default()).await?;
 //! # Ok(()) }
 //! ```
+//!
+//! To run a bot on the **external-API remote-play** path (your machine,
+//! the platform matches and dispatches you), use
+//! [`run_external_bot`] with a `cz_extbot_` token — see its docs.
 //!
 //! See the [`docs/protocol/`] docs in the chipzen-sdk repo for the
 //! full two-layer protocol specification, and the
@@ -39,26 +43,42 @@
 
 mod bot;
 mod client;
+mod config;
 mod conformance;
+mod connect;
 mod error;
+mod external;
 mod models;
+mod retry;
 
 pub use bot::Bot;
 pub use client::{
-    run_bot, MessageReader, MessageWriter, RunBotOptions, SessionContext,
+    default_user_agent, run_bot, MessageReader, MessageWriter, RunBotOptions, SessionContext,
     SUPPORTED_PROTOCOL_VERSIONS,
+};
+pub use config::{
+    discover_config_path, load_chipzen_config, resolve_token, resolve_url, ChipzenConfig,
+    CONFIG_FILENAME, SECTION_NAME,
 };
 pub use conformance::{
     run_conformance_checks, ConformanceCheck, RunConformanceOptions,
     Severity as ConformanceSeverity, SCENARIO_NAMES,
 };
+pub use connect::{connect_to_chipzen, ConnectionConfig, EnvName, CHIPZEN_ENV_VAR, ENV_NAMES};
 pub use error::Error;
+pub use external::{
+    bot_token_subprotocols, resolve_gateway_url, run_external_bot, run_external_cli, MatchResult,
+    RunExternalArgs, RunExternalOptions, BOT_TOKEN_SUBPROTOCOL,
+};
 pub use models::{
     parse_card, parse_game_state, Action, ActionHistoryEntry, ActionKind, Card, GameState,
 };
+pub use retry::{default_retry_policy, RetryPolicy};
 
-// Internals used by the conformance harness. Not part of the supported
-// public API; the underscore prefix is a convention copied from the
-// Python and JavaScript SDKs.
+// Internals used by the conformance harness + external-API tests. Not part
+// of the supported public API; the underscore prefix is a convention copied
+// from the Python and JavaScript SDKs.
 #[doc(hidden)]
 pub use client::{_extract_match_id, _run_session, _safe_fallback_action};
+#[doc(hidden)]
+pub use external::{_set_lobby_recv_timeout_ms, run_external_with_transport, LobbyTransport};

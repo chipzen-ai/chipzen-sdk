@@ -85,13 +85,13 @@ impl Bot for CallBot {
 }
 
 fn ctx() -> SessionContext {
-    SessionContext {
-        match_id: "m_test".to_string(),
-        token: Some("test-token".to_string()),
-        ticket: None,
-        client_name: "chipzen-sdk-test".to_string(),
-        client_version: "0.0.0".to_string(),
-    }
+    SessionContext::new(
+        "m_test".to_string(),
+        Some("test-token".to_string()),
+        None,
+        "chipzen-sdk-test".to_string(),
+        "0.0.0".to_string(),
+    )
 }
 
 fn full_match_script() -> Vec<String> {

@@ -27,6 +27,14 @@ pub enum Error {
 
     #[error("retry budget exhausted ({attempts} attempts) — last error: {last_error}")]
     RetriesExhausted { attempts: u32, last_error: String },
+
+    /// Raised when `bot.decide()` panics and `safe_mode` is off.
+    ///
+    /// Distinguished from transport/connection errors so the caller treats it
+    /// as terminal (a deterministic bot bug, not a transient disconnect) and
+    /// does NOT reconnect-retry it. See chipzen-ai/chipzen-sdk#52.
+    #[error("bot decision error (safe_mode off): {0}")]
+    BotDecision(String),
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for Error {
