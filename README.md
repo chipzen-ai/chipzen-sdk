@@ -54,20 +54,21 @@ and troubleshooting.
 
 ```
 chipzen-sdk/
-  packages/        Per-language SDK packages (Python first, then
-                   JavaScript, then Rust). Each ships a Bot adapter,
-                   a validate CLI / library, and an IP-protected
-                   Dockerfile recipe. Python is published on PyPI as
-                   `chipzen-bot` (alpha); JavaScript and Rust are still
-                   in development — see each package README for its
-                   target ship phase.
-  starters/        Per-language scaffolds. The Python starter has
-                   moved to packages/python/starters/python/ now that
-                   the SDK has shipped (it compiles bot.py to a Cython
-                   .so for IP-protected uploads). The JS and Rust
-                   starters here are still raw-WebSocket protocol
-                   references and will move into their own packages
-                   once each adapter ships.
+  packages/        Per-language SDK packages (Python, JavaScript,
+                   Rust). Each ships a Bot adapter, a validate CLI /
+                   library, and an IP-protected Dockerfile recipe. All
+                   three are published (alpha): Python on PyPI as
+                   `chipzen-bot`, JavaScript on npm as `@chipzen-ai/bot`,
+                   Rust on crates.io as `chipzen-bot` (library) +
+                   `chipzen-sdk` (CLI). Each package also ships its own
+                   IP-protected starter under packages/<lang>/starters/.
+  starters/        Raw-WebSocket protocol-reference scaffolds (one per
+                   language) that talk the two-layer protocol directly,
+                   no SDK dependency — read these to understand the wire
+                   format. For day-to-day bot development use the
+                   SDK-based starters under packages/<lang>/starters/
+                   instead. (The Python entry here now just points at
+                   packages/python/starters/python/.)
   examples/        Worked examples. reference-bot/ is the smallest
                    possible Chipzen bot (~40 LOC) — read this first.
   docs/            QUICKSTART, DEV-MANUAL, the protocol spec, and the
