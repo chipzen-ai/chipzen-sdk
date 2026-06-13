@@ -72,4 +72,16 @@ export abstract class Bot {
   onMatchEnd(_results: Record<string, unknown>): void {
     /* default: no-op */
   }
+
+  /**
+   * Called after each `turn_action` is sent, with the wall-clock time
+   * `decide()` took in milliseconds.
+   *
+   * Default is a no-op. Override to track decision latency — useful for
+   * spotting when your bot is drifting toward the platform's turn-timeout
+   * budget. See chipzen-ai/chipzen-sdk#46.
+   */
+  onDecisionLatency(_latencyMs: number): void {
+    /* default: no-op */
+  }
 }

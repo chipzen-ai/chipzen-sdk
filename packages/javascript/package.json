@@ -1,6 +1,6 @@
 {
   "name": "@chipzen-ai/bot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Build, test, and deploy poker bots for the Chipzen AI competition platform",
   "license": "Apache-2.0",
   "author": {

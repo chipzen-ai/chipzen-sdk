@@ -252,8 +252,10 @@ describe("_runSession robustness", () => {
     };
     const ws = new CapturingSocket();
     const bot = new RecordingBot();
-    // Should resolve cleanly on match_end despite the bad payload.
-    await expect(_runSession(ws, bot, SESSION_CTX, reader)).resolves.toBeUndefined();
+    // Should resolve cleanly on match_end despite the bad payload, returning
+    // the match_end payload.
+    const end = await _runSession(ws, bot, SESSION_CTX, reader);
+    expect(end?.type).toBe("match_end");
     expect(bot.events).toContain("match_end");
   });
 
@@ -304,8 +306,8 @@ describe("_runSession robustness", () => {
       { type: "match_end", match_id: "m_test", seq: 3 },
     ]);
     const ws = new CapturingSocket();
-    await expect(
-      _runSession(ws, new RecordingBot(), SESSION_CTX, reader),
-    ).resolves.toBeUndefined();
+    const end = await _runSession(ws, new RecordingBot(), SESSION_CTX, reader);
+    // Clean exit on match_end returns the payload.
+    expect(end?.type).toBe("match_end");
   });
 });

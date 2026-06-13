@@ -19,9 +19,42 @@ export {
 } from "./models.js";
 export {
   runBot,
+  BotDecisionError,
   SUPPORTED_PROTOCOL_VERSIONS,
   type RunBotOptions,
 } from "./client.js";
+export {
+  runExternalBot,
+  botTokenSubprotocols,
+  resolveGatewayUrl,
+  BOT_TOKEN_SUBPROTOCOL,
+  type RunExternalBotOptions,
+  type MatchResult,
+  type BotFactory,
+} from "./external.js";
+export {
+  connectToChipzen,
+  type ConnectionConfig,
+  type ConnectToChipzenOptions,
+  type EnvName,
+  ENV_NAMES,
+  ENV_VAR_NAME,
+} from "./connect.js";
+export {
+  loadChipzenConfig,
+  resolveToken,
+  resolveUrl,
+  ChipzenConfigError,
+  CONFIG_FILENAME,
+  SECTION_NAME,
+  type ChipzenConfig,
+} from "./config.js";
+export {
+  RetryPolicy,
+  DEFAULT_RETRY_POLICY,
+  type RetryPolicyOptions,
+} from "./retry.js";
+export { VERSION } from "./version.js";
 export {
   scaffoldBot,
   type ScaffoldOptions,
