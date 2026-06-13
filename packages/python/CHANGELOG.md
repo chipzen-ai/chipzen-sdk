@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot-fight rule). Override with `user_agent=`.
   ([#46](https://github.com/chipzen-ai/chipzen-sdk/issues/46))
 
+### Changed
+
+- `run_bot()` now returns the `match_end` payload (`dict | None`) instead of
+  `None`. Backward-compatible — callers that ignore the return value are
+  unaffected.
+- `run_bot()`'s default reconnect cap is now 5 attempts (from the default
+  `RetryPolicy`) instead of the previous hardcoded `max_retries=3`. Pass
+  `max_retries=` or a `retry_policy=` to override.
+
 ### Fixed
 
 - The default `client_version` sent in the `hello` handshake now tracks the

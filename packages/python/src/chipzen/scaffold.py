@@ -110,6 +110,8 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+# Never commit your external-API token.
+chipzen.toml
 .venv/
 venv/
 *.egg-info/

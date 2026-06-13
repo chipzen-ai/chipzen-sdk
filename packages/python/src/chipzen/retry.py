@@ -2,13 +2,13 @@
 
 When the connection to the Chipzen server drops (TCP reset, heartbeat
 miss, transient network failure, etc.) the SDK reconnects within the
-server's 30-second grace window. The pacing of those reconnect attempts
-is configurable via :class:`RetryPolicy`.
+server's reconnect grace window. The pacing of those reconnect attempts
+is configurable via :class:`RetryPolicy`, accepted by both
+:func:`chipzen.client.run_bot` and :func:`chipzen.external.run_external_bot`.
 
 Typical use::
 
-    from chipzen import Bot
-    from chipzen.client import run_bot
+    from chipzen import Bot, run_external_bot
     from chipzen.retry import RetryPolicy
 
     policy = RetryPolicy(
@@ -18,7 +18,8 @@ Typical use::
         backoff_multiplier=2.0,
     )
 
-    await run_bot(url, MyBot(), token="...", retry_policy=policy)
+    await run_external_bot(MyBot(), bot_id="<your-bot-uuid>", env="staging",
+                           token="cz_extbot_...", retry_policy=policy)
 
 The default policy mirrors the spec from External-API Issue 26:
 5 attempts, 500ms initial backoff, doubling each attempt, capped at
