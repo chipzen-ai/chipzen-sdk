@@ -63,6 +63,11 @@ _MAX_WS_SIZE = 2**24
 #: long enough that the loop isn't a busy-wait.
 _LOBBY_RECV_TIMEOUT_S = 2.0
 
+#: On teardown, how long to let still-in-flight matches finish before
+#: cancelling them, so nothing is left orphaned. Generous enough that a
+#: near-done match reports its result cleanly.
+_MATCH_DRAIN_GRACE_S = 5.0
+
 
 def bot_token_subprotocols(token: str) -> list[str]:
     """Build the ``Sec-WebSocket-Protocol`` offer that carries the bot token.
@@ -147,40 +152,83 @@ async def _play_one_match(
     token: str,
     bot: ChipzenBot,
     *,
+    policy: RetryPolicy,
     client_name: str,
     client_version: str,
     safe_mode: bool,
     user_agent: str,
 ) -> dict | None:
-    """Play one match end-to-end over the per-match gateway WS.
+    """Play one match end-to-end over the per-match gateway WS, reconnecting
+    across a mid-match drop.
 
-    Opens the gateway WS (token in the ``Sec-WebSocket-Protocol`` header), then
+    Opens the gateway WS (token in the ``Sec-WebSocket-Protocol`` header) and
     hands off to :func:`chipzen.client._run_session` for the two-layer
     handshake + game loop — the exact same data-plane code the containerized
-    path runs. Returns the ``match_end`` payload, or ``None`` if the connection
-    closed without a clean ``match_end``.
+    path runs.
+
+    If the socket drops before ``match_end``, reconnect (bounded by ``policy``)
+    and let the platform's reconnect-resume re-deliver the pending turn:
+    ``_run_session`` already consumes the server ``reconnected`` frame and
+    replays its ``pending_request``, and the same ``bot`` instance carries its
+    state across the gap. ``websockets``' built-in keepalive
+    (``ping_interval``/``ping_timeout``) closes a dead or stalled socket, which
+    surfaces here as a drop and triggers the same reconnect.
+
+    Returns the ``match_end`` payload, or ``None`` if the match could not be
+    completed within the reconnect budget.
     """
-    logger.info("match %s: connecting gateway", match_id)
-    async with websockets.connect(
-        gateway_url,
-        max_size=_MAX_WS_SIZE,
-        subprotocols=bot_token_subprotocols(token),  # type: ignore[arg-type]
-        user_agent_header=user_agent,
-    ) as ws:
-        # The inner leg's token is the gateway's internal JWT (authoritative);
-        # the executor ignores the value we send, but the authenticate frame
-        # MUST be first or the handshake stalls. _run_session sends an empty
-        # token when both token and ticket are None.
-        return await _run_session(
-            ws,
-            bot,
-            match_id=match_id,
-            token=None,
-            ticket=None,
-            client_name=client_name,
-            client_version=client_version,
-            safe_mode=safe_mode,
+    attempt = 0
+    while True:
+        try:
+            logger.info("match %s: connecting gateway", match_id)
+            async with websockets.connect(
+                gateway_url,
+                max_size=_MAX_WS_SIZE,
+                subprotocols=bot_token_subprotocols(token),  # type: ignore[arg-type]
+                user_agent_header=user_agent,
+            ) as ws:
+                # The inner leg's token is the gateway's internal JWT
+                # (authoritative); the executor ignores the value we send, but
+                # the authenticate frame MUST be first. _run_session sends an
+                # empty token when both token and ticket are None.
+                end = await _run_session(
+                    ws,
+                    bot,
+                    match_id=match_id,
+                    token=None,
+                    ticket=None,
+                    client_name=client_name,
+                    client_version=client_version,
+                    safe_mode=safe_mode,
+                )
+            if end is not None:
+                return end  # clean match_end — done
+            # _run_session returned None: the socket closed without a match_end
+            # (a drop, or keepalive killed a stalled socket). Try to resume.
+            reason = "closed without match_end"
+        except BotDecisionError:
+            raise  # deterministic bot bug — terminal, never reconnect-retry
+        except (OSError, websockets.WebSocketException) as exc:
+            reason = str(exc) or exc.__class__.__name__
+
+        attempt += 1
+        if attempt > policy.max_reconnect_attempts:
+            logger.warning(
+                "match %s: reconnect budget exhausted (%s); abandoning",
+                match_id,
+                reason,
+            )
+            return None
+        delay = policy.backoff_ms(attempt) / 1000.0
+        logger.info(
+            "match %s: reconnecting in %.1fs (attempt %d/%d; %s)",
+            match_id,
+            delay,
+            attempt,
+            policy.max_reconnect_attempts,
+            reason,
         )
+        await asyncio.sleep(delay)
 
 
 async def _run_lobby_once(
@@ -188,7 +236,10 @@ async def _run_lobby_once(
     token: str,
     factory: Callable[[], ChipzenBot],
     results: list[dict],
+    match_tasks: list[asyncio.Task],
+    completed: list[int],
     *,
+    policy: RetryPolicy,
     client_name: str,
     client_version: str,
     safe_mode: bool,
@@ -197,7 +248,7 @@ async def _run_lobby_once(
     stop: asyncio.Event,
     fatal: list[BaseException],
 ) -> str:
-    """Hold ONE lobby connection and play every ``matched`` it delivers.
+    """Hold ONE lobby connection and dispatch every ``matched`` it delivers.
 
     Returns a status string describing why the session ended:
 
@@ -208,17 +259,17 @@ async def _run_lobby_once(
     * ``"closed"``    — the lobby connection closed unexpectedly (the caller
       may reconnect per the retry policy).
 
-    Each ``matched`` is played in its own task so the lobby's 15s heartbeat is
-    answered even while a match is in flight.
+    Each ``matched`` is played in its own task, appended to ``match_tasks``
+    (which the CALLER owns) so the lobby heartbeat is answered during matches
+    AND in-flight matches survive a lobby reconnect — a match runs on its own
+    gateway socket, independent of the lobby. ``completed`` is a 1-element
+    mutable counter shared across lobby sessions.
     """
-    match_tasks: list[asyncio.Task] = []
-    completed = 0
 
     def _on_match_done(task: asyncio.Task) -> None:
-        nonlocal completed
         try:
             end = task.result()
-        except asyncio.CancelledError:  # pragma: no cover - shutdown path
+        except asyncio.CancelledError:  # teardown — not a completed match
             return
         except BotDecisionError as exc:
             # safe_mode=False: a deterministic bot bug. Surface it (stop the
@@ -232,65 +283,75 @@ async def _run_lobby_once(
             logger.warning("match play task raised: %s", exc)
             results.append({"match_id": None, "reason": "exception", "error": str(exc)})
         else:
-            completed += 1
+            completed[0] += 1
             results.append({"match_id": end.get("match_id") if end else None, "end": end})
-        if max_matches is not None and completed >= max_matches:
+        if max_matches is not None and completed[0] >= max_matches:
             stop.set()
 
-    try:
-        async with websockets.connect(
-            lobby_url,
-            max_size=_MAX_WS_SIZE,
-            user_agent_header=user_agent,
-        ) as ws:
-            await ws.send(json.dumps({"type": "authenticate", "token": token}))
-            while not stop.is_set():
-                try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=_LOBBY_RECV_TIMEOUT_S)
-                except asyncio.TimeoutError:
-                    continue  # periodic wake to re-check the stop signal
-                except (websockets.ConnectionClosed, ConnectionError):
-                    logger.info("lobby: connection closed")
-                    return "closed"
+    async with websockets.connect(
+        lobby_url,
+        max_size=_MAX_WS_SIZE,
+        user_agent_header=user_agent,
+    ) as ws:
+        await ws.send(json.dumps({"type": "authenticate", "token": token}))
+        while not stop.is_set():
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=_LOBBY_RECV_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                continue  # periodic wake to re-check the stop signal
+            except (websockets.ConnectionClosed, ConnectionError):
+                logger.info("lobby: connection closed")
+                return "closed"
 
-                msg = _loads(raw)
-                mtype = msg.get("type")
-                if mtype == "ping":
-                    await ws.send(json.dumps({"type": "pong"}))
-                elif mtype == "hello":
-                    logger.info("lobby: connected (endpoint=%s)", msg.get("endpoint", "lobby"))
-                elif mtype == "matched":
-                    gateway_url = resolve_gateway_url(lobby_url, msg["gateway_ws_url"])
-                    match_id = msg["match_id"]
-                    logger.info(
-                        "lobby: matched -> match %s (rated=%s); playing",
+            msg = _loads(raw)
+            mtype = msg.get("type")
+            if mtype == "ping":
+                await ws.send(json.dumps({"type": "pong"}))
+            elif mtype == "hello":
+                logger.info("lobby: connected (endpoint=%s)", msg.get("endpoint", "lobby"))
+            elif mtype == "matched":
+                gateway_url = resolve_gateway_url(lobby_url, msg["gateway_ws_url"])
+                match_id = msg["match_id"]
+                logger.info(
+                    "lobby: matched -> match %s (rated=%s); playing",
+                    match_id,
+                    msg.get("rated"),
+                )
+                task = asyncio.create_task(
+                    _play_one_match(
+                        gateway_url,
                         match_id,
-                        msg.get("rated"),
+                        token,
+                        factory(),
+                        policy=policy,
+                        client_name=client_name,
+                        client_version=client_version,
+                        safe_mode=safe_mode,
+                        user_agent=user_agent,
                     )
-                    task = asyncio.create_task(
-                        _play_one_match(
-                            gateway_url,
-                            match_id,
-                            token,
-                            factory(),
-                            client_name=client_name,
-                            client_version=client_version,
-                            safe_mode=safe_mode,
-                            user_agent=user_agent,
-                        )
-                    )
-                    task.add_done_callback(_on_match_done)
-                    match_tasks.append(task)
-                elif mtype == "evict":
-                    logger.warning("lobby: evicted (replaced by a newer connection)")
-                    return "evicted"
-                else:
-                    logger.debug("lobby: ignoring frame type=%s", mtype)
-        return "stopped" if stop.is_set() else "closed"
-    finally:
-        # Let any in-flight match finish reporting before we tear down.
-        if match_tasks:
-            await asyncio.wait(match_tasks, timeout=30)
+                )
+                task.add_done_callback(_on_match_done)
+                match_tasks.append(task)
+            elif mtype == "evict":
+                logger.warning("lobby: evicted (replaced by a newer connection)")
+                return "evicted"
+            else:
+                logger.debug("lobby: ignoring frame type=%s", mtype)
+    return "stopped" if stop.is_set() else "closed"
+
+
+async def _drain_and_cancel(
+    match_tasks: list[asyncio.Task], *, grace: float = _MATCH_DRAIN_GRACE_S
+) -> None:
+    """Teardown: let still-in-flight matches finish for a short grace window,
+    then cancel any stragglers and await everything so no task is orphaned."""
+    pending = [t for t in match_tasks if not t.done()]
+    if pending:
+        _, still_pending = await asyncio.wait(pending, timeout=grace)
+        for task in still_pending:
+            task.cancel()
+    if match_tasks:
+        await asyncio.gather(*match_tasks, return_exceptions=True)
 
 
 async def run_external_bot(
@@ -330,7 +391,9 @@ async def run_external_bot(
             ``[external_api].token`` in ``chipzen.toml``. Required.
         config: Pre-loaded :class:`chipzen.config.ChipzenConfig`, to avoid a
             second filesystem stat. ``None`` triggers discovery.
-        retry_policy: Reconnect-pacing policy for lobby drops. Defaults to
+        retry_policy: Reconnect-pacing policy for both lobby drops and mid-match
+            gateway drops (a dropped match reconnects and resumes via the
+            server's reconnect-resume). Defaults to
             :data:`chipzen.retry.DEFAULT_RETRY_POLICY`.
         client_name / client_version: Sent in the per-match ``hello``
             handshake. ``client_version`` defaults to the installed SDK version.
@@ -386,11 +449,18 @@ async def run_external_bot(
     results: list[dict] = []
     stop = asyncio.Event()
     fatal: list[BaseException] = []
+    # Owned HERE, not by a single lobby session, so in-flight matches survive a
+    # lobby reconnect (a match plays on its own gateway socket). ``completed``
+    # is a 1-element mutable counter shared across lobby sessions.
+    match_tasks: list[asyncio.Task] = []
+    completed = [0]
 
     logger.info("external: connecting lobby %s", lobby_url)
 
     # --- Lobby session loop with reconnect/backoff -------------------------
     consecutive_failures = 0
+    ever_connected = False
+    giveup_exc: BaseException | None = None
     while not stop.is_set():
         try:
             status = await _run_lobby_once(
@@ -398,6 +468,9 @@ async def run_external_bot(
                 resolved_token,
                 factory,
                 results,
+                match_tasks,
+                completed,
+                policy=policy,
                 client_name=client_name,
                 client_version=client_version,
                 safe_mode=safe_mode,
@@ -406,12 +479,17 @@ async def run_external_bot(
                 stop=stop,
                 fatal=fatal,
             )
+            ever_connected = True
         except (OSError, websockets.WebSocketException) as exc:
             # connect() itself failed — count it as a reconnect attempt.
             consecutive_failures += 1
             if consecutive_failures > policy.max_reconnect_attempts:
-                logger.error("lobby: giving up after %d failed attempts", consecutive_failures - 1)
-                raise
+                # Only a hard error if we NEVER reached the lobby (bad URL /
+                # token / network). If we connected and played, give up quietly
+                # and return what we have.
+                if not ever_connected:
+                    giveup_exc = exc
+                break
             delay = policy.backoff_ms(consecutive_failures) / 1000.0
             logger.warning(
                 "lobby: connect failed (%s); retrying in %.1fs (attempt %d/%d)",
@@ -421,17 +499,15 @@ async def run_external_bot(
                 policy.max_reconnect_attempts,
             )
             await asyncio.sleep(delay)
+            match_tasks[:] = [t for t in match_tasks if not t.done()]
             continue
 
-        # A live session ran; reset the backoff counter.
+        # A live lobby session ran; reset the backoff counter.
         consecutive_failures = 0
-        if fatal:
-            # A bot.decide() error under safe_mode=False — re-raise so the
-            # process exits non-zero (matches run_bot's behavior).
-            raise fatal[0]
-        if status in ("stopped", "evicted"):
+        if status in ("stopped", "evicted") or fatal:
             break
-        # status == "closed": the lobby dropped. Reconnect per the policy.
+        # status == "closed": the lobby dropped. In-flight matches keep playing
+        # on their own sockets; reconnect the lobby per the policy.
         consecutive_failures += 1
         if consecutive_failures > policy.max_reconnect_attempts:
             logger.info("lobby: closed and reconnect budget exhausted; done")
@@ -439,6 +515,15 @@ async def run_external_bot(
         delay = policy.backoff_ms(consecutive_failures) / 1000.0
         logger.info("lobby: closed; reconnecting in %.1fs", delay)
         await asyncio.sleep(delay)
+        match_tasks[:] = [t for t in match_tasks if not t.done()]
 
+    # --- Teardown: never orphan an in-flight match task --------------------
+    await _drain_and_cancel(match_tasks)
+    if fatal:
+        # A bot.decide() error under safe_mode=False — re-raise so the process
+        # exits non-zero (matches run_bot's behavior).
+        raise fatal[0]
+    if giveup_exc is not None:
+        raise giveup_exc
     logger.info("external: session ended (%d match(es) played)", len(results))
     return results

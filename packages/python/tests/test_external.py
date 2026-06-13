@@ -371,3 +371,127 @@ def _server_hello_lobby() -> dict:
     """The lobby's server hello (endpoint=lobby); the client does NOT reply
     with a client hello on the lobby leg."""
     return {"type": "hello", "endpoint": "lobby"}
+
+
+# ---------------------------------------------------------------------------
+# Reconnect behavior (gateway mid-match drop + lobby drop)
+# ---------------------------------------------------------------------------
+
+#: Sentinel placed in a scripted lobby frame list to make the next ``recv``
+#: raise (simulating a lobby socket drop).
+_CLOSE = object()
+
+
+class _ScriptedLobbyWS:
+    """Lobby WS that replays scripted frames; a ``_CLOSE`` sentinel makes the
+    next ``recv`` raise (drop), and once frames are exhausted ``recv`` blocks."""
+
+    def __init__(self, frames: list):
+        self.sent: list[dict] = []
+        self._frames = list(frames)
+
+    async def send(self, data: str) -> None:
+        self.sent.append(json.loads(data))
+
+    async def recv(self) -> str:
+        if self._frames:
+            frame = self._frames.pop(0)
+            if frame is _CLOSE:
+                raise ConnectionError("simulated lobby drop")
+            return json.dumps(frame)
+        # Block until the loop's wait_for cancels us. (Not asyncio.sleep — this
+        # transport stubs asyncio.sleep to make backoff instant.)
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+def _install_scripted_transport(monkeypatch, *, lobby_scripts, gateway_scripts):
+    """Like _install_transport but pops a fresh script per lobby/gateway
+    connect, so successive connects can behave differently (reconnect tests).
+
+    A gateway script that does NOT end in ``match_end`` closes cleanly →
+    ``_run_session`` returns ``None`` → ``_play_one_match`` reconnects.
+    ``asyncio.sleep`` is stubbed (recording delays) so backoff is instant.
+    """
+    lobby_iter = iter(lobby_scripts)
+    gw_iter = iter(gateway_scripts)
+    calls: dict = {"lobby": [], "gateway": [], "subprotocols": [], "sleeps": []}
+
+    def _connect(url, *, max_size=None, user_agent_header=None, subprotocols=None):
+        if "/ws/external/match/" in url:
+            calls["gateway"].append(url)
+            calls["subprotocols"].append(subprotocols)
+            return _Conn(_GatewayWS(list(next(gw_iter))))
+        calls["lobby"].append(url)
+        return _Conn(_ScriptedLobbyWS(list(next(lobby_iter))))
+
+    async def _record_sleep(delay):
+        calls["sleeps"].append(delay)
+
+    monkeypatch.setattr(external.websockets, "connect", _connect)
+    monkeypatch.setattr(external, "_LOBBY_RECV_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(external.asyncio, "sleep", _record_sleep)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_gateway_reconnects_and_resumes(monkeypatch):
+    # First gateway connect drops mid-match (no match_end); the SDK reconnects
+    # and the second connect plays to match_end. The same bot instance is reused.
+    calls = _install_scripted_transport(
+        monkeypatch,
+        lobby_scripts=[[_server_hello_lobby(), _matched()]],
+        gateway_scripts=[
+            [_server_hello(), _match_start(), _turn_request()],  # drops, no match_end
+            [_server_hello(), _match_end()],  # reconnect → completes
+        ],
+    )
+    results = await run_external_bot(
+        _CollectBot(), url=LOBBY_URL, token="cz_extbot_x", max_matches=1
+    )
+    assert len(calls["gateway"]) == 2  # reconnected once
+    assert len(results) == 1
+    assert results[0]["end"]["reason"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_gateway_reconnect_budget_exhausted_abandons_match(monkeypatch):
+    # Gateway never reaches match_end. After max_reconnect_attempts the match is
+    # abandoned (result end=None) rather than hanging or looping forever.
+    policy = RetryPolicy(max_reconnect_attempts=2, initial_backoff_ms=1, max_backoff_ms=1)
+    calls = _install_scripted_transport(
+        monkeypatch,
+        lobby_scripts=[[_server_hello_lobby(), _matched()]],
+        gateway_scripts=[
+            [_server_hello(), _match_start()],  # initial
+            [_server_hello(), _match_start()],  # retry 1
+            [_server_hello(), _match_start()],  # retry 2
+        ],
+    )
+    results = await run_external_bot(
+        _CollectBot(), url=LOBBY_URL, token="cz_extbot_x", retry_policy=policy, max_matches=1
+    )
+    assert len(calls["gateway"]) == 3  # initial + 2 retries, then give up
+    assert results[0]["end"] is None
+    # Backoff used the policy (capped at 1ms = 0.001s) for each reconnect.
+    assert calls["sleeps"] == [pytest.approx(0.001), pytest.approx(0.001)]
+
+
+@pytest.mark.asyncio
+async def test_lobby_reconnects_after_close(monkeypatch):
+    # The lobby socket drops after connecting; the SDK reconnects the lobby and
+    # then plays the match it's dispatched on the second session.
+    calls = _install_scripted_transport(
+        monkeypatch,
+        lobby_scripts=[
+            [_server_hello_lobby(), _CLOSE],  # connects, then drops
+            [_server_hello_lobby(), _matched()],  # reconnect → a match arrives
+        ],
+        gateway_scripts=[_full_match()],
+    )
+    results = await run_external_bot(
+        _CollectBot(), url=LOBBY_URL, token="cz_extbot_x", max_matches=1
+    )
+    assert len(calls["lobby"]) == 2  # lobby reconnected
+    assert len(results) == 1
+    assert results[0]["end"]["reason"] == "complete"
