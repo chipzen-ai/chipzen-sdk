@@ -8,7 +8,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-13
+
+Reaches feature parity with the Python SDK's external-API remote-play
+path (chipzen-ai/chipzen-sdk#56), and ships the just-merged reconnect
+fix from the Python side.
+
 ### Added
+
+- **External-API remote-play surface.** `runExternalBot()` connects a bot
+  to the platform over the public token-authed external-API path — lobby
+  (`/ws/external/bot/{botId}`) → `matched` → per-match gateway WS
+  (`/ws/external/match/{mid}/{pid}`, token in the `Sec-WebSocket-Protocol`
+  header) — and plays every match dispatched to it (a single challenge, or
+  each round of a tournament) on one persistent lobby connection. The match
+  data plane reuses the same `Bot.decide(GameState) -> Action` loop
+  (`_runSession`) as the containerized `runBot()` path, so one bot class
+  works on both. ([#56](https://github.com/chipzen-ai/chipzen-sdk/issues/56))
+- `connectToChipzen(botId, env)` — env-aware lobby-URL helper
+  (`prod` / `staging` / `local`, honoring `$CHIPZEN_ENV`), returning a
+  `ConnectionConfig`.
+- `chipzen.toml` config-file convention: drop your `cz_extbot_` token (and
+  optional `url` / `bot_id`) into `[external_api]` once; discovered from
+  cwd → `~/.chipzen/` → `/etc/chipzen/`. Explicit kwargs always win. Parsed
+  with a minimal inline reader so the package keeps its single runtime
+  dependency (`ws`) — no TOML library added.
+- `chipzen-sdk run-external <bot.js>` CLI: loads config, resolves the env
+  URL, finds your exported `Bot` subclass, and runs it. Flags mirror the
+  Python CLI: `--env`, `--token`, `--bot-id`, `--bot-class`,
+  `--max-matches`, `--no-safe-mode`.
+- `RetryPolicy` reconnect/backoff knobs (`maxReconnectAttempts`,
+  `initialBackoffMs`, `maxBackoffMs`, `backoffMultiplier`) + the shared
+  `DEFAULT_RETRY_POLICY`, accepted by both `runBot()` and
+  `runExternalBot()`. Default: 5 attempts, 500 ms initial backoff doubling
+  to a 30 s cap.
+- `Bot.onDecisionLatency(latencyMs)` hook — called after each `turn_action`
+  is sent, with the wall-clock time your `decide()` took. Default no-op.
+  ([#46](https://github.com/chipzen-ai/chipzen-sdk/issues/46))
+- `safeMode` option on `runBot()` / `runExternalBot()` (default `true`,
+  preserving the existing fold-on-error behavior). Set `false` for
+  dev/eval so an exception in `decide()` raises `BotDecisionError` and
+  exits non-zero instead of being silently folded. `BotDecisionError` is
+  now exported. ([#52](https://github.com/chipzen-ai/chipzen-sdk/issues/52))
+- A non-default `User-Agent` (`chipzen-sdk-js/<version>`) is now sent on
+  the WebSocket handshake (defense-in-depth against the platform's
+  Cloudflare bot-fight rule). Override with `userAgent`.
+  ([#46](https://github.com/chipzen-ai/chipzen-sdk/issues/46))
+- `VERSION` export — the SDK version string, sourced from `package.json`.
+
+### Changed
+
+- `runBot()` now returns the `match_end` payload
+  (`Record<string, unknown> | null`) instead of `void`.
+  Backward-compatible — callers that ignore the return value are
+  unaffected. (`_runSession` likewise returns the payload so the lobby
+  loop can distinguish a clean end from a drop.)
+- `runBot()`'s default reconnect cap is now 5 attempts (from the default
+  `RetryPolicy`) with the policy's exponential backoff, instead of the
+  previous hardcoded `maxRetries=3` with `min(2**n, 8)s`. Pass
+  `maxRetries` or a `retryPolicy` to override.
+
+### Fixed
+
+- The default `clientVersion` sent in the `hello` handshake now tracks the
+  installed package version instead of the hardcoded `"0.2.0"` literal
+  that would drift on a release bump.
+  ([#41](https://github.com/chipzen-ai/chipzen-sdk/issues/41))
+- **External-API: a mid-match gateway disconnect no longer silently
+  forfeits the match.** `runExternalBot()` reconnects a dropped per-match
+  gateway socket (bounded by the `RetryPolicy`) and resumes via the
+  platform's reconnect-resume — `_runSession` consumes the server
+  `reconnected` frame and replays the pending turn, and the bot instance
+  keeps its state across the gap. The reconnect budget is bounded, so an
+  unrecoverable match is abandoned (`end: null`) rather than hanging.
+- **External-API: in-flight matches survive a lobby reconnect, and no
+  match task is orphaned on teardown.** Match-task ownership is hoisted to
+  the top-level `runExternalBot` (not the per-lobby-session), so a lobby
+  blip no longer abandons a match playing on its own gateway socket; on
+  teardown, still-running matches get a short grace window then are
+  drained and awaited.
+
+### Added (already shipped pre-0.3.0, in conformance)
 
 - Three new conformance scenarios in `validate --check-connectivity`,
   bringing the total from 1 to 4. The previously-shipped scenario only
@@ -126,4 +206,5 @@ and
 
 Apache-2.0.
 
+[0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.3.0
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.2.0

@@ -8,6 +8,7 @@
 import { parseArgs } from "node:util";
 import path from "node:path";
 
+import { runExternalCli } from "./run_external.js";
 import { scaffoldBot } from "./scaffold.js";
 import {
   type ValidationResult,
@@ -19,6 +20,8 @@ import {
 const COMMANDS = {
   init: "Scaffold a new bot project from a starter template",
   validate: "Run pre-upload checks: size, syntax, imports, smoke test, timeout",
+  "run-external":
+    "Run a bot on the external-API remote-play path (lobby -> matched -> play)",
 } as const;
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -35,6 +38,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     case "validate":
       await validateCli(rest);
       return;
+    case "run-external":
+      await runExternalCli(rest);
+      return;
     default:
       console.error(`Unknown command: ${command}`);
       console.error("");
@@ -50,7 +56,7 @@ function printHelp(): void {
   console.log("");
   console.log("Commands:");
   for (const [name, desc] of Object.entries(COMMANDS)) {
-    console.log(`  ${name.padEnd(12)} ${desc}`);
+    console.log(`  ${name.padEnd(14)} ${desc}`);
   }
   console.log("");
   console.log("Run 'chipzen-sdk <command> --help' for details on a specific command.");
