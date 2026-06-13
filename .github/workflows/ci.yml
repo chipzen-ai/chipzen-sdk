@@ -16,8 +16,15 @@ jobs:
     # previous job's `ruff check .` ran against an empty directory
     # and passed vacuously. This job exercises the actual SDK
     # package at packages/python/.
-    name: Python SDK (lint + test)
+    name: Python SDK (lint + test, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the supported floor and exercises the tomli config-parser
+        # fallback (no stdlib tomllib there); 3.12 is the current default.
+        # 3.11/3.13 are covered transitively.
+        python-version: ["3.10", "3.12"]
     defaults:
       run:
         working-directory: packages/python
@@ -25,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install package + dev deps
         run: pip install -e ".[dev]"
       - name: Lint
@@ -39,7 +46,42 @@ jobs:
         # downstream-facing promise this gate keeps honest).
         run: mypy src/
       - name: Test
-        run: pytest -q
+        # Coverage gate: fails the build if SDK coverage drops below the
+        # floor. Demo bots under examples/ are omitted (see pyproject).
+        run: pytest -q --cov=chipzen --cov-report=term-missing --cov-fail-under=80
+
+  python-wheel-smoke:
+    # The release workflow publishes a WHEEL, but the rest of CI only ever
+    # tests the editable source tree. This job builds the actual wheel and
+    # exercises it from a clean venv — proving it installs, imports its
+    # public surface, ships the py.typed marker, and exposes its console
+    # scripts. (0.3.0 shipped with none of this verified.)
+    name: Python wheel smoke-test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
+        run: |
+          pip install --upgrade build
+          python -m build
+      - name: Install the built wheel in a clean venv and smoke-test it
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --upgrade pip
+          /tmp/smoke/bin/pip install dist/*.whl
+          # Public surface must import from the INSTALLED wheel, not src/.
+          /tmp/smoke/bin/python -c "import chipzen; print('version', chipzen.__version__); from chipzen import Bot, run_bot, run_external_bot, connect_to_chipzen, RetryPolicy, ChipzenConfig, BotDecisionError, load_chipzen_config"
+          # The py.typed marker must ship (the Typing :: Typed classifier promises it).
+          /tmp/smoke/bin/python -c "import importlib.util, pathlib; origin = importlib.util.find_spec('chipzen').origin; assert origin is not None; assert (pathlib.Path(origin).parent / 'py.typed').exists(), 'py.typed marker missing from the wheel'; print('py.typed OK')"
+          # Console scripts resolve.
+          /tmp/smoke/bin/chipzen-sdk --help
+          /tmp/smoke/bin/chipzen run-external --help
 
   javascript-sdk:
     # Renamed from `javascript-starter` (issue #17). The previous

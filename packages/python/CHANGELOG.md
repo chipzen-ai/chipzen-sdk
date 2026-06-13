@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a match playing on its own gateway socket; on teardown, still-running matches
   get a short grace window then are cancelled and awaited (previously they were
   left running after a 30s `asyncio.wait` timeout).
+- **Packaging: ship the `py.typed` marker.** The `Typing :: Typed` classifier
+  promised an inline-typed package, but the marker file was missing, so
+  downstream `mypy` ignored the SDK's type hints. The marker now ships in the
+  wheel (verified by a new CI wheel smoke-test).
 
 ## [0.3.0] — 2026-06-13
 
