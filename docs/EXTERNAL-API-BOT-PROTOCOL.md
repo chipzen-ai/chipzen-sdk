@@ -453,11 +453,25 @@ socket are independent: a match WS drop does not drop your lobby presence, and v
 
 ## 9. SDK home / productionizing
 
-A minimal, runnable **reference client** lives in this repo at
-[`examples/external-api-bot/`](../examples/external-api-bot/). It demonstrates the full path —
-lobby → `matched` → match handshake → play to `match_end` — with a trivial check/call/fold
-strategy. It is intended as a readable starting point, not a packaged SDK.
+The published **`chipzen-bot` Python SDK (0.3.0+)** packages this whole path:
+`run_external_bot()` plus the `chipzen run-external` CLI run the lobby → `matched` → match
+handshake → play loop for you, reusing the same `Bot.decide(GameState) -> Action` interface as
+the sandboxed/uploaded path. For production, that's the recommended client:
 
-There is no `pip install` package for the External-API path yet — packaging this client into
-the published SDKs (alongside the sandboxed-bot `chipzen-bot` packages) and wiring it into the
-CLI is future work. Until then, treat `examples/external-api-bot/` as the canonical reference.
+```bash
+pip install chipzen-bot
+```
+
+```python
+import asyncio
+from chipzen import Bot, run_external_bot
+
+asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging", token="cz_extbot_..."))
+```
+
+A minimal, runnable **reference client** also lives in this repo at
+[`examples/external-api-bot/`](../examples/external-api-bot/). It demonstrates the same path with
+a trivial check/call/fold strategy, speaking raw JSON over WebSockets so every frame is visible —
+the readable starting point for learning the wire format or porting the protocol to another
+language. The JavaScript and Rust SDKs do not package this path yet; for those, the reference
+client remains the canonical guide.

@@ -1,8 +1,9 @@
 """CLI entry point for the chipzen-sdk package.
 
 Usage:
-    chipzen-sdk init     my_bot
-    chipzen-sdk validate ./my_bot/
+    chipzen-sdk init         my_bot
+    chipzen-sdk validate     ./my_bot/
+    chipzen-sdk run-external ./my_bot.py    (also: chipzen run-external ...)
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import sys
 COMMANDS = {
     "init": "Scaffold a new bot project with starter files",
     "validate": "Check if a bot will pass the platform upload and build process",
+    "run-external": "Run a bot on the external-API remote-play path (lobby -> matched -> play)",
 }
 
 
@@ -23,7 +25,7 @@ def _print_help() -> None:
     print()
     print("Commands:")
     for cmd, desc in COMMANDS.items():
-        print(f"  {cmd:<12} {desc}")
+        print(f"  {cmd:<14} {desc}")
     print()
     print("Run 'chipzen-sdk <command> --help' for details on a specific command.")
 
@@ -44,6 +46,10 @@ def main() -> None:
         from chipzen.scaffold import init_cli
 
         init_cli(remaining)
+    elif command == "run-external":
+        from chipzen.run_external import run_external_cli
+
+        run_external_cli(remaining)
     else:
         print(f"Unknown command: {command}")
         print()

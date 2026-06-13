@@ -17,10 +17,13 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from typing import Any
 
+from chipzen import __version__ as _VERSION  # noqa: N812
 from chipzen.bot import ChipzenBot
 from chipzen.models import Action, GameState
+from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
 
 logger = logging.getLogger("chipzen")
 
@@ -58,17 +61,29 @@ async def _send_json(ws: Any, message: dict) -> None:
     await ws.send(json.dumps(message))
 
 
+class BotDecisionError(Exception):
+    """Raised when ``bot.decide()`` errors and ``safe_mode=False``.
+
+    Distinguished from transport/connection errors so the caller treats it as
+    terminal (a deterministic bot bug, not a transient disconnect) and does NOT
+    reconnect-retry it. See chipzen-ai/chipzen-sdk#52.
+    """
+
+
 async def run_bot(
     url: str,
     bot: ChipzenBot,
     *,
-    max_retries: int = 3,
+    max_retries: int | None = None,
+    retry_policy: RetryPolicy | None = None,
     token: str | None = None,
     ticket: str | None = None,
     match_id: str | None = None,
     client_name: str = "chipzen-sdk",
-    client_version: str = "0.2.0",
-) -> None:
+    client_version: str = _VERSION,
+    safe_mode: bool = True,
+    user_agent: str | None = None,
+) -> dict | None:
     """Connect a bot to the Chipzen server and play until the match ends.
 
     Args:
@@ -76,12 +91,30 @@ async def run_bot(
              ``ws://localhost:8001/ws/match/{match_id}/{participant_id}``
              or ``.../ws/match/{match_id}/bot`` for internal bots.
         bot: Your bot instance.
-        max_retries: Number of reconnection attempts on unexpected disconnect.
+        max_retries: Reconnect attempt **cap**. When given, overrides the
+            attempt count from ``retry_policy`` (the policy's backoff knobs
+            still apply). When ``None`` (default), the policy's
+            ``max_reconnect_attempts`` is used.
+        retry_policy: :class:`chipzen.retry.RetryPolicy` controlling reconnect
+            attempts + exponential backoff. Defaults to
+            :data:`chipzen.retry.DEFAULT_RETRY_POLICY` (5 attempts, 500ms
+            initial backoff doubling to a 30s cap).
         token: Bot API token (for the ``/bot`` endpoint).
         ticket: Single-use ticket (for competitive endpoints).
         match_id: Match UUID. Extracted from the URL if not provided.
         client_name: Client software name sent in the ``hello`` handshake.
-        client_version: Client software version sent in the ``hello`` handshake.
+        client_version: Client software version sent in the ``hello``
+            handshake. Defaults to the installed SDK version
+            (chipzen-ai/chipzen-sdk#41).
+        safe_mode: When ``True`` (default), an exception raised by
+            ``bot.decide()`` is logged and folded. Set ``False`` for dev/eval
+            so the first exception propagates (chipzen-ai/chipzen-sdk#52).
+        user_agent: Override the WS ``User-Agent`` header. Defaults to
+            ``chipzen-sdk-python/<version>`` (chipzen-ai/chipzen-sdk#46).
+
+    Returns:
+        The ``match_end`` payload, or ``None`` if the connection closed without
+        a clean ``match_end`` after exhausting retries.
     """
     try:
         from websockets.asyncio.client import connect
@@ -96,12 +129,18 @@ async def run_bot(
     if match_id is None:
         match_id = _extract_match_id(url)
 
+    ua = user_agent or f"chipzen-sdk-python/{client_version}"
+    policy = retry_policy if retry_policy is not None else DEFAULT_RETRY_POLICY
+    # An explicit max_retries caps the attempt count; the policy still supplies
+    # the backoff progression.
+    max_attempts = max_retries if max_retries is not None else policy.max_reconnect_attempts
+
     retries = 0
-    while retries <= max_retries:
+    while retries <= max_attempts:
         try:
-            async with connect(url) as ws:
+            async with connect(url, user_agent_header=ua) as ws:
                 retries = 0  # reset on successful connect
-                await _run_session(
+                return await _run_session(
                     ws,
                     bot,
                     match_id=match_id,
@@ -109,25 +148,30 @@ async def run_bot(
                     ticket=ticket,
                     client_name=client_name,
                     client_version=client_version,
+                    safe_mode=safe_mode,
                 )
-                # _run_session returns cleanly on match_end.
-                return
 
         except asyncio.CancelledError:
             raise
+        except BotDecisionError:
+            # A deterministic bot bug (safe_mode=False) — terminal, not a
+            # transient disconnect. Do not reconnect-retry; propagate so the
+            # process exits non-zero.
+            raise
         except Exception:
             retries += 1
-            if retries > max_retries:
+            if retries > max_attempts:
                 logger.exception("Max reconnection attempts reached, giving up")
                 raise
-            wait = min(2**retries, 8)
+            wait = policy.backoff_ms(retries) / 1000.0
             logger.warning(
-                "Connection lost, retrying in %ds (attempt %d/%d)",
+                "Connection lost, retrying in %.1fs (attempt %d/%d)",
                 wait,
                 retries,
-                max_retries,
+                max_attempts,
             )
             await asyncio.sleep(wait)
+    return None
 
 
 async def _run_session(
@@ -139,8 +183,31 @@ async def _run_session(
     ticket: str | None,
     client_name: str,
     client_version: str,
-) -> None:
-    """Execute a single connected session: handshake + message loop."""
+    safe_mode: bool = True,
+) -> dict | None:
+    """Execute a single connected session: handshake + message loop.
+
+    Returns the ``match_end`` payload on a clean finish, or ``None`` if the
+    handshake failed / the socket closed without a ``match_end``.
+    """
+
+    def _decide(state: GameState) -> tuple[Action, float]:
+        """Run ``bot.decide`` with timing + safe_mode handling.
+
+        Returns ``(action, decision_ms)``. Under ``safe_mode`` a raised
+        exception is logged and folded; otherwise it is re-raised as a
+        :class:`BotDecisionError` so the caller treats it as terminal.
+        """
+        start = time.monotonic()
+        try:
+            action = bot.decide(state)
+        except Exception as exc:
+            logger.exception("Bot.decide() raised an exception")
+            if not safe_mode:
+                raise BotDecisionError(str(exc)) from exc
+            action = Action.fold()
+        return action, (time.monotonic() - start) * 1000.0
+
     # --- Layer 1 handshake --------------------------------------------
     auth_msg: dict[str, Any] = {
         "type": "authenticate",
@@ -163,7 +230,7 @@ async def _run_session(
             "Expected 'hello' from server, got %r",
             server_hello.get("type"),
         )
-        return
+        return None
 
     selected_version = server_hello.get("selected_version")
     server_versions = server_hello.get("supported_versions", []) or []
@@ -173,7 +240,7 @@ async def _run_session(
             selected_version,
             SUPPORTED_PROTOCOL_VERSIONS,
         )
-        return
+        return None
     if not selected_version and server_versions:
         if not any(v in SUPPORTED_PROTOCOL_VERSIONS for v in server_versions):
             logger.error(
@@ -181,7 +248,7 @@ async def _run_session(
                 server_versions,
                 SUPPORTED_PROTOCOL_VERSIONS,
             )
-            return
+            return None
 
     await _send_json(
         ws,
@@ -257,12 +324,7 @@ async def _run_session(
                 your_seat=your_seat,
                 dealer_seat=dealer_seat,
             )
-            try:
-                action = bot.decide(state)
-            except Exception:
-                logger.exception("Bot.decide() raised an exception, folding")
-                action = Action.fold()
-
+            action, decision_ms = _decide(state)
             await _send_json(
                 ws,
                 {
@@ -272,6 +334,7 @@ async def _run_session(
                     **action.to_wire(),
                 },
             )
+            bot.on_decision_latency(decision_ms)
 
         elif msg_type == "action_rejected":
             # Retry within ``remaining_ms`` using the SAME request_id.
@@ -345,11 +408,7 @@ async def _run_session(
                     your_seat=your_seat,
                     dealer_seat=dealer_seat,
                 )
-                try:
-                    action = bot.decide(state)
-                except Exception:
-                    logger.exception("Bot.decide() raised an exception, folding")
-                    action = Action.fold()
+                action, decision_ms = _decide(state)
                 await _send_json(
                     ws,
                     {
@@ -359,14 +418,18 @@ async def _run_session(
                         **action.to_wire(),
                     },
                 )
+                bot.on_decision_latency(decision_ms)
 
         elif msg_type == "match_end":
             bot.on_match_end(payload)
-            return
+            return payload
 
         else:
             # Forward compatibility: silently ignore unknown message types.
             logger.debug("Ignoring unknown message type %r", msg_type)
+
+    # Socket closed without a match_end.
+    return None
 
 
 def _import_bot(specifier: str) -> ChipzenBot:

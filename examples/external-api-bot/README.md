@@ -5,10 +5,48 @@ get a token → connect to the lobby → receive a `matched` notification → co
 to the match data plane → play a full match. It uses a trivial check/call/fold
 strategy — it exists to demonstrate the **protocol**, not to play well.
 
-> **Reference, not a packaged SDK.** This is the canonical public home of the
-> External-API reference client. Packaging it into the published SDKs / CLI is
-> future work (see
-> [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../../docs/EXTERNAL-API-BOT-PROTOCOL.md) §9).
+> **Most bots should use the packaged SDK, not this file.** As of
+> `chipzen-bot` 0.3.0 the published Python SDK ships this whole flow as
+> `run_external_bot()` and the `chipzen run-external` CLI — you write one
+> `chipzen.Bot` subclass and the SDK handles the lobby, matching, gateway, and
+> reconnect. See [the packaged path](#packaged-sdk-the-easy-path) below. This
+> raw client is kept as a **protocol reference**: it speaks raw JSON over
+> WebSockets so every frame is visible, which is the right thing to read when
+> porting the protocol to another language or debugging the wire format.
+
+## Packaged SDK (the easy path)
+
+```bash
+pip install chipzen-bot
+```
+
+```python
+import asyncio
+from chipzen import Bot, Action, GameState, run_external_bot
+
+class MyBot(Bot):
+    def decide(self, state: GameState) -> Action:
+        if "check" in state.valid_actions:
+            return Action.check()
+        return Action.call() if "call" in state.valid_actions else Action.fold()
+
+asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging", token="cz_extbot_..."))
+```
+
+Or from the command line, with the token in a `chipzen.toml`:
+
+```toml
+# chipzen.toml
+[external_api]
+token  = "cz_extbot_..."
+bot_id = "<bot-uuid>"
+```
+
+```bash
+chipzen run-external my_bot.py --env staging
+```
+
+The rest of this README documents the **raw reference client** below.
 
 ## What it shows
 

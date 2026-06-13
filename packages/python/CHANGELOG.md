@@ -8,6 +8,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-13
+
+### Added
+
+- **External-API remote-play surface.** `run_external_bot()` connects a bot to
+  the platform over the public token-authed external-API path — lobby
+  (`/ws/external/bot/{bot_id}`) → `matched` → per-match gateway WS
+  (`/ws/external/match/{mid}/{pid}`, token in the `Sec-WebSocket-Protocol`
+  header) — and plays every match dispatched to it (a single challenge, or each
+  round of a tournament) on one persistent lobby connection. The match data
+  plane reuses the same `Bot.decide(GameState) -> Action` loop as the
+  containerized path, so one bot class works on both. Promotes the previously
+  copy-paste `examples/external-api-bot` reference into the published package.
+  ([#43](https://github.com/chipzen-ai/chipzen-sdk/issues/43))
+- `connect_to_chipzen(bot_id, env=...)` — env-aware lobby-URL helper
+  (`prod` / `staging` / `local`, honoring `$CHIPZEN_ENV`).
+  ([#43](https://github.com/chipzen-ai/chipzen-sdk/issues/43))
+- `chipzen.toml` config-file convention: drop your `cz_extbot_` token (and
+  optional `url` / `bot_id`) into `[external_api]` once; discovered from cwd →
+  `~/.chipzen/` → `/etc/chipzen/`. Explicit kwargs always win.
+  ([#42](https://github.com/chipzen-ai/chipzen-sdk/issues/42))
+- `chipzen run-external <bot.py>` CLI (also `chipzen-sdk run-external`): loads
+  config, resolves the env URL, finds your `Bot` subclass, and runs it.
+  Flags: `--env`, `--token`, `--bot-id`, `--bot-class`, `--max-matches`,
+  `--no-safe-mode`. ([#44](https://github.com/chipzen-ai/chipzen-sdk/issues/44))
+- `RetryPolicy` reconnect/backoff knobs (`max_reconnect_attempts`,
+  `initial_backoff_ms`, `max_backoff_ms`, `backoff_multiplier`), accepted by
+  both `run_bot()` and `run_external_bot()`. Default: 5 attempts, 500 ms
+  initial backoff doubling to a 30 s cap.
+  ([#45](https://github.com/chipzen-ai/chipzen-sdk/issues/45))
+- `Bot.on_decision_latency(latency_ms)` hook — called after each `turn_action`
+  is sent, with the wall-clock time your `decide()` took. Default no-op.
+  ([#46](https://github.com/chipzen-ai/chipzen-sdk/issues/46))
+- `safe_mode` parameter on `run_bot()` / `run_external_bot()` (default `True`,
+  preserving the existing fold-on-error behavior). Set `False` for dev/eval so
+  an exception in `decide()` raises `BotDecisionError` and exits non-zero
+  instead of being silently folded.
+  ([#52](https://github.com/chipzen-ai/chipzen-sdk/issues/52))
+- A non-default `User-Agent` (`chipzen-sdk-python/<version>`) is now sent on the
+  WebSocket handshake (defense-in-depth against the platform's Cloudflare
+  bot-fight rule). Override with `user_agent=`.
+  ([#46](https://github.com/chipzen-ai/chipzen-sdk/issues/46))
+
+### Fixed
+
+- The default `client_version` sent in the `hello` handshake now tracks the
+  installed package version instead of a hardcoded string that drifted (it
+  reported `0.2.0` in the `0.2.1` wheel).
+  ([#41](https://github.com/chipzen-ai/chipzen-sdk/issues/41))
+
 ## [0.2.1] — 2026-05-05
 
 ### Fixed

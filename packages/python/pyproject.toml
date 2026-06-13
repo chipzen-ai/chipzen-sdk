@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chipzen-bot"
-version = "0.2.1"
+version = "0.3.0"
 description = "Build, test, and deploy poker bots for the Chipzen AI competition platform"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -48,6 +48,7 @@ Changelog = "https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/python
 
 [project.scripts]
 chipzen-sdk = "chipzen.__main__:main"
+chipzen = "chipzen.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chipzen"]
