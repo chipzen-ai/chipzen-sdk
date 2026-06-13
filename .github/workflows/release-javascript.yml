@@ -128,6 +128,16 @@ jobs:
         # `dir/file.tgz` (contains `/`, no leading `./`) as a GitHub
         # shorthand `<user>/<repo>` and runs `git ls-remote` instead of
         # publishing the local file. `./` forces filesystem resolution.
+        #
+        # TEMPORARY: NODE_AUTH_TOKEN bootstraps the FIRST publish with a
+        # granular token, because npm only lets you attach an OIDC Trusted
+        # Publisher to a package that already exists. Once @chipzen-ai/bot
+        # is published, configure the Trusted Publisher and REVERT this
+        # `env:` block so releases go token-free via OIDC (the `--provenance`
+        # OIDC signing already works regardless). The token is short-lived
+        # and should be revoked + the NPM_TOKEN secret deleted afterward.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish ./npm-dist/*.tgz \
             --provenance \
