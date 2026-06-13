@@ -54,9 +54,9 @@ import { VERSION } from "./version.js";
 
 /**
  * Sentinel subprotocol that marks the `cz_extbot_` token in the
- * `Sec-WebSocket-Protocol` header (CZ#2932 moved the token off the query
- * string, where it leaked into proxy access logs). Must match the value
- * the platform's api gateway expects.
+ * `Sec-WebSocket-Protocol` header (CZ issue 2932 moved the token off the
+ * query string, where it leaked into proxy access logs). Must match the
+ * value the platform's api gateway expects.
  */
 export const BOT_TOKEN_SUBPROTOCOL = "chipzen-bot-token";
 
