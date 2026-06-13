@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **External-API: refuse a cross-origin or `wss`→`ws` gateway URL.**
+  `run_external_bot` now rejects a server-supplied absolute `gateway_ws_url`
+  whose origin differs from the lobby's, or that downgrades to cleartext
+  `ws://` — so the bot token can never be sent to a different host or
+  unencrypted; the offending match is skipped. A relative URL is always
+  re-anchored to the lobby origin.
+  ([#58](https://github.com/chipzen-ai/chipzen-sdk/issues/58))
+
+### Changed
+
+- **Breaking:** `resolve_gateway_url` now returns `Result<String, Error>`
+  (was `String`) so it can refuse an untrusted gateway URL (new
+  `Error::UntrustedGateway`). The normal relative-path resolution is
+  unchanged; only the rare absolute-URL case can now error.
+
 ### Added
 
 - **External-API remote-play path** — parity with the Python SDK 0.3.0

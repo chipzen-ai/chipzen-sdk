@@ -100,10 +100,28 @@ def resolve_gateway_url(lobby_url: str, gateway_ws_path: str) -> str:
     The ``matched`` notification carries ``gateway_ws_url`` as a *path*
     (``/ws/external/match/{mid}/{pid}``). The ``cz_extbot_`` token is NOT on
     the query string — it travels in the ``Sec-WebSocket-Protocol`` header (see
-    :func:`bot_token_subprotocols`). A future server that returns a full URL is
-    passed through unchanged.
+    :func:`bot_token_subprotocols`).
+
+    A server that returns a full URL is honored ONLY if it stays on the same
+    origin as the lobby and does not downgrade ``wss`` → ``ws`` — otherwise the
+    bot token would be sent to an attacker- or misconfig-supplied host (or in
+    cleartext). A relative path is always re-anchored to the lobby origin, so
+    it's inherently same-origin.
+
+    Raises:
+        ValueError: if ``gateway_ws_path`` is an absolute URL whose origin
+            differs from the lobby's, or downgrades a ``wss`` lobby to ``ws``.
     """
     if gateway_ws_path.startswith(("ws://", "wss://")):
+        lobby = urlsplit(_normalise_base(lobby_url))
+        gateway = urlsplit(gateway_ws_path)
+        downgrade = lobby.scheme == "wss" and gateway.scheme != "wss"
+        if gateway.netloc != lobby.netloc or downgrade:
+            raise ValueError(
+                f"refusing gateway URL {gateway_ws_path!r}: cross-origin or "
+                f"insecure relative to lobby {lobby.scheme}://{lobby.netloc} "
+                "(the bot token must not be sent to a different host or in cleartext)"
+            )
         return gateway_ws_path
     return f"{_normalise_base(lobby_url)}{gateway_ws_path}"
 
@@ -310,7 +328,13 @@ async def _run_lobby_once(
             elif mtype == "hello":
                 logger.info("lobby: connected (endpoint=%s)", msg.get("endpoint", "lobby"))
             elif mtype == "matched":
-                gateway_url = resolve_gateway_url(lobby_url, msg["gateway_ws_url"])
+                try:
+                    gateway_url = resolve_gateway_url(lobby_url, msg["gateway_ws_url"])
+                except ValueError as exc:
+                    # Untrusted gateway URL (cross-origin / downgrade); skip this
+                    # match rather than send the token there.
+                    logger.warning("lobby: ignoring matched with untrusted gateway URL: %s", exc)
+                    continue
                 match_id = msg["match_id"]
                 logger.info(
                     "lobby: matched -> match %s (rated=%s); playing",
