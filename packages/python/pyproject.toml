@@ -34,9 +34,13 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-cov>=4.0",
     "ruff>=0.5.0",
     "hypothesis>=6.100.0",
     "mypy>=1.0",
+    # 3.10 has no stdlib tomllib, so the chipzen.toml parser falls back to
+    # tomli; include it in dev so the 3.10 CI leg exercises that path.
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.urls]
@@ -67,3 +71,16 @@ ignore = ["E741", "N806"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["chipzen"]
+# Demo bots ship for reference; they're not unit-tested and would drag the
+# gate down without measuring anything meaningful about the SDK itself.
+omit = ["*/chipzen/examples/*"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@(abc\\.)?abstractmethod",
+    "raise NotImplementedError",
+]
