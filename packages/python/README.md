@@ -24,7 +24,9 @@ torch, etc.) on top.
 ## Minimal bot
 
 ```python
-from chipzen import Bot, Action, GameState
+import asyncio
+import os
+from chipzen import Bot, Action, GameState, run_bot
 
 class MyBot(Bot):
     def decide(self, state: GameState) -> Action:
@@ -33,8 +35,13 @@ class MyBot(Bot):
         return Action.fold()
 
 if __name__ == "__main__":
-    MyBot().run()
+    # An uploaded bot gets its match URL from the platform via $CHIPZEN_WS_URL.
+    asyncio.run(run_bot(os.environ["CHIPZEN_WS_URL"], MyBot(),
+                        token=os.environ.get("CHIPZEN_TOKEN")))
 ```
+
+> To run a bot **remotely from your own machine** instead of uploading it, use
+> `run_external_bot(...)` / `chipzen run-external` — see [Two ways to run a bot](#two-ways-to-run-a-bot).
 
 The SDK handles the Layer-1 transport handshake, Layer-2 game-state
 parsing, ping/pong, request-id echoing, `action_rejected` retries,

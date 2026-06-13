@@ -4,8 +4,9 @@ Devs running an external-API bot should be able to drop their long-lived
 API token into a config file once and forget about it, instead of
 hard-coding ``token="cz_extbot_..."`` into source. This module implements
 the discovery + parsing half of that convention; the
-:func:`chipzen.client.run_bot` entry point consumes the result and
-prefers explicit kwargs over config-file values.
+:func:`chipzen.external.run_external_bot` entry point (and the
+``chipzen run-external`` CLI) consume the result and prefer explicit
+kwargs over config-file values.
 
 External-API issue breakdown reference:
 ``management/ophir-track/external-api-issue-breakdown.md`` (Issue 23,
@@ -45,13 +46,13 @@ no explicit ``url`` is configured.
 Precedence rules
 ----------------
 
-For each field consumed by :func:`run_bot`:
+For each field consumed by :func:`run_external_bot`:
 
 - An **explicit kwarg** (``token="..."`` / ``url="..."``) always wins.
 - Otherwise, the value from ``chipzen.toml`` is used.
 - If neither is present and the field is required (e.g. token for an
-  external-API endpoint), :func:`run_bot` raises a clear ``ValueError``
-  pointing the dev at the config-file convention.
+  external-API endpoint), :func:`run_external_bot` raises a clear
+  ``ValueError`` pointing the dev at the config-file convention.
 """
 
 from __future__ import annotations
@@ -94,9 +95,7 @@ class ChipzenConfig:
             ``None``. Consumed by the ``chipzen run-external`` CLI
             wrapper (External-API Issue 25) to build the env-derived
             lobby URL via :func:`chipzen.connect.connect_to_chipzen`
-            when no explicit ``url`` override is set. Not used at the
-            :func:`chipzen.client.run_bot` layer (which only needs the
-            already-fully-formed URL).
+            when no explicit ``url`` override is set.
     """
 
     path: Path
@@ -207,7 +206,7 @@ def load_chipzen_config(
     except _toml.TOMLDecodeError as exc:  # type: ignore[union-attr]
         raise ChipzenConfigError(
             f"Failed to parse {path}: {exc}. Fix the syntax or delete "
-            f"the file to fall back to explicit run_bot(token=...) args."
+            f"the file to fall back to explicit run_external_bot(token=...) args."
         ) from exc
     except OSError as exc:
         raise ChipzenConfigError(f"Failed to read {path}: {exc}") from exc

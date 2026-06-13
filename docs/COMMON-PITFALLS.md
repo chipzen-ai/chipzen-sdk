@@ -502,8 +502,9 @@ exception, the bot's `main` exits, and the container terminates — the
 match runner classifies the disconnect as a forfeit and auto-folds the
 seat for every subsequent action.
 
-The Python SDK (`chipzen.client.run_bot`) handles this for you: up to
-`max_retries=3` reconnects, with the `reconnected` message carrying a
+The Python SDK (`chipzen.client.run_bot`) handles this for you: it
+reconnects with exponential backoff (5 attempts by default, configurable
+via `RetryPolicy`), with the `reconnected` message carrying a
 `pending_request` so you can finish the in-flight turn without losing
 the budget. If you're using a starter SDK (JS, Rust) or a hand-rolled
 client, you own the reconnect logic.

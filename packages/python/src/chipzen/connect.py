@@ -5,7 +5,7 @@ remember the exact lobby WebSocket URL per environment. This module
 exposes :func:`connect_to_chipzen` — a small one-liner that returns a
 fully-populated :class:`ConnectionConfig` containing the resolved
 ``url``, ``token``, and ``retry_policy``, ready to hand off to
-:func:`chipzen.client.run_bot`.
+:func:`chipzen.external.run_external_bot`.
 
 External-API issue breakdown reference:
 ``management/ophir-track/external-api-issue-breakdown.md`` (Issue 24,
@@ -61,10 +61,10 @@ Issue 23 picked (B) for ``token`` resolution: the config-file value
 beats the env-derived default, but an explicit kwarg beats both. We
 follow the same rule here. A dev who really wants to override their own
 config file can do so by either (a) editing the config file, or
-(b) using :func:`chipzen.client.run_bot` directly with an explicit
-``url=`` kwarg (which IS specified in Issue 23 to win over the
+(b) passing an explicit ``url=`` kwarg to
+:func:`chipzen.external.run_external_bot` (which wins over the
 config-file URL). This helper is the "happy path" for env switching;
-the override valve already exists at the ``run_bot`` layer.
+the override valve already exists at the ``run_external_bot`` layer.
 """
 
 from __future__ import annotations
@@ -107,11 +107,11 @@ ENV_VAR_NAME = "CHIPZEN_ENV"
 
 @dataclass(frozen=True, slots=True)
 class ConnectionConfig:
-    """Fully-resolved connection parameters ready for :func:`run_bot`.
+    """Fully-resolved connection parameters ready for :func:`run_external_bot`.
 
     Returned by :func:`connect_to_chipzen`. Holds everything
-    :func:`chipzen.client.run_bot` needs to open a session against the
-    external-API lobby endpoint.
+    :func:`chipzen.external.run_external_bot` needs to open a session against
+    the external-API lobby endpoint.
 
     Attributes:
         url: WebSocket URL the bot should connect to. Either env-derived

@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 import time
 from typing import Any
 
@@ -430,80 +429,3 @@ async def _run_session(
 
     # Socket closed without a match_end.
     return None
-
-
-def _import_bot(specifier: str) -> ChipzenBot:
-    """Import a bot from a ``module:ClassName`` specifier.
-
-    Example: ``my_bot:MyBot`` imports ``MyBot`` from ``my_bot.py``.
-    """
-    if ":" not in specifier:
-        raise ValueError(f"Bot specifier must be 'module:ClassName', got {specifier!r}")
-    module_path, class_name = specifier.rsplit(":", 1)
-
-    import importlib
-
-    # Add cwd to sys.path so local modules resolve
-    if "" not in sys.path:
-        sys.path.insert(0, "")
-
-    module = importlib.import_module(module_path)
-    cls = getattr(module, class_name)
-    instance = cls()
-    if not isinstance(instance, ChipzenBot):
-        raise TypeError(
-            f"{class_name} must be a subclass of ChipzenBot, got {type(instance).__name__}"
-        )
-    return instance
-
-
-def connect_cli(args: list[str] | None = None) -> None:
-    """CLI entry point: connect a bot to a server.
-
-    Usage::
-
-        python -m chipzen connect --url ws://... --bot my_bot:MyBot
-    """
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Connect a Chipzen poker bot to a server")
-    parser.add_argument(
-        "--url",
-        required=True,
-        help="WebSocket URL (ws://host/ws/match/{match_id}/{participant_id})",
-    )
-    parser.add_argument(
-        "--bot",
-        required=True,
-        help="Bot specifier as module:ClassName (e.g. my_bot:MyBot)",
-    )
-    parser.add_argument(
-        "--token",
-        help="Bot API token for authentication",
-    )
-    parser.add_argument(
-        "--ticket",
-        help="Single-use ticket for authentication",
-    )
-    parser.add_argument(
-        "--retries",
-        type=int,
-        default=3,
-        help="Max reconnection attempts (default: 3)",
-    )
-
-    parsed = parser.parse_args(args)
-    bot = _import_bot(parsed.bot)
-
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    logger.info("Connecting to %s", parsed.url)
-
-    asyncio.run(
-        run_bot(
-            parsed.url,
-            bot,
-            max_retries=parsed.retries,
-            token=parsed.token,
-            ticket=parsed.ticket,
-        )
-    )

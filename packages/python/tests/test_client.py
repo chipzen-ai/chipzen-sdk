@@ -12,7 +12,6 @@ from chipzen.bot import ChipzenBot
 from chipzen.client import (
     SUPPORTED_PROTOCOL_VERSIONS,
     _extract_match_id,
-    _import_bot,
     _run_session,
     _safe_fallback_action,
 )
@@ -589,13 +588,3 @@ def test_safe_fallback_prefers_check_over_fold():
     assert _safe_fallback_action(["check", "fold", "call"]).action == "check"
     assert _safe_fallback_action(["fold"]).action == "fold"
     assert _safe_fallback_action([]).action == "fold"
-
-
-class TestImportBot:
-    def test_invalid_specifier_raises(self):
-        with pytest.raises(ValueError, match="must be"):
-            _import_bot("no_colon_here")
-
-    def test_valid_specifier_with_nonexistent_module(self):
-        with pytest.raises((ImportError, ModuleNotFoundError)):
-            _import_bot("nonexistent_module_xyz:SomeBot")

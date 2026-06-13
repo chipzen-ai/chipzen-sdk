@@ -21,8 +21,8 @@ The wrapper:
 4. Discovers the :class:`chipzen.Bot` subclass defined in that file
    (single subclass auto-selected; multiple subclasses require
    ``--bot-class <name>``).
-5. Hands off to :func:`chipzen.client.run_bot` with the resolved
-   url + token + retry policy.
+5. Hands off to :func:`chipzen.external.run_external_bot` with the
+   resolved url + token + retry policy.
 
 Precedence rules (highest priority first), for each setting:
 
@@ -344,7 +344,7 @@ def _resolve_connection(
     explicit_bot_id: str | None,
     retry_policy: RetryPolicy | None = None,
 ) -> tuple[str, str | None, RetryPolicy, ChipzenConfig | None]:
-    """Resolve (url, token, retry_policy, config) for ``run_bot``.
+    """Resolve (url, token, retry_policy, config) for ``run_external_bot``.
 
     Logic:
 
@@ -369,7 +369,7 @@ def _resolve_connection(
 
     Returns:
         4-tuple ``(url, token, retry_policy, config)`` ready to pass
-        to :func:`chipzen.client.run_bot`.
+        to :func:`chipzen.external.run_external_bot`.
 
     Raises:
         RuntimeError: If neither a config URL nor a bot_id is
