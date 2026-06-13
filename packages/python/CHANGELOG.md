@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **External-API: a mid-match gateway disconnect no longer silently forfeits
+  the match.** `run_external_bot()` now reconnects a dropped per-match gateway
+  socket (bounded by the `RetryPolicy`) and resumes via the platform's
+  reconnect-resume — `_run_session` already consumes the server `reconnected`
+  frame and replays the pending turn, and the bot instance keeps its state.
+  Previously the gateway was opened once with no retry, so a transient drop
+  ended the match with `end=None` while the lobby stayed up (the bot looked
+  healthy but had forfeited).
+- **External-API: in-flight matches survive a lobby reconnect, and no match
+  task is orphaned on teardown.** Match-task ownership moved out of the
+  per-lobby-session into `run_external_bot`, so a lobby blip no longer abandons
+  a match playing on its own gateway socket; on teardown, still-running matches
+  get a short grace window then are cancelled and awaited (previously they were
+  left running after a 30s `asyncio.wait` timeout).
+
 ## [0.3.0] — 2026-06-13
 
 ### Added
