@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     frame), **hoisted match-task ownership** (a lobby reconnect doesn't kill
     in-flight matches), and **drain-then-cancel teardown** (no orphaned
     tasks). The token travels in the `Sec-WebSocket-Protocol` header
-    (sentinel `chipzen-bot-token`, CZ#2932), never the query string.
+    (sentinel `chipzen-bot-token`, CZ issue 2932), never the query string.
   - **`connect_to_chipzen(bot_id, env, ..)`** — env→lobby-URL helper
     (`prod` / `staging` / `local`, honoring `$CHIPZEN_ENV`), returning a
     `ConnectionConfig`.

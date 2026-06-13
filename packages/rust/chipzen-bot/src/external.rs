@@ -49,9 +49,9 @@ use std::time::Duration;
 use tokio::task::JoinSet;
 
 /// Sentinel subprotocol that marks the `cz_extbot_` token in the
-/// `Sec-WebSocket-Protocol` header (CZ#2932 moved the token off the query
-/// string, where it leaked into proxy access logs). Must match the value
-/// the platform's api gateway expects.
+/// `Sec-WebSocket-Protocol` header (CZ issue 2932 moved the token off the
+/// query string, where it leaked into proxy access logs). Must match the
+/// value the platform's api gateway expects.
 pub const BOT_TOKEN_SUBPROTOCOL: &str = "chipzen-bot-token";
 
 /// How long the lobby loop blocks on a single `recv` before waking to
