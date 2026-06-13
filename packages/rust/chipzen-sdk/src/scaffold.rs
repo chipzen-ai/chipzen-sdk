@@ -74,7 +74,7 @@ name = "bot"
 path = "src/main.rs"
 
 [dependencies]
-chipzen-bot = "0.2"
+chipzen-bot = "0.3"
 tokio = {{ version = "1", features = ["macros", "rt-multi-thread"] }}
 
 [profile.release]
@@ -88,8 +88,20 @@ codegen-units = 1
 
 const MAIN_RS_TEMPLATE: &str = r#"//! Chipzen starter bot — replace `decide` with your strategy.
 //! The SDK handles WebSocket, handshake, ping/pong, retries, and reconnect.
+//!
+//! Two ways to play:
+//!   * Default (containerized / direct match URL): the platform's executor
+//!     runs this binary in a container and injects CHIPZEN_WS_URL +
+//!     CHIPZEN_TOKEN. `cargo run` with those set, or pass the URL as the
+//!     first argument, to test locally.
+//!   * `bot run-external [--env staging] [--max-matches 1]`: external-API
+//!     remote-play — run on YOUR machine with a `cz_extbot_` token and let
+//!     the platform match + dispatch you. Reads token/bot_id/url from a
+//!     `chipzen.toml` (or pass --token / --bot-id). See the SDK docs.
 
-use chipzen_bot::{run_bot, Action, Bot, GameState, RunBotOptions};
+use chipzen_bot::{
+    run_bot, run_external_cli, Action, Bot, EnvName, GameState, RunBotOptions, RunExternalArgs,
+};
 
 struct MyBot;
 
@@ -109,12 +121,20 @@ impl Bot for MyBot {
 
 #[tokio::main]
 async fn main() -> Result<(), chipzen_bot::Error> {
-    // The Chipzen platform injects CHIPZEN_WS_URL and CHIPZEN_TOKEN
-    // (or CHIPZEN_TICKET) at container launch time. For local testing
-    // against your own stack, set them yourself or pass the URL as the
-    // first positional argument.
-    let url = std::env::args()
-        .nth(1)
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if args.first().map(String::as_str) == Some("run-external") {
+        // External-API remote-play: your machine connects to the lobby and
+        // the platform matches + dispatches you. Flags mirror the Python CLI.
+        return run_external_mode(&args[1..]).await.map(|_| ());
+    }
+
+    // Default: containerized / direct-match path. The platform injects
+    // CHIPZEN_WS_URL and CHIPZEN_TOKEN (or CHIPZEN_TICKET) at launch; for
+    // local testing set them yourself or pass the URL as the first argument.
+    let url = args
+        .first()
+        .cloned()
         .or_else(|| std::env::var("CHIPZEN_WS_URL").ok())
         .unwrap_or_else(|| {
             eprintln!("error: CHIPZEN_WS_URL not set and no URL passed on the command line");
@@ -127,7 +147,39 @@ async fn main() -> Result<(), chipzen_bot::Error> {
         ..Default::default()
     };
 
-    run_bot(&url, MyBot, options).await
+    run_bot(&url, MyBot, options).await.map(|_| ())
+}
+
+/// Parse `run-external` flags and play. A fresh `MyBot` per match.
+async fn run_external_mode(flags: &[String]) -> Result<(), chipzen_bot::Error> {
+    let mut args = RunExternalArgs::new();
+    let mut i = 0;
+    while i < flags.len() {
+        match flags[i].as_str() {
+            "--env" => {
+                i += 1;
+                args.env = flags.get(i).and_then(|e| EnvName::parse(e));
+            }
+            "--token" => {
+                i += 1;
+                args.token = flags.get(i).cloned();
+            }
+            "--bot-id" => {
+                i += 1;
+                args.bot_id = flags.get(i).cloned();
+            }
+            "--max-matches" => {
+                i += 1;
+                args.max_matches = flags.get(i).and_then(|v| v.parse().ok());
+            }
+            "--no-safe-mode" => args.safe_mode = false,
+            other => eprintln!("warning: ignoring unknown flag {other:?}"),
+        }
+        i += 1;
+    }
+    let results = run_external_cli(|| MyBot, args).await?;
+    eprintln!("played {} match(es)", results.len());
+    Ok(())
 }
 "#;
 

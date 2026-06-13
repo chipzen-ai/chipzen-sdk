@@ -54,7 +54,10 @@ impl Bot for MyBot {
 #[tokio::main]
 async fn main() -> Result<(), chipzen_bot::Error> {
     let url = std::env::var("CHIPZEN_WS_URL").expect("CHIPZEN_WS_URL not set");
-    run_bot(&url, MyBot, RunBotOptions::default()).await
+    // run_bot returns the match_end payload (or None on a drop); ignore it
+    // here, or inspect the final standings.
+    let _match_end = run_bot(&url, MyBot, RunBotOptions::default()).await?;
+    Ok(())
 }
 ```
 
@@ -62,9 +65,33 @@ Add the dep:
 
 ```toml
 [dependencies]
-chipzen-bot = "0.2"
+chipzen-bot = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
+
+### External-API remote-play
+
+The example above is the **containerized** path (the platform runs your
+binary and injects `CHIPZEN_WS_URL`). To instead run a bot on **your own
+machine** and have the platform match + dispatch you, use
+`run_external_bot` with a long-lived `cz_extbot_` token:
+
+```rust
+use chipzen_bot::{run_external_cli, RunExternalArgs};
+
+#[tokio::main]
+async fn main() -> Result<(), chipzen_bot::Error> {
+    // Reads token / bot_id / url from chipzen.toml (or pass them on args).
+    // A fresh MyBot per match; plays until the lobby closes or you're evicted.
+    run_external_cli(|| MyBot, RunExternalArgs::new()).await?;
+    Ok(())
+}
+```
+
+See [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../../docs/EXTERNAL-API-BOT-PROTOCOL.md)
+and [`docs/PORTING-BETWEEN-SDKS.md`](../../docs/PORTING-BETWEEN-SDKS.md) §7.
+Run `chipzen-sdk run-external` to verify your `chipzen.toml` + env setup
+before connecting.
 
 ## Workspace layout
 
@@ -78,6 +105,10 @@ packages/rust/
     │   ├── lib.rs
     │   ├── bot.rs      # Bot trait + lifecycle hooks
     │   ├── client.rs   # run_bot + session loop + MessageReader/Writer traits
+    │   ├── external.rs # run_external_bot — external-API lobby/gateway flow
+    │   ├── connect.rs  # connect_to_chipzen — env→lobby-URL helper
+    │   ├── config.rs   # chipzen.toml discovery + [external_api] parsing
+    │   ├── retry.rs    # RetryPolicy — reconnect/backoff knobs
     │   ├── error.rs    # Error enum (boxed for small Result size)
     │   └── models.rs   # Card, Action, ActionKind, GameState, parsers
     └── tests/

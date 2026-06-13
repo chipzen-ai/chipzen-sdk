@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chipzen_bot::{
-    _extract_match_id, _run_session, _safe_fallback_action, Action, Bot, Error, GameState,
-    MessageReader, MessageWriter, SessionContext, SUPPORTED_PROTOCOL_VERSIONS,
+    Action, Bot, Error, GameState, MessageReader, MessageWriter, SessionContext, _extract_match_id,
+    _run_session, _safe_fallback_action, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -85,13 +85,13 @@ impl Bot for CallBot {
 }
 
 fn ctx() -> SessionContext {
-    SessionContext {
-        match_id: "m_test".to_string(),
-        token: Some("test-token".to_string()),
-        ticket: None,
-        client_name: "chipzen-sdk-test".to_string(),
-        client_version: "0.0.0".to_string(),
-    }
+    SessionContext::new(
+        "m_test".to_string(),
+        Some("test-token".to_string()),
+        None,
+        "chipzen-sdk-test".to_string(),
+        "0.0.0".to_string(),
+    )
 }
 
 fn full_match_script() -> Vec<String> {

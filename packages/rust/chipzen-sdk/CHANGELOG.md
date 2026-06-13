@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`chipzen-sdk run-external`** subcommand — resolves the external-API
+  remote-play connection (lobby URL, env, token presence) from
+  `chipzen.toml` + flags (`--env` / `--token` / `--bot-id`) and prints what
+  it found, without connecting. Because a Rust bot is compiled into its own
+  binary (the `chipzen-sdk` tool can't dynamically load and run one the way
+  Python's `chipzen run-external my_bot.py` does), this is a config doctor:
+  it does the same discovery + env-aware URL resolution `run_external_bot`
+  does so you can verify your setup before wiring
+  `chipzen_bot::run_external_cli` into your bot binary's `main`. The token is
+  never printed. Part of
+  [#57](https://github.com/chipzen-ai/chipzen-sdk/issues/57).
+- The scaffolded starter (`chipzen-sdk init`) now emits a `run-external`
+  mode in `src/main.rs` (flags mirror the Python CLI) and depends on
+  `chipzen-bot = "0.3"`, so a new bot can play the external-API remote-play
+  path out of the box.
+
 ### Documentation
 
 - Updated `chipzen-sdk validate --help` to mention all 4 conformance

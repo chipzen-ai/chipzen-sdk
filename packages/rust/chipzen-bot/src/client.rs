@@ -9,21 +9,28 @@
 use crate::bot::Bot;
 use crate::error::Error;
 use crate::models::{parse_game_state, Action};
+use crate::retry::RetryPolicy;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::panic::AssertUnwindSafe;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Error as WsError, Message},
+    tungstenite::{client::IntoClientRequest, http::header::USER_AGENT, Error as WsError, Message},
 };
 
 /// Protocol versions this client claims to support in the handshake.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["1.0"];
 
-const DEFAULT_CLIENT_NAME: &str = "chipzen-sdk";
+const DEFAULT_CLIENT_NAME: &str = "chipzen-sdk-rust";
 const DEFAULT_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const DEFAULT_MAX_RETRIES: u32 = 3;
+
+/// Default `User-Agent` header sent on the WebSocket handshake. A
+/// non-default UA also clears the platform's Cloudflare bot-fight rule
+/// (chipzen-ai/chipzen-sdk#46).
+pub fn default_user_agent() -> String {
+    format!("chipzen-sdk-rust/{DEFAULT_CLIENT_VERSION}")
+}
 
 /// Optional knobs for [`run_bot`]. Defaults match the platform's
 /// expectations.
@@ -39,10 +46,19 @@ pub struct RunBotOptions {
     pub match_id: Option<String>,
     /// Client software name sent in the `hello` handshake.
     pub client_name: Option<String>,
-    /// Client software version sent in the `hello` handshake.
+    /// Client software version sent in the `hello` handshake. Defaults to
+    /// the crate version (chipzen-ai/chipzen-sdk#41).
     pub client_version: Option<String>,
-    /// Number of reconnect attempts on unexpected disconnect.
-    pub max_retries: u32,
+    /// Reconnect-pacing policy (attempt cap + exponential backoff).
+    pub retry_policy: RetryPolicy,
+    /// When `true` (default), a panic in `decide()` is caught and folded —
+    /// a transient bug won't forfeit a competitive match. Set `false` for
+    /// dev/eval so the first panic propagates as [`Error::BotDecision`] and
+    /// exits non-zero (chipzen-ai/chipzen-sdk#52).
+    pub safe_mode: bool,
+    /// Override the WS `User-Agent` header. Defaults to
+    /// `chipzen-sdk-rust/<version>` (chipzen-ai/chipzen-sdk#46).
+    pub user_agent: Option<String>,
 }
 
 impl Default for RunBotOptions {
@@ -53,7 +69,9 @@ impl Default for RunBotOptions {
             match_id: None,
             client_name: None,
             client_version: None,
-            max_retries: DEFAULT_MAX_RETRIES,
+            retry_policy: RetryPolicy::default(),
+            safe_mode: true,
+            user_agent: None,
         }
     }
 }
@@ -67,18 +85,58 @@ pub struct SessionContext {
     pub ticket: Option<String>,
     pub client_name: String,
     pub client_version: String,
+    /// When `false`, a panicking `decide()` surfaces as
+    /// [`Error::BotDecision`] instead of being folded to a safe action.
+    pub safe_mode: bool,
+}
+
+impl SessionContext {
+    /// A context with `safe_mode` on — the common case. Lets existing
+    /// callers (tests, conformance harness) construct a context with the
+    /// historical field set without naming `safe_mode` explicitly.
+    pub fn new(
+        match_id: String,
+        token: Option<String>,
+        ticket: Option<String>,
+        client_name: String,
+        client_version: String,
+    ) -> Self {
+        Self {
+            match_id,
+            token,
+            ticket,
+            client_name,
+            client_version,
+            safe_mode: true,
+        }
+    }
 }
 
 /// Connect a bot to the Chipzen server and play until the match ends.
 ///
-/// Returns cleanly on `match_end`. Returns [`Error::RetriesExhausted`]
-/// if the connection cannot be established after `max_retries`
-/// attempts.
-pub async fn run_bot<B: Bot>(url: &str, mut bot: B, options: RunBotOptions) -> Result<(), Error> {
+/// Returns the `match_end` payload on a clean finish, or `None` if the
+/// connection closed without a clean `match_end` after exhausting the
+/// retry budget. Returns [`Error::RetriesExhausted`] if the connection
+/// cannot be established after `retry_policy.max_reconnect_attempts`
+/// attempts, or [`Error::BotDecision`] if `decide()` panics under
+/// `safe_mode = false`.
+pub async fn run_bot<B: Bot>(
+    url: &str,
+    mut bot: B,
+    options: RunBotOptions,
+) -> Result<Option<Value>, Error> {
     let match_id = options
         .match_id
         .clone()
         .unwrap_or_else(|| _extract_match_id(url));
+    let client_version = options
+        .client_version
+        .clone()
+        .unwrap_or_else(|| DEFAULT_CLIENT_VERSION.to_string());
+    let user_agent = options
+        .user_agent
+        .clone()
+        .unwrap_or_else(default_user_agent);
     let ctx = SessionContext {
         match_id,
         token: options.token.clone(),
@@ -87,16 +145,18 @@ pub async fn run_bot<B: Bot>(url: &str, mut bot: B, options: RunBotOptions) -> R
             .client_name
             .clone()
             .unwrap_or_else(|| DEFAULT_CLIENT_NAME.to_string()),
-        client_version: options
-            .client_version
-            .clone()
-            .unwrap_or_else(|| DEFAULT_CLIENT_VERSION.to_string()),
+        client_version,
+        safe_mode: options.safe_mode,
     };
+
+    let policy = options.retry_policy;
+    let max_attempts = policy.max_reconnect_attempts;
 
     let mut retries: u32 = 0;
     loop {
-        let result: Result<(), Error> = async {
-            let (ws_stream, _) = connect_async(url).await?;
+        let result: Result<Option<Value>, Error> = async {
+            let request = build_handshake_request(url, &user_agent)?;
+            let (ws_stream, _) = connect_async(request).await?;
             let (mut write_half, mut read_half) = ws_stream.split();
             let mut reader = WsReader {
                 inner: &mut read_half,
@@ -109,20 +169,38 @@ pub async fn run_bot<B: Bot>(url: &str, mut bot: B, options: RunBotOptions) -> R
         .await;
 
         match result {
-            Ok(()) => return Ok(()),
+            Ok(end) => return Ok(end),
+            // A deterministic bot bug (safe_mode off) — terminal, not a
+            // transient disconnect. Do not reconnect-retry; propagate so the
+            // process exits non-zero.
+            Err(e @ Error::BotDecision(_)) => return Err(e),
             Err(err) => {
                 retries += 1;
-                if retries > options.max_retries {
+                if retries > max_attempts {
                     return Err(Error::RetriesExhausted {
                         attempts: retries,
                         last_error: err.to_string(),
                     });
                 }
-                let backoff_secs = (1u64 << retries.min(3)).min(8);
-                tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                let backoff_ms = policy.backoff_ms(retries);
+                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
             }
         }
     }
+}
+
+/// Build the tungstenite handshake request for `url`, attaching the
+/// `User-Agent` header. tokio-tungstenite does not set a UA by default;
+/// some hosts (Cloudflare bot-fight) reject the empty UA.
+fn build_handshake_request(
+    url: &str,
+    user_agent: &str,
+) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request, Error> {
+    let mut request = url.into_client_request().map_err(Error::from)?;
+    if let Ok(value) = user_agent.parse() {
+        request.headers_mut().insert(USER_AGENT, value);
+    }
+    Ok(request)
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +209,7 @@ pub async fn run_bot<B: Bot>(url: &str, mut bot: B, options: RunBotOptions) -> R
 
 /// Pull-based async iterator over inbound messages. Real impl wraps
 /// `tokio_tungstenite::WebSocketStream`; the conformance harness
-/// provides a scripted impl in a future PR.
+/// provides a scripted impl.
 #[async_trait]
 pub trait MessageReader: Send {
     /// Returns the next message as a UTF-8 string, or `None` if the
@@ -147,15 +225,37 @@ pub trait MessageWriter: Send {
     async fn send(&mut self, payload: String) -> Result<(), Error>;
 }
 
+// Boxed trait objects forward to their inner impl so callers (e.g. the
+// external-API transport, which returns `Box<dyn ...>`) can hand them to
+// the generic [`_run_session`] without re-wrapping.
+#[async_trait]
+impl MessageReader for Box<dyn MessageReader> {
+    async fn next(&mut self) -> Result<Option<String>, Error> {
+        (**self).next().await
+    }
+}
+
+#[async_trait]
+impl MessageWriter for Box<dyn MessageWriter> {
+    async fn send(&mut self, payload: String) -> Result<(), Error> {
+        (**self).send(payload).await
+    }
+}
+
 /// Drive a single connected session: handshake + message loop until
-/// `match_end`. Public-but-hidden so the conformance harness in a
-/// future PR can reuse it against a mock socket.
+/// `match_end`. Public-but-hidden so the conformance harness (and the
+/// external-API gateway leg) can reuse it against any transport.
+///
+/// Returns the `match_end` payload (the full envelope) on a clean
+/// finish, or `None` if the socket closed without a `match_end` (a drop
+/// the caller may reconnect through). Returns [`Error::BotDecision`] if
+/// `decide()` panics under `ctx.safe_mode = false`.
 pub async fn _run_session<R, W, B>(
     reader: &mut R,
     writer: &mut W,
     bot: &mut B,
     ctx: &SessionContext,
-) -> Result<(), Error>
+) -> Result<Option<Value>, Error>
 where
     R: MessageReader,
     W: MessageWriter,
@@ -192,6 +292,8 @@ where
         "type": "hello",
         "match_id": ctx.match_id,
         "supported_versions": SUPPORTED_PROTOCOL_VERSIONS,
+        "client_name": ctx.client_name,
+        "client_version": ctx.client_version,
     });
     writer.send(client_hello.to_string()).await?;
 
@@ -231,16 +333,9 @@ where
                     .unwrap_or("")
                     .to_string();
                 let state = parse_game_state(&msg);
-                let action = catch_decide(bot, &state, &msg);
-                let (action_str, params) = action.to_wire();
-                let payload = json!({
-                    "type": "turn_action",
-                    "match_id": ctx.match_id,
-                    "request_id": request_id,
-                    "action": action_str,
-                    "params": params,
-                });
-                writer.send(payload.to_string()).await?;
+                let (action, latency_ms) = decide_timed(bot, &state, &msg, ctx.safe_mode)?;
+                send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
+                bot.on_decision_latency(latency_ms);
             }
             "action_rejected" => {
                 let request_id = msg
@@ -258,17 +353,11 @@ where
                     })
                     .unwrap_or_else(|| vec!["fold".to_string()]);
                 let fallback = _safe_fallback_action(&valid_actions);
-                let (action_str, params) = fallback.to_wire();
-                let payload = json!({
-                    "type": "turn_action",
-                    "match_id": ctx.match_id,
-                    "request_id": request_id,
-                    "action": action_str,
-                    "params": params,
-                });
-                writer.send(payload.to_string()).await?;
+                send_turn_action(writer, &ctx.match_id, &request_id, fallback).await?;
             }
             "reconnected" => {
+                // Mid-session after a reconnect: replay the pending request as
+                // if it were a fresh turn_request so the bot acts on it.
                 if let Some(pending) = msg.get("pending_request") {
                     if pending.get("type").and_then(|v| v.as_str()) == Some("turn_request") {
                         let request_id = pending
@@ -277,23 +366,17 @@ where
                             .unwrap_or("")
                             .to_string();
                         let state = parse_game_state(pending);
-                        let action = catch_decide(bot, &state, pending);
-                        let (action_str, params) = action.to_wire();
-                        let payload = json!({
-                            "type": "turn_action",
-                            "match_id": ctx.match_id,
-                            "request_id": request_id,
-                            "action": action_str,
-                            "params": params,
-                        });
-                        writer.send(payload.to_string()).await?;
+                        let (action, latency_ms) =
+                            decide_timed(bot, &state, pending, ctx.safe_mode)?;
+                        send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
+                        bot.on_decision_latency(latency_ms);
                     }
                 }
             }
             "match_end" => {
                 let results = msg.get("results").cloned().unwrap_or_else(|| msg.clone());
                 bot.on_match_end(&results);
-                return Ok(());
+                return Ok(Some(msg));
             }
             "error" => {
                 // Non-fatal — production deployments log; the SDK stays
@@ -306,17 +389,63 @@ where
     }
 
     // Stream closed without match_end. Caller decides whether to retry.
-    Ok(())
+    Ok(None)
 }
 
-/// Run `bot.decide(state)` and substitute the safe-fallback action if
-/// it returns something nonsensical for the current `valid_actions`.
-/// Catching panics would require `std::panic::catch_unwind` which
-/// requires `UnwindSafe`; instead we trust the validator to surface
-/// panicking decides during development.
-fn catch_decide<B: Bot>(bot: &mut B, state: &crate::models::GameState, msg: &Value) -> Action {
-    let action = bot.decide(state);
-    if !action_is_legal(&action, &state.valid_actions) {
+/// Send a `turn_action` envelope echoing `request_id`.
+async fn send_turn_action<W: MessageWriter>(
+    writer: &mut W,
+    match_id: &str,
+    request_id: &str,
+    action: Action,
+) -> Result<(), Error> {
+    let (action_str, params) = action.to_wire();
+    let payload = json!({
+        "type": "turn_action",
+        "match_id": match_id,
+        "request_id": request_id,
+        "action": action_str,
+        "params": params,
+    });
+    writer.send(payload.to_string()).await
+}
+
+/// Run `bot.decide(state)` with timing + safe_mode handling, returning
+/// `(action, latency_ms)`.
+///
+/// A panic in `decide()` is caught. Under `safe_mode` it is folded to a
+/// safe-fallback action (so a transient bug doesn't forfeit a competitive
+/// match); under `safe_mode = false` it surfaces as [`Error::BotDecision`]
+/// so the caller treats it as terminal. If `decide()` returns an action
+/// that isn't legal for the current `valid_actions`, the safe fallback is
+/// substituted regardless of `safe_mode` (mirrors the existing Rust + JS
+/// behavior).
+fn decide_timed<B: Bot>(
+    bot: &mut B,
+    state: &crate::models::GameState,
+    msg: &Value,
+    safe_mode: bool,
+) -> Result<(Action, f64), Error> {
+    let start = std::time::Instant::now();
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| bot.decide(state)));
+    let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    let action = match outcome {
+        Ok(action) => action,
+        Err(payload) => {
+            let detail = panic_message(payload.as_ref());
+            if !safe_mode {
+                return Err(Error::BotDecision(detail));
+            }
+            // safe_mode: fold the panic into a safe action so the match
+            // continues. valid_actions drives check-vs-fold.
+            _safe_fallback_action(&state.valid_actions)
+        }
+    };
+
+    if action_is_legal(&action, &state.valid_actions) {
+        Ok((action, latency_ms))
+    } else {
         let valid = msg
             .get("valid_actions")
             .and_then(|v| v.as_array())
@@ -326,9 +455,20 @@ fn catch_decide<B: Bot>(bot: &mut B, state: &crate::models::GameState, msg: &Val
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|| state.valid_actions.clone());
-        return _safe_fallback_action(&valid);
+        Ok((_safe_fallback_action(&valid), latency_ms))
     }
-    action
+}
+
+/// Best-effort extraction of a panic message from the `catch_unwind`
+/// payload (the common `&str` / `String` cases; otherwise a generic note).
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "decide() panicked".to_string()
+    }
 }
 
 fn action_is_legal(action: &Action, valid: &[String]) -> bool {

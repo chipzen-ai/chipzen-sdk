@@ -10,6 +10,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **External-API remote-play path** — parity with the Python SDK 0.3.0
+  ([#57](https://github.com/chipzen-ai/chipzen-sdk/issues/57)). A developer
+  can now run a bot on their own machine with a long-lived `cz_extbot_`
+  token and let the platform match + dispatch them, instead of only the
+  containerized/single-match-URL path. New surface:
+  - **`run_external_bot(factory, RunExternalOptions { .. })`** — connects to
+    the lobby (`/ws/external/bot/{bot_id}`), then plays every `matched` it's
+    dispatched (a single challenge, or every round of a tournament) over a
+    per-match gateway WS (`/ws/external/match/{mid}/{pid}`) until the lobby
+    closes, the bot is evicted, or `max_matches` complete. The match data
+    plane reuses the existing session loop. A single persistent lobby
+    connection keeps its heartbeat answered while matches are in flight, and
+    each match runs in its own task on its own gateway socket. Includes the
+    mid-match **gateway reconnect-resume** (a dropped gateway socket
+    reconnects and resumes via the server's `reconnected` / `pending_request`
+    frame), **hoisted match-task ownership** (a lobby reconnect doesn't kill
+    in-flight matches), and **drain-then-cancel teardown** (no orphaned
+    tasks). The token travels in the `Sec-WebSocket-Protocol` header
+    (sentinel `chipzen-bot-token`, CZ#2932), never the query string.
+  - **`connect_to_chipzen(bot_id, env, ..)`** — env→lobby-URL helper
+    (`prod` / `staging` / `local`, honoring `$CHIPZEN_ENV`), returning a
+    `ConnectionConfig`.
+  - **`ChipzenConfig` + `load_chipzen_config`** — `chipzen.toml` discovery
+    (cwd → `~/.chipzen/` → `/etc/chipzen/`) + `[external_api]`
+    token/url/bot_id parsing, with explicit args winning over the file.
+  - **`RetryPolicy`** — reconnect/backoff knobs (5 / 500ms / 30000ms / 2.0
+    defaults) accepted by both `run_bot` and `run_external_bot`.
+  - **`run_external_cli(factory, RunExternalArgs)`** — the Rust equivalent of
+    the Python `chipzen run-external <bot.py>` CLI. A Rust bot is compiled
+    into its own binary (no dynamic file loading), so this is a library
+    helper you wire into your bot binary's `main`; the scaffolded starter
+    ships a `run-external` mode that calls it with flags mirroring Python
+    (`--env` / `--token` / `--bot-id` / `--max-matches` / `--no-safe-mode`).
+- **Shared session primitives brought to parity:**
+  - `run_bot` and `_run_session` now **return the `match_end` payload**
+    (`Option<serde_json::Value>`) so the lobby loop can collect results and
+    distinguish a clean end from a drop.
+  - **`safe_mode`** knob on `RunBotOptions` / `RunExternalOptions` (default
+    `true`). When `false`, a panic in `decide()` surfaces as the terminal
+    `Error::BotDecision` (no reconnect-retry) rather than being folded to a
+    safe action ([#52](https://github.com/chipzen-ai/chipzen-sdk/issues/52)).
+  - **`client_version`** now defaults to the crate version instead of a
+    hardcoded string ([#41](https://github.com/chipzen-ai/chipzen-sdk/issues/41)).
+  - **`Bot::on_decision_latency(latency_ms)`** default-no-op hook, fired
+    after each `turn_action` with the wall-clock `decide` time
+    ([#46](https://github.com/chipzen-ai/chipzen-sdk/issues/46)).
+  - A non-default **`User-Agent`** (`chipzen-sdk-rust/<version>`) is set on
+    the WebSocket handshake, which also clears the platform's Cloudflare
+    bot-fight rule ([#46](https://github.com/chipzen-ai/chipzen-sdk/issues/46)).
 - Three new conformance scenarios in `run_conformance_checks`,
   bringing the total from 1 to 4. The previously-shipped scenario only
   covered a clean handshake + 1 hand + match_end; bots could pass it
@@ -33,6 +82,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** `run_bot` now returns
+  `Result<Option<serde_json::Value>, Error>` (the `match_end` payload, or
+  `None` if the socket closed without a clean `match_end`) instead of
+  `Result<(), Error>`. Existing callers that ignored the success value
+  (`run_bot(...).await?`) keep compiling; callers that bound `()` need
+  `let _ = run_bot(...).await?;` or to consume the payload.
+- **BREAKING:** `RunBotOptions` replaced the `max_retries: u32` field with a
+  `retry_policy: RetryPolicy` (carrying the attempt cap **and** the
+  backoff progression) plus `safe_mode: bool` and `user_agent:
+  Option<String>` fields. `RunBotOptions::default()` is unchanged in spirit
+  (5 attempts, exponential backoff, safe_mode on). The default client name
+  is now `chipzen-sdk-rust`.
+- `SessionContext` gained a `safe_mode` field; construct via
+  `SessionContext::new(..)` (safe_mode on) to avoid naming it.
 - `run_conformance_checks` now consumes the bot once but borrows it
   internally for each scenario. Callers don't need to re-construct
   the bot between scenarios; the lifetime contract from a single

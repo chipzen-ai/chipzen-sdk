@@ -1,6 +1,6 @@
 [package]
 name = "chipzen-starter-bot"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 publish = false
 
@@ -13,7 +13,7 @@ name = "bot"
 path = "src/main.rs"
 
 [dependencies]
-chipzen-bot = "0.2"
+chipzen-bot = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
