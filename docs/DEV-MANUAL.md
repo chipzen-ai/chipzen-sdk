@@ -229,8 +229,7 @@ For any language, the runner drives the whole lifecycle:
 
 ```python
 import asyncio
-from chipzen import Bot, GameState, Action
-from chipzen.client import run_bot
+from chipzen import Bot, GameState, Action, run_bot
 
 class MyBot(Bot):
     def decide(self, state: GameState) -> Action:
@@ -238,12 +237,12 @@ class MyBot(Bot):
             return Action.check()
         return Action.fold()
 
+# Containerized/uploaded bots get their match URL from the platform's executor.
 asyncio.run(run_bot(
     url="ws://localhost:8001/ws/match/<match_id>/<participant_id>",
     bot=MyBot(),
     token="...",          # or ticket=...
     client_name="my-bot",
-    client_version="0.1.0",
 ))
 ```
 
@@ -254,29 +253,77 @@ async def run_bot(
     url: str,
     bot: ChipzenBot,
     *,
-    max_retries: int = 3,
+    max_retries: int | None = None,       # cap reconnect attempts; None = use retry_policy
+    retry_policy: RetryPolicy | None = None,  # default: 5 attempts, 500ms→30s backoff
     token: str | None = None,
     ticket: str | None = None,
     match_id: str | None = None,
     client_name: str = "chipzen-sdk",
-    client_version: str = "0.2.0",
-) -> None:
+    client_version: str = __version__,    # defaults to the installed SDK version
+    safe_mode: bool = True,               # False: a decide() error raises (exit non-zero)
+    user_agent: str | None = None,        # default: chipzen-sdk-python/<version>
+) -> dict | None:                         # the match_end payload, or None on a clean drop
 ```
 
 The runner handles `authenticate`, version negotiation, the envelope
 sequence check, `ping`/`pong`, `action_rejected` fallback, `reconnected`
 with `pending_request`, and clean exit on `match_end`.
 
-### 2.6 CLI (`chipzen-sdk`)
+To run a bot **remotely from your own machine** instead of uploading a
+container, use `run_external_bot` — see §2.7.
 
-The CLI surface is intentionally small — two commands:
+### 2.6 CLI (`chipzen-sdk` / `chipzen`)
+
+The CLI is installed under two interchangeable names (`chipzen-sdk` and
+`chipzen`) with three commands:
 
 | Command | Purpose |
 |---|---|
 | `chipzen-sdk init <name>` | Scaffold a new bot project from a starter template. |
 | `chipzen-sdk validate <path>` | Run the same checks the upload pipeline runs: size, entry point, imports, decide() timeout sniff. The supported go/no-go before docker packaging. |
+| `chipzen run-external <bot.py>` | Run a bot on the external-API remote-play path (lobby → matched → play). See §2.7. |
 
-Both commands are documented in `chipzen-sdk <command> --help`.
+Each command is documented in `chipzen-sdk <command> --help`.
+
+### 2.7 External-API remote play (`run_external_bot`)
+
+The runner in §2.5 is the **containerized/upload** path — the platform's
+executor hands your container a `/ws/match/...` URL. The SDK also supports
+**external-API remote play**: run your bot on your own machine, authenticate
+with a long-lived `cz_extbot_` token, and the platform matches and dispatches
+you like any other competitor. **The same `Bot` subclass works on both paths.**
+
+```python
+import asyncio
+from chipzen import Bot, run_external_bot
+
+asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging",
+                             token="cz_extbot_..."))
+```
+
+`run_external_bot` holds one lobby connection and plays every match dispatched
+to your bot — a single challenge, or each round of a tournament — and
+reconnects a dropped match via the platform's reconnect-resume. Put the token in
+a `chipzen.toml` and the CLI is a one-liner:
+
+```toml
+# chipzen.toml  (discovered from cwd, then ~/.chipzen/, then /etc/chipzen/)
+[external_api]
+token  = "cz_extbot_..."
+bot_id = "<bot-uuid>"
+```
+
+```bash
+chipzen run-external my_bot.py --env staging
+```
+
+Knobs: `connect_to_chipzen(bot_id, env)` (env → lobby URL), `RetryPolicy`
+(reconnect/backoff pacing), `safe_mode=False` (crash on a `decide()` bug instead
+of folding — for dev/eval), and `max_matches` (stop after N). The full wire
+protocol is in
+[`docs/EXTERNAL-API-BOT-PROTOCOL.md`](EXTERNAL-API-BOT-PROTOCOL.md); the
+step-by-step walkthrough is
+[`docs/external-api/FIRST-30-MINUTES.md`](external-api/FIRST-30-MINUTES.md).
 
 ---
 
@@ -927,6 +974,6 @@ When filing a bot-runtime bug, the most useful artifacts are:
 
 ---
 
-*Last updated 2026-04-15. Sourced from SDK version 0.2.0. If any example
+*Last updated 2026-06-13. Sourced from SDK version 0.3.0. If any example
 in this manual doesn't work against the current SDK, file an issue — the
 manual is expected to be executable, not aspirational.*
