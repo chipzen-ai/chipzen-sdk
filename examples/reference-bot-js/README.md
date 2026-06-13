@@ -44,11 +44,13 @@ Or via Docker (see the IP-protected starter at
 for the production-shaped image; this reference bot deliberately ships
 no Dockerfile of its own).
 
-## Note: not yet runnable from npm
+## Installing from npm
 
-This bot's `package.json` declares `@chipzen-ai/bot ^0.2.0` from the
-npm registry. Until the package is published (see
-[`packages/javascript/RELEASING.md`](../../packages/javascript/RELEASING.md)),
-`npm install` here will fail with `404 Not Found`. Use
-[`packages/javascript/`](../../packages/javascript/) directly via a
-relative path link if you need to run this before the first publish.
+This bot's `package.json` pulls `@chipzen-ai/bot ^0.3.0` straight from
+the npm registry, so `npm install` above just works — the package is
+published at
+[npmjs.com/package/@chipzen-ai/bot](https://www.npmjs.com/package/@chipzen-ai/bot).
+
+To develop against an unreleased local build instead, point the
+dependency at [`packages/javascript/`](../../packages/javascript/) via a
+relative `file:` path (or a workspace link).

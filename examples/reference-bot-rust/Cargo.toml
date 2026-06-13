@@ -10,7 +10,7 @@ name = "reference-bot"
 path = "src/main.rs"
 
 [dependencies]
-chipzen-bot = "0.2"
+chipzen-bot = "0.3"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 

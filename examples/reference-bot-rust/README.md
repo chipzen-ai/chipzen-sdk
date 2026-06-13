@@ -44,12 +44,12 @@ Or via Docker (see the IP-protected starter at
 for the production-shaped image; this reference bot deliberately ships
 no Dockerfile of its own).
 
-## Note: not yet runnable from crates.io
+## Installing from crates.io
 
-This bot's `Cargo.toml` declares `chipzen-bot = "0.2"` from
-crates.io. Until the crate is published (see
-[`packages/rust/RELEASING.md`](../../packages/rust/RELEASING.md)),
-`cargo build` here will fail with `error: no matching package named
-'chipzen-bot' found`. Use a `[patch.crates-io]` override pointing at
-`packages/rust/chipzen-bot` if you need to run this before the first
-publish.
+This bot's `Cargo.toml` pulls `chipzen-bot = "0.3"` straight from
+crates.io, so `cargo run` above just works — the crate is published at
+[crates.io/crates/chipzen-bot](https://crates.io/crates/chipzen-bot).
+
+To develop against an unreleased local build instead, add a
+`[patch.crates-io]` override pointing at
+`packages/rust/chipzen-bot`.
