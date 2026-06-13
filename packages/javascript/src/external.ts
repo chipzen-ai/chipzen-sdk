@@ -114,6 +114,21 @@ function normaliseBase(url: string): string {
  */
 export function resolveGatewayUrl(lobbyUrl: string, gatewayWsPath: string): string {
   if (gatewayWsPath.startsWith("ws://") || gatewayWsPath.startsWith("wss://")) {
+    // Absolute URL from the server: honor it only if it stays on the same
+    // origin as the lobby and doesn't downgrade wss -> ws. Otherwise the bot
+    // token could be sent to an attacker-/misconfig-supplied host (or in
+    // cleartext). A relative path is re-anchored to the lobby origin below, so
+    // it's inherently same-origin.
+    const lobby = new URL(normaliseBase(lobbyUrl));
+    const gateway = new URL(gatewayWsPath);
+    const downgrade = lobby.protocol === "wss:" && gateway.protocol !== "wss:";
+    if (gateway.host !== lobby.host || downgrade) {
+      throw new Error(
+        `refusing gateway URL ${gatewayWsPath}: cross-origin or insecure relative to ` +
+          `lobby ${lobby.protocol}//${lobby.host} (the bot token must not be sent to a ` +
+          `different host or in cleartext)`,
+      );
+    }
     return gatewayWsPath;
   }
   return `${normaliseBase(lobbyUrl)}${gatewayWsPath}`;
@@ -440,7 +455,14 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
       } else if (mtype === "hello") {
         // Lobby server hello — informational; the client does NOT reply.
       } else if (mtype === "matched") {
-        const gatewayUrl = resolveGatewayUrl(p.lobbyUrl, msg.gateway_ws_url as string);
+        let gatewayUrl: string;
+        try {
+          gatewayUrl = resolveGatewayUrl(p.lobbyUrl, msg.gateway_ws_url as string);
+        } catch {
+          // Untrusted gateway URL (cross-origin / downgrade); skip this match
+          // rather than send the token there.
+          continue;
+        }
         const matchId = msg.match_id as string;
         const task: MatchTask = { promise: Promise.resolve(), done: false };
         task.promise = playOneMatch({

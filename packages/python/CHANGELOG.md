@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downstream `mypy` ignored the SDK's type hints. The marker now ships in the
   wheel (verified by a new CI wheel smoke-test).
 
+### Security
+
+- **External-API: refuse a cross-origin or `wss`→`ws` gateway URL.**
+  `run_external_bot()` now rejects a server-supplied absolute `gateway_ws_url`
+  whose origin differs from the lobby's, or that downgrades the connection to
+  cleartext `ws://` — so the long-lived bot token can never be sent to a
+  different host or unencrypted. The offending match is skipped rather than
+  connected. A relative `gateway_ws_url` is always re-anchored to the lobby
+  origin, so the normal path is unaffected.
+  ([#58](https://github.com/chipzen-ai/chipzen-sdk/issues/58))
+
 ## [0.3.0] — 2026-06-13
 
 ### Added

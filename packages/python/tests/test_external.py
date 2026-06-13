@@ -215,9 +215,27 @@ def test_resolve_gateway_url_joins_path_to_lobby_origin():
     assert out == "wss://staging.chipzen.ai/ws/external/match/m1/p1"
 
 
-def test_resolve_gateway_url_passes_through_absolute_url():
-    full = "wss://other.example/ws/external/match/m1/p1"
+def test_resolve_gateway_url_passes_through_same_origin_absolute_url():
+    # An absolute URL on the SAME origin as the lobby is honored as-is.
+    full = "wss://staging.chipzen.ai/ws/external/match/m1/p1"
     assert external.resolve_gateway_url("wss://staging.chipzen.ai/x", full) == full
+
+
+def test_resolve_gateway_url_rejects_cross_origin():
+    # A server-supplied absolute URL on a DIFFERENT host must be refused —
+    # the bot token must not follow a redirect to another host.
+    with pytest.raises(ValueError, match="cross-origin"):
+        external.resolve_gateway_url(
+            "wss://staging.chipzen.ai/x", "wss://attacker.example/ws/external/match/m1/p1"
+        )
+
+
+def test_resolve_gateway_url_rejects_wss_to_ws_downgrade():
+    # Same host but ws:// (cleartext) when the lobby was wss:// — refused.
+    with pytest.raises(ValueError, match="cross-origin or insecure"):
+        external.resolve_gateway_url(
+            "wss://staging.chipzen.ai/x", "ws://staging.chipzen.ai/ws/external/match/m1/p1"
+        )
 
 
 # ---------------------------------------------------------------------------

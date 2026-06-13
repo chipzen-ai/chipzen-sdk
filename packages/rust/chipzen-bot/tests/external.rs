@@ -330,17 +330,39 @@ fn test_resolve_gateway_url_joins_path_to_lobby_origin() {
     let out = resolve_gateway_url(
         "wss://staging.chipzen.ai/ws/external/bot/abc",
         "/ws/external/match/m1/p1",
-    );
+    )
+    .unwrap();
     assert_eq!(out, "wss://staging.chipzen.ai/ws/external/match/m1/p1");
 }
 
 #[test]
-fn test_resolve_gateway_url_passes_through_absolute_url() {
-    let full = "wss://other.example/ws/external/match/m1/p1";
+fn test_resolve_gateway_url_passes_through_same_origin_absolute_url() {
+    let full = "wss://staging.chipzen.ai/ws/external/match/m1/p1";
     assert_eq!(
-        resolve_gateway_url("wss://staging.chipzen.ai/x", full),
+        resolve_gateway_url("wss://staging.chipzen.ai/x", full).unwrap(),
         full
     );
+}
+
+#[test]
+fn test_resolve_gateway_url_rejects_cross_origin() {
+    // The bot token must not follow a redirect to another host.
+    let err = resolve_gateway_url(
+        "wss://staging.chipzen.ai/x",
+        "wss://attacker.example/ws/external/match/m1/p1",
+    )
+    .unwrap_err();
+    assert!(matches!(err, chipzen_bot::Error::UntrustedGateway(_)));
+}
+
+#[test]
+fn test_resolve_gateway_url_rejects_wss_to_ws_downgrade() {
+    let err = resolve_gateway_url(
+        "wss://staging.chipzen.ai/x",
+        "ws://staging.chipzen.ai/ws/external/match/m1/p1",
+    )
+    .unwrap_err();
+    assert!(matches!(err, chipzen_bot::Error::UntrustedGateway(_)));
 }
 
 // ---------------------------------------------------------------------------

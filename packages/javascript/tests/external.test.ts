@@ -219,9 +219,28 @@ describe("url + token helpers", () => {
     ).toBe("wss://staging.chipzen.ai/ws/external/match/m1/p1");
   });
 
-  it("resolveGatewayUrl passes an absolute url through", () => {
-    const full = "wss://other.example/ws/external/match/m1/p1";
+  it("resolveGatewayUrl passes a same-origin absolute url through", () => {
+    const full = "wss://staging.chipzen.ai/ws/external/match/m1/p1";
     expect(resolveGatewayUrl("wss://staging.chipzen.ai/x", full)).toBe(full);
+  });
+
+  it("resolveGatewayUrl rejects a cross-origin absolute url", () => {
+    // The bot token must not follow a redirect to another host.
+    expect(() =>
+      resolveGatewayUrl(
+        "wss://staging.chipzen.ai/x",
+        "wss://attacker.example/ws/external/match/m1/p1",
+      ),
+    ).toThrow(/cross-origin/);
+  });
+
+  it("resolveGatewayUrl rejects a wss->ws downgrade", () => {
+    expect(() =>
+      resolveGatewayUrl(
+        "wss://staging.chipzen.ai/x",
+        "ws://staging.chipzen.ai/ws/external/match/m1/p1",
+      ),
+    ).toThrow(/cross-origin or insecure/);
   });
 });
 

@@ -99,17 +99,48 @@ fn normalise_base(url: &str) -> String {
     format!("{scheme}://{authority}")
 }
 
+/// Split a ws/wss URL into `(scheme, authority)` where authority is
+/// `host[:port]`. Mirrors [`normalise_base`]'s parsing.
+fn split_origin(url: &str) -> (&str, &str) {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((s, r)) => (s, r),
+        None => ("wss", url),
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    (scheme, &rest[..end])
+}
+
 /// Resolve the `matched.gateway_ws_url` path against the lobby origin.
 ///
 /// The `matched` notification carries `gateway_ws_url` as a *path*
 /// (`/ws/external/match/{mid}/{pid}`). The `cz_extbot_` token is NOT on the
-/// query string — it travels in the `Sec-WebSocket-Protocol` header. A
-/// server that returns a full URL is passed through unchanged.
-pub fn resolve_gateway_url(lobby_url: &str, gateway_ws_path: &str) -> String {
+/// query string — it travels in the `Sec-WebSocket-Protocol` header.
+///
+/// A server that returns a full URL is honored ONLY if it stays on the same
+/// origin as the lobby and does not downgrade `wss` → `ws` — otherwise the bot
+/// token would be sent to an attacker-/misconfig-supplied host (or in
+/// cleartext). A relative path is re-anchored to the lobby origin, so it's
+/// inherently same-origin.
+///
+/// # Errors
+/// Returns [`Error::UntrustedGateway`] if `gateway_ws_path` is an absolute URL
+/// on a different origin than the lobby, or downgrades a `wss` lobby to `ws`.
+pub fn resolve_gateway_url(lobby_url: &str, gateway_ws_path: &str) -> Result<String, Error> {
     if gateway_ws_path.starts_with("ws://") || gateway_ws_path.starts_with("wss://") {
-        return gateway_ws_path.to_string();
+        let lobby_base = normalise_base(lobby_url);
+        let (lobby_scheme, lobby_authority) = split_origin(&lobby_base);
+        let (gw_scheme, gw_authority) = split_origin(gateway_ws_path);
+        let downgrade = lobby_scheme == "wss" && gw_scheme != "wss";
+        if gw_authority != lobby_authority || downgrade {
+            return Err(Error::UntrustedGateway(format!(
+                "{gateway_ws_path:?}: cross-origin or insecure relative to lobby \
+                 {lobby_scheme}://{lobby_authority} (the bot token must not be sent to a \
+                 different host or in cleartext)"
+            )));
+        }
+        return Ok(gateway_ws_path.to_string());
     }
-    format!("{}{}", normalise_base(lobby_url), gateway_ws_path)
+    Ok(format!("{}{}", normalise_base(lobby_url), gateway_ws_path))
 }
 
 /// Parse a WS frame into a JSON object (`{}` on non-object / bad JSON).
@@ -566,7 +597,12 @@ where
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let gateway_url = resolve_gateway_url(lobby_url, gateway_path);
+                // Untrusted gateway URL (cross-origin / downgrade) → skip this
+                // match rather than send the token there.
+                let gateway_url = match resolve_gateway_url(lobby_url, gateway_path) {
+                    Ok(url) => url,
+                    Err(_) => continue,
+                };
 
                 let bot = factory();
                 let transport = Arc::clone(transport);

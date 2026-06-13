@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **External-API: refuse a cross-origin or `wss`→`ws` gateway URL.**
+  `runExternalBot()` now rejects a server-supplied absolute `gateway_ws_url`
+  whose origin differs from the lobby's, or that downgrades to cleartext
+  `ws://` — so the bot token can never be sent to a different host or
+  unencrypted; the offending match is skipped. A relative URL is always
+  re-anchored to the lobby origin.
+  ([#58](https://github.com/chipzen-ai/chipzen-sdk/issues/58))
+
 ## [0.3.0] — 2026-06-13
 
 Reaches feature parity with the Python SDK's external-API remote-play

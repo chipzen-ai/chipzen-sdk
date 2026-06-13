@@ -35,6 +35,12 @@ pub enum Error {
     /// does NOT reconnect-retry it. See chipzen-ai/chipzen-sdk#52.
     #[error("bot decision error (safe_mode off): {0}")]
     BotDecision(String),
+
+    /// Raised when a server-supplied gateway URL is cross-origin relative to
+    /// the lobby, or downgrades `wss` to `ws`. Refused so the bot token is
+    /// never sent to a different host or in cleartext.
+    #[error("untrusted gateway URL: {0}")]
+    UntrustedGateway(String),
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for Error {
