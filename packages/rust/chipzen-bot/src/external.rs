@@ -35,7 +35,7 @@
 
 use crate::bot::Bot;
 use crate::client::{
-    default_user_agent, MessageReader, MessageWriter, SessionContext, _run_session,
+    _run_session, default_user_agent, MessageReader, MessageWriter, SessionContext,
 };
 use crate::config::{load_chipzen_config, resolve_token, ChipzenConfig};
 use crate::connect::{connect_to_chipzen, EnvName};

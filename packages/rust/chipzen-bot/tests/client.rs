@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chipzen_bot::{
-    Action, Bot, Error, GameState, MessageReader, MessageWriter, SessionContext, _extract_match_id,
-    _run_session, _safe_fallback_action, SUPPORTED_PROTOCOL_VERSIONS,
+    _extract_match_id, _run_session, _safe_fallback_action, Action, Bot, Error, GameState,
+    MessageReader, MessageWriter, SessionContext, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
