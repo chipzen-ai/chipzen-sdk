@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Starter is now seat-count-aware.** The Python starter
+  (`packages/python/starters/python/bot.py`) exposes a `table_position()`
+  helper, derives the table size from `len(opponent_stacks) + 1`, and reads
+  `your_seat` / `dealer_seat` off the parsed `GameState` instead of assuming a
+  single opponent. Its heads-up behavior is unchanged; this is a reference for
+  authors extending a bot to 3-6 player tables.
+
+### Notes (multi-player forward-compat)
+
+- **No breaking change and no protocol-version bump for multi-player tables.**
+  The two-layer protocol was multiway-shaped from the start: `opponent_stacks`
+  is a `list[int]`, and the seat fields (`your_seat`, `dealer_seat`,
+  `winner_seats`) are already seat-indexed. An existing heads-up bot keeps
+  running unchanged when seated at a 3-6 player table; the only `game_config`
+  addition is `num_players` (the seat count N), which old bots can ignore.
+- **Migration note / silent-failure risk.** A bot that hardcodes
+  `opponent_stacks[0]` does NOT crash at a larger table, but reads a single
+  neighbor's stack rather than the whole field. If you meant "the opponents",
+  iterate or aggregate the list, or gate heads-up-only logic on
+  `len(opponent_stacks) == 1`. See `docs/DEV-MANUAL.md` Section 2.3 and
+  `docs/protocol/POKER-GAME-STATE-PROTOCOL.md` Section 5.9 for position
+  derivation, and `tests/test_multiway_backcompat.py` for the proof that
+  heads-up bots keep working.
+
 ## [0.3.1] — 2026-07-14
 
 ### Fixed

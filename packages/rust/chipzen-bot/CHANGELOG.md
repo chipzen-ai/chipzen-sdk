@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Starter is now seat-count-aware.** The Rust starter
+  (`packages/rust/starters/rust/src/lib.rs`) exposes a `table_position()`
+  helper and reads `your_seat` / `dealer_seat` / `opponent_stacks` off the
+  parsed `GameState` instead of assuming a single opponent, deriving the table
+  size as `opponent_stacks.len() + 1`. Heads-up behavior is unchanged. No
+  protocol-version bump is needed for multi-player tables — `opponent_stacks`
+  has always been a `Vec`; see
+  `docs/protocol/POKER-GAME-STATE-PROTOCOL.md` Section 5.9.
 - **Breaking:** `resolve_gateway_url` now returns `Result<String, Error>`
   (was `String`) so it can refuse an untrusted gateway URL (new
   `Error::UntrustedGateway`). The normal relative-path resolution is

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Starter is now seat-count-aware.** The JavaScript starter
+  (`packages/javascript/starters/javascript/bot.js`) exposes a
+  `tablePosition()` helper and reads `yourSeat` / `dealerSeat` /
+  `opponentStacks` off the parsed `GameState` instead of assuming a single
+  opponent, deriving the table size as `opponentStacks.length + 1`. Heads-up
+  behavior is unchanged. No protocol-version bump is needed for multi-player
+  tables — `opponentStacks` has always been a list; see
+  `docs/protocol/POKER-GAME-STATE-PROTOCOL.md` Section 5.9.
+
 ### Fixed
 
 - **Lifecycle hooks are now safe-mode wrapped — a user exception in a stats
