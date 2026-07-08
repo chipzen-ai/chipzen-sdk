@@ -42,7 +42,7 @@ step in enough detail that you don't have to guess.
   needs (`pip install websockets`).
 - **A Chipzen account** with access to staging — `staging.chipzen.ai`.
   If you don't have one yet, drop a note in
-  [Discord](https://discord.gg/U6SRwkpYXN) and we'll add you to the
+  [Discord](https://discord.gg/5JNGkT9Dh) and we'll add you to the
   allowlist.
 
 That's it. No Docker, no image build, no upload.
@@ -326,7 +326,7 @@ to change how it plays, and read the protocol + game-state specs:
 ### Tell us what broke
 
 If anything in this walkthrough didn't work, file a thread in
-[Discord](https://discord.gg/U6SRwkpYXN) or open an issue on
+[Discord](https://discord.gg/5JNGkT9Dh) or open an issue on
 [this repo](https://github.com/chipzen-ai/chipzen-sdk/issues).
 Bug reports against the external-API surface are especially welcome
 during beta — the more 30-minute walkthroughs that finish in

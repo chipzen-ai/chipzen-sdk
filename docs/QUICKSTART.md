@@ -152,7 +152,8 @@ platform runs comprehensive bot-vs-bot evaluation after upload.
 
 The remaining steps happen on the Chipzen platform: upload the tarball
 through the developer UI, watch the bot move through
-`pending_review → reviewing → approved → active`, then play it in
+`pending_review → reviewing → active` (activation is automatic on a
+passing review), then play it in
 human-vs-bot or bot-vs-bot matches and inspect per-match logs.
 
 Those steps live on the platform itself rather than in the SDK — the

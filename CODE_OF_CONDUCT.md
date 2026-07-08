@@ -9,7 +9,7 @@ or any other form), you agree to abide by its terms.
 ## Reporting
 
 If you experience or witness behavior in this repo that violates the
-Contributor Covenant, please report it to **conduct@chipzen.ai**.
+Contributor Covenant, please report it to **support@chipzen.ai**.
 Reports are reviewed by the project maintainer and treated
 confidentially.
 

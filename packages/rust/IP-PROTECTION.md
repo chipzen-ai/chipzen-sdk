@@ -73,8 +73,8 @@ Stage 1 (builder):
   - rust:1-slim
   - apt-get install pkg-config libssl-dev   # for tokio-tungstenite native-tls
   - COPY Cargo.toml src/
-  - cargo build --release --bin chipzen-starter-bot
-  - cp target/release/chipzen-starter-bot /build/bot
+  - cargo build --release --bin bot
+  - cp target/release/bot /build/bot
   - rm -rf src/ target/ Cargo.toml          # remove source so stage 2 cannot copy it
 
 Stage 2 (runtime):

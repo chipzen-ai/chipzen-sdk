@@ -543,7 +543,8 @@ The submitted action failed validation. The bot receives another chance to submi
   "submitted_action": {
     "action": "bet",
     "params": { "amount": 100 }
-  }
+  },
+  "valid_actions": ["fold", "check", "call", "raise"]
 }
 ```
 
@@ -554,6 +555,7 @@ The submitted action failed validation. The bot receives another chance to submi
 | `message` | string | yes | Human-readable explanation |
 | `remaining_ms` | integer | yes | Milliseconds remaining before timeout auto-action |
 | `submitted_action` | object | no | Echo of the bot's submitted action for debugging. Contains the `action` and `params` (if any) from the rejected `turn_action`. |
+| `valid_actions` | array of string | no | The seat's currently legal action types (same set sent in the originating `turn_request`). Consumers SHOULD use this when present to pick a legal retry. When absent (older server), consumers MAY fall back to `["check", "fold"]` — the server's auto-action policy guarantees one of those is always legal. Introduced in the protocol revision shipping with v0.3.53. |
 
 The participant remains in the `awaiting_action` state. The original `request_id` is still valid. The bot should submit a corrected `turn_action` with the same `request_id`.
 
@@ -1356,7 +1358,8 @@ All server schemas include the common envelope and specify `"additionalPropertie
     "reason": { "type": "string" },
     "message": { "type": "string" },
     "remaining_ms": { "type": "integer", "minimum": 0 },
-    "submitted_action": { "type": "object" }
+    "submitted_action": { "type": "object" },
+    "valid_actions": { "type": "array", "items": { "type": "string" } }
   },
   "required": ["type", "match_id", "seq", "server_ts", "request_id", "reason", "message", "remaining_ms"],
   "additionalProperties": true

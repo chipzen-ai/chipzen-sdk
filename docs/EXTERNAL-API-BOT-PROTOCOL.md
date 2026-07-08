@@ -282,7 +282,7 @@ After `hello`, the server drives the match. Handle each message type:
 
 | Server → bot | What to do |
 |---|---|
-| `match_start` | Read `seats` (find your `is_self` seat), `game_config` (blinds, stacks, `total_hands`), `turn_timeout_ms` |
+| `match_start` | Read `seats` (find your `is_self` seat), `game_config` (blinds, stacks, `num_players`), `turn_timeout_ms` |
 | `round_start` | New hand; `state.your_hole_cards` are your cards |
 | `turn_request` | **Your turn.** Pick an action from `valid_actions`, reply with `turn_action` echoing `request_id` |
 | `turn_result` | An action (yours or opponent's) was applied |
@@ -304,10 +304,11 @@ The `turn_action` you send:
 
 Key Layer-2 rules (full detail in the poker protocol doc):
 
-- `valid_actions` lists the legal action strings (`fold`, `check`, `call`, `raise`).
+- `valid_actions` lists the legal action strings (`fold`, `check`, `call`, `raise`, `all_in`).
 - For `raise`, `params.amount` is the **total bet size**, bounded by `state.min_raise` ≤
   amount ≤ `state.max_raise` (both `0` when raising isn't legal).
 - `state.to_call` is the amount to call; `0` means checking is free.
+- `game_config.num_players` is the seat count. The protocol supports 2–6 players, but **remote play via the external-API SDK is currently heads-up only** (`num_players == 2`); multi-way remote support is tracked in chipzen-ai/Chipzen#3742.
 - Bot→server messages must be ≤ **4096 bytes** (close **4008** otherwise).
 
 ### 6.2.1 Recovering from `action_rejected`
