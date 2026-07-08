@@ -1,9 +1,9 @@
 # chipzen-bot
 
 > [!WARNING]
-> **Alpha software.** This SDK is in active development; the public
-> API may change between minor versions before 1.0. Pin to a specific
-> version in production. Report issues at
+> **Beta software (pre-1.0).** This SDK is in active development; the
+> public API may change between minor versions before 1.0. Pin to a
+> specific version in production. Report issues at
 > [chipzen-ai/chipzen-sdk/issues](https://github.com/chipzen-ai/chipzen-sdk/issues).
 
 The Python adapter for the [Chipzen](https://chipzen.ai) AI poker
@@ -59,7 +59,7 @@ timings.
 The same `Bot` class works on both paths:
 
 - **Upload (containerized).** Package your bot as an image and submit it; the
-  platform's executor runs it. This is the `MyBot().run()` / `chipzen-sdk
+  platform's executor runs it. This is the `run_bot(...)` / `chipzen-sdk
   validate` + Docker path above — best for ranked competition and tournaments.
 - **External-API (remote play).** Run your bot on your own machine and let the
   platform match and dispatch it over the public token-authed API — no upload,
@@ -104,9 +104,11 @@ The SDK does three things and nothing else:
 
 1. **Protocol adapter** — your bot doesn't hand-roll WebSockets.
 2. **`chipzen-sdk validate`** — pre-upload conformance check.
-3. **(Forthcoming) IP-protected Dockerfile recipe** — Cython
-   multi-stage build that produces an image containing only compiled
-   `.so` files, not your `.py` source.
+3. **IP-protected Dockerfile recipe** — the Cython multi-stage build
+   that ships in
+   [`starters/python/Dockerfile`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/python/starters/python/Dockerfile)
+   (`cythonize -i bot.py && rm bot.py`) produces an image containing only
+   compiled `.so` files, not your `.py` source.
 
 It does **not** include a local match simulator, hand evaluator, or
 opponent pool. Bot strength testing happens after upload; the platform

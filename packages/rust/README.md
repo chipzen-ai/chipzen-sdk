@@ -1,9 +1,9 @@
 # chipzen-bot — Rust SDK for the Chipzen poker platform
 
 > [!WARNING]
-> **Alpha software.** This SDK is in active development; the public
-> API may change between minor versions before 1.0. Pin to a specific
-> version in production. Report issues at
+> **Beta software (pre-1.0).** This SDK is in active development; the
+> public API may change between minor versions before 1.0. Pin to a
+> specific version in production. Report issues at
 > [chipzen-ai/chipzen-sdk/issues](https://github.com/chipzen-ai/chipzen-sdk/issues).
 
 Build, test, and deploy poker bots in Rust for the
@@ -23,12 +23,12 @@ The full 3-language SDK rollout is complete on `main`:
 
 ## Crates
 
-This directory is a Cargo workspace. The crates that live (or will live) here:
+This directory is a Cargo workspace. The crates in it:
 
 | Crate | What it is |
 |---|---|
-| [`chipzen-bot`](chipzen-bot/) | The SDK library. `Bot` trait, `Action`/`Card`/`GameState` types, async WebSocket client, conformance harness (in a future PR). |
-| `chipzen-sdk` (Phase 3, PR 2) | The `chipzen-sdk` CLI binary — `init` for scaffolding new bot projects, `validate` for pre-upload checks. |
+| [`chipzen-bot`](chipzen-bot/) | The SDK library. `Bot` trait, `Action`/`Card`/`GameState` types, async WebSocket client, and the conformance harness. |
+| `chipzen-sdk` | The `chipzen-sdk` CLI binary — `init` for scaffolding new bot projects, `validate` for pre-upload checks. |
 
 ## Quick start
 
@@ -117,7 +117,9 @@ packages/rust/
         └── models.rs
 ```
 
-Until the IP-protected starter ships in Phase 3 PR 3, the
-**raw-WebSocket** starter at [`/starters/rust/`](../../starters/rust/)
-demonstrates the underlying protocol if you'd like to start exploring
-without the SDK.
+The IP-protected starter at [`starters/rust/`](starters/rust/) uses the
+SDK's `Bot` trait and ships a multi-stage Dockerfile that compiles your
+`lib.rs` to a single statically-linked release binary (your `.rs` source
+is not in the uploaded image). The protocol spec at
+[`../../docs/protocol/`](../../docs/protocol/) remains authoritative if
+you ever need to write a non-Rust client from scratch.

@@ -114,8 +114,11 @@ Called once when the `match_start` message arrives.
 
 - `match_info` is the full Layer 1 message. The most useful fields are
   `match_info["seats"]` (array of seat assignments, each with an `is_self`
-  flag), `match_info["game_config"]` (blinds, starting stack, total hand
-  count), and `match_info["total_hands"]` if present.
+  flag), and `match_info["game_config"]` — blinds, starting stack, and
+  `num_players` (the seat count: 2 for heads-up, up to 6 for multi-way
+  tables). Table size is chosen by the platform, so size your logic off
+  `num_players` rather than assuming heads-up. Do not branch on a per-match
+  hand count — the platform does not expose one.
 - Typical use: initialize per-match state (opponent model, stack
   trackers, per-match Monte Carlo caches).
 
@@ -438,7 +441,8 @@ exits non-zero on any failure. Categories:
   the bot would `bot_container_failed_to_attach` in production.
 - **`decide()` timeout sniff** — invokes `decide()` once with a canned
   state and warns if the call took longer than 100 ms (warn) or 500 ms
-  (fail) on the test machine. Real production budget is per-tier (§6.2).
+  (fail) on the test machine. Real production budget is resolved per match
+  type, not per tier (§6.2).
 
 ### 4.2 Connectivity smoke test
 
@@ -561,7 +565,7 @@ they are not playing against the bot's real strategy. Structure:
 {
   "type": "bot_error",
   "reason": "bot_decision_timeout",
-  "message": "my-bot did not respond within 5000ms.",
+  "message": "my-bot did not respond within 10000ms.",
   "hand_number": 3,
   "phase": "flop",
   "match_continues": true
@@ -622,7 +626,7 @@ not by user tier:
 |---|---|---|
 | Ranked bot-vs-bot challenges | `bot_match_decision_timeout_ms` | 2000 ms |
 | Tournament bot-vs-bot | `bot_tournament_decision_timeout_ms` | 2000 ms |
-| Human-vs-bot (free `/play`) | `bot_decision_timeout_ms` | 5000 ms |
+| Human-vs-bot (free `/play`) | `bot_human_play_decision_timeout_ms` | 10000 ms |
 | Absolute fallback (any path with no per-match-type knob) | `bot_decision_timeout_ms` | 5000 ms |
 
 Bot-vs-bot is intentionally tighter than human-vs-bot — competitive play
@@ -721,23 +725,37 @@ gets the same two limits:
 - **Built image**: separately capped at **200 MB** (`bot_max_image_size_mb`),
   independent of the compressed-archive cap.
 
-Other runtime resources are still per tier:
+Per-bot runtime resources are also **not tiered** — every bot gets the
+same CPU, memory, tmpfs, and decompressed-image ceiling regardless of tier:
 
-| Resource | Free | Pro | Elite |
-|---|---|---|---|
-| CPU cores | 0.5 | 1.0 | 2.0 |
-| Memory | 256 MB | 512 MB | 1024 MB |
-| tmpfs `/tmp` | 10 MB | 50 MB | 200 MB |
-| Decision timeout (ranked) | 500 ms | 1000 ms | 2000 ms |
-| Max bots per user | 1 | 5 | 20 |
+| Resource | All tiers |
+|---|---|
+| CPU cores | 0.5 |
+| Memory | 256 MB |
+| tmpfs `/tmp` | 10 MB |
+| Decompressed image | 1500 MB |
+| Decision timeout (ranked bot-vs-bot) | 2000 ms |
 
-Human-vs-bot play uses the global 5000 ms (see §6.2).
+The **only** per-tier resource is your bot-slot count:
+
+| Tier | Bot slots |
+|---|---|
+| Free | 3 |
+| Pro | 10 |
+| Elite | 100 |
+
+Human-vs-bot play uses `bot_human_play_decision_timeout_ms` = 10000 ms;
+the absolute fallback is 5000 ms. Timeouts resolve by match type, not by
+tier — see §6.2 for the full table.
 
 > Earlier versions of this manual listed per-tier upload-size caps
 > (Free 5 MB / Pro 25 MB / Elite 100 MB) alongside a legacy 100 MB POST
-> path and a 500 MB direct-to-S3 path. Those were unified into the single
-> non-tiered **250 MB compressed / 200 MB image** cap; tier no longer
-> affects upload size.
+> path and a 500 MB direct-to-S3 path, and a per-tier CPU / memory / tmpfs /
+> decision-timeout table. Those were all unified: per-bot resources and the
+> upload/image caps are now single platform-wide values (**250 MB compressed
+> / 200 MB image**, 0.5 vCPU / 256 MB / 10 MB, 1500 MB decompressed) and
+> decision timeouts resolve by match type (§6.2). Tier now affects **only**
+> the bot-slot count (3 / 10 / 100).
 
 ### 7.3 Size budget
 
@@ -819,7 +837,7 @@ care which one it's in — the WebSocket protocol is the same.
 ### 8.2 Slot model
 
 Free tier gets **3 bot slots** (from `tier_max_bots_free = 3` in
-config). Pro: 5. Elite: 20.
+config). Pro: **10**. Elite: **100**.
 
 Uploads are not versioned: each upload creates a new independent bot.
 To upload a fourth bot on the free tier, delete one first. The backend
@@ -827,23 +845,41 @@ enforces the cap with HTTP 409.
 
 ### 8.3 Lifecycle in one glance
 
-After upload your bot moves through these states:
+The bot lifecycle is **one-way (forward-only)**. After upload your bot
+moves through these states:
 
 ```
-uploading -> pending_review -> reviewing -> approved -> active
-                                            |   ^
-                                            |   | PUT /bots/{id}/activate
-                                            v   | PUT /bots/{id}/deactivate
-                                          rejected
+uploading -> pending_review -> reviewing -+-> active     (passed review — automatic)
+                                          |
+                                          +-> rejected   (failed review — terminal)
 ```
 
-- `approved` — free-play eligible (your bot card shows "Play").
-- `active` — promoted to ranked matchmaking. Only one of your bots
-  can be `active` at a time; activating another one deactivates
-  the previous.
+- `reviewing -> active` is **automatic** on a passing review — there is no
+  manual "activate" step and no intermediate `approved` state. Every
+  passing upload becomes `active`; there is no "only one active at a time"
+  restriction.
+- `active` — the bot competes: it appears on its division leaderboard and
+  can be challenged or entered into tournaments (always by your explicit
+  registration; activation does not auto-schedule anything).
+- `rejected` — **terminal**. Fix your code and upload a *new* bot (uploads
+  are not versioned; each upload is an independent bot).
 
-The full state table and the `status`/`is_active` invariant are
-documented on the developer site (link in the README).
+From `active`, the only exits are the two dev-initiated terminal states,
+both confirm-gated and irreversible:
+
+- `retired` — "keep my bot, it's done competing." It can no longer play,
+  but its row, rating, and match/hand history are preserved.
+- `deleted` — removed from your account (image artifacts purged); match
+  and hand history are retained (platform-owned data). Delete is available
+  from any state.
+
+A separate `disabled` boolean is an admin **moderation overlay**
+(reversible), orthogonal to the lifecycle status above — not a lifecycle
+state. There is no `approved` or `suspended` state, and no
+`activate`/`deactivate` endpoints.
+
+Remote (external-API) and raised bots skip review and are **born
+`active`**.
 
 ---
 

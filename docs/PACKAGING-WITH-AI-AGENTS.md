@@ -60,18 +60,18 @@ or "silently folds every hand in production". The prompts carry them as
 acceptance criteria; they are collected here so you can sanity-check the
 agent's work.
 
-- **Image size:** recommended **≤ 300 MB compressed**, hard upload cap
-  **500 MB**. Per-*tier* upload caps are tighter (Free 5 MB / Pro 25 MB /
-  Elite 100 MB in [`DEV-MANUAL.md` §7.2](DEV-MANUAL.md#72-resource-limits-per-tier));
-  target the tier you'll actually upload under. The Python/Rust starters land
-  ~25–30 MB, the JS starter ~50 MB, with no extra deps.
+- **Image size:** hard cap **250 MB compressed** (`docker save | gzip`); the
+  built image is separately capped at **200 MB**
+  ([`DEV-MANUAL.md` §7.2](DEV-MANUAL.md#72-resource-limits)). Both caps are
+  **platform-wide — there are no per-tier upload limits.** The Python/Rust
+  starters land ~25–30 MB, the JS starter ~50 MB, with no extra deps.
 - **Seccomp-safe dependencies:** the sandbox allowlists a minimal syscall set.
   **Prefer pure-Python (or pure-language) deps.** A native/C extension that
   needs an unlisted syscall can crash the container **silently on startup**,
   before your code runs (`docker logs` shows nothing) — see
   [`DEV-MANUAL.md` §7.4](DEV-MANUAL.md#74-seccomp) and
   [§9.5](DEV-MANUAL.md#95-container-dies-immediately-with-no-logs).
-- **`decide()` timeout is end-to-end.** Default **5000 ms** for human-vs-bot
+- **`decide()` timeout is end-to-end.** Default **10000 ms** for human-vs-bot
   (`/play`); **bot-vs-bot ranked and tournament play is tighter — 2000 ms**
   ([`DEV-MANUAL.md` §6.2](DEV-MANUAL.md#62-decision-timeout-by-match-type)).
   The budget covers the network hop, SDK queue drain, and your `decide()` body.
@@ -144,14 +144,14 @@ STEPS
    extensions crash the container silently on startup. Do not add a native dep
    without telling me.
 4. Respect these hard constraints — treat them as acceptance criteria:
-   - decide() must return within the decision timeout: 5000 ms human-vs-bot,
+   - decide() must return within the decision timeout: 10000 ms human-vs-bot,
      but only 2000 ms for ranked bot-vs-bot / tournaments. Keep decide() fast
      and synchronous; cache expensive tables at on_match_start, not per hand.
    - Cold start < 15 s. If my bot loads a model or a big table, LAZY-LOAD it
      inside on_match_start (or first use), NOT at module import — otherwise the
      container misses the ~15 s attach budget.
-   - Final compressed image: recommended <= 300 MB, hard cap 500 MB, and within
-     my tier's upload cap (free 5 MB / pro 25 MB / elite 100 MB — see
+   - Final compressed image: hard cap 250 MB compressed (built image capped at
+     200 MB) — these are platform-wide, with NO per-tier upload limit (see
      DEV-MANUAL.md §7.2). If we're over, tell me and try the size levers the
      docs list (alpine base for pure-Python, strip pycache/tests, multi-stage).
 5. Run the conformance test if the starter ships one (rust: `cargo test` for
@@ -304,7 +304,8 @@ existing decision logic.
 ## After the agent is done
 
 - **Flow A:** upload `my-bot.tar.gz` through the Chipzen developer UI and watch
-  it move `pending_review → reviewing → approved → active`
+  it move `pending_review → reviewing → active` (activation is automatic on a
+  passing review)
   ([`DEV-MANUAL.md` §8.3](DEV-MANUAL.md#83-lifecycle-in-one-glance)). If it's
   rejected, the reason is in the bot card — cross-reference
   [`DEV-MANUAL.md` §9.1](DEV-MANUAL.md#91-my-bot-got-rejected-during-review).

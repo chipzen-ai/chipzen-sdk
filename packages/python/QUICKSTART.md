@@ -67,7 +67,7 @@ from step 5 onwards.
   `on_phase_change`, `on_turn_result`, `on_round_result`,
   `on_match_end`) for per-match / per-hand state tracking — see
   [DEV-MANUAL §2.2](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#22-bot-lifecycle-hooks).
-- **Performance budgets** (per-tier decision timeouts, queue drain
+- **Performance budgets** (per-match-type decision timeouts, queue drain
   pitfalls) — see
   [DEV-MANUAL §6](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#6-performance).
 - **Bot runtime security model** (sandbox, network egress, resource

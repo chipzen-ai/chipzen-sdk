@@ -1,9 +1,9 @@
 # @chipzen-ai/bot
 
 > [!WARNING]
-> **Alpha software.** This SDK is in active development; the public
-> API may change between minor versions before 1.0. Pin to a specific
-> version in production. Report issues at
+> **Beta software (pre-1.0).** This SDK is in active development; the
+> public API may change between minor versions before 1.0. Pin to a
+> specific version in production. Report issues at
 > [chipzen-ai/chipzen-sdk/issues](https://github.com/chipzen-ai/chipzen-sdk/issues).
 
 The JavaScript adapter for the [Chipzen](https://chipzen.ai) AI poker
@@ -61,11 +61,11 @@ The parser in `parseGameState` translates between the two.
 The SDK does three things and nothing else:
 
 1. **Protocol adapter** — your bot doesn't hand-roll WebSockets.
-2. **`chipzen-sdk validate`** (Phase 2 PR 2) — pre-upload conformance
-   check, equivalent to the Python CLI.
-3. **(Phase 2 PR 3) IP-protected Dockerfile recipe** — `bun build
-   --compile` multi-stage build that produces a single executable
-   instead of shipping your `.ts`/`.js` source.
+2. **`chipzen-sdk validate`** — pre-upload conformance check,
+   equivalent to the Python CLI.
+3. **IP-protected Dockerfile recipe** — `bun build --compile`
+   multi-stage build that produces a single executable instead of
+   shipping your `.ts`/`.js` source.
 
 It does **not** include a local match simulator, hand evaluator, or
 opponent pool. Bot strength testing happens after upload; the

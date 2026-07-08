@@ -61,7 +61,7 @@ sits with you and your employer, not with the project.
 This repository contains:
 
 - **Client libraries** for connecting bots to Chipzen
-  (`starters/python|javascript|rust/`).
+  (`packages/python|javascript|rust/`).
 - **Examples** -- worked reference bots (`examples/reference-bot/`).
 - **Protocol specifications** (`docs/protocol/`).
 - **Developer-facing documentation** (`docs/`).
@@ -99,7 +99,7 @@ Before opening a PR:
       separate PRs.
 - [ ] Tests added or updated where it makes sense. The protocol test
       fixture in `examples/reference-bot/` is the canonical "does this
-      still speak v2" smoke target.
+      still speak the current protocol (v1)" smoke target.
 - [ ] Docs updated if you changed public API or wire format.
 - [ ] CI green (lint + tests for each language touched).
 - [ ] Commit message describes the *why*, not just the *what*.
@@ -118,14 +118,14 @@ The PR template (`.github/PULL_REQUEST_TEMPLATE.md`) prompts for these.
 ## Maintainership and review SLA
 
 This repo is currently maintained by the Chipzen founder. During
-**internal alpha** (where we are now), expect:
+**open beta** (where we are now), expect:
 
 - Auto-acknowledgement on issues and PRs within 24 hours.
 - Substantive review on a best-effort basis -- we are honest that
-  this can be slow until external alpha launches.
+  this can be slow while the team is small.
 - No formal review SLA yet.
 
-At **external alpha launch**, we'll publish a real SLO and add a
+As the program matures, we'll publish a real SLO and add a
 maintainer rotation. For now: thanks for your patience, and please
 don't take silence as rejection -- we *will* get to your PR.
 

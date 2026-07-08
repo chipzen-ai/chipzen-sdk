@@ -72,10 +72,10 @@ ls -lh reference-bot.tar.gz   # expect < 50 MB
 3. Name: `reference-bot`. Description: "always check/fold -- pipeline
    smoke target". Accept the rules and select `reference-bot.tar.gz`.
 4. Wait for the review to move through
-   `uploading -> pending_review -> reviewing -> approved`. Because this
-   bot has no interesting strategy, the review should complete in
-   under 30 seconds.
-5. Click **Play** on the approved bot to start a free human-vs-bot
+   `uploading -> pending_review -> reviewing -> active` (activation is
+   automatic on a passing review). Because this bot has no interesting
+   strategy, the review should complete in under 30 seconds.
+5. Click **Play** on the active bot to start a free human-vs-bot
    match. The bot should produce a first log line within ~2 seconds
    and act on every turn without triggering the server's
    safe-default fallback.

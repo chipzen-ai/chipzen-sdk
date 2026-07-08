@@ -32,7 +32,7 @@ We don't run a paid bug bounty.
 In scope for this repo:
 
 - Vulnerabilities in the SDK code itself (starters, reference bot,
-  shared client utilities, the protocol adapter once it ships).
+  shared client utilities, and the protocol adapters).
 - Flaws in the wire-protocol specification that would let a malicious
   client compromise the platform or another bot.
 
@@ -49,7 +49,8 @@ bot accordingly.
 
 ### Container hardening
 
-- **Read-only root filesystem.** `/tmp` (tmpfs, capped per tier — see
+- **Read-only root filesystem.** `/tmp` (tmpfs, capped at 10 MB
+  platform-wide — see
   [`docs/DEV-MANUAL.md` §7.2](docs/DEV-MANUAL.md#72-resource-limits))
   is the only writable path. Anywhere else returns
   `OSError: [Errno 30] Read-only file system`.
@@ -98,10 +99,10 @@ network layer.
 
 ### WebSocket hardening
 
-- **Heartbeat.** The server sends a `ping` every 30s; if no `pong`
-  arrives within 10s, the connection is closed with code `1011`. The
-  SDK handles `ping`/`pong` automatically — if you write your own
-  client, you must respond to `ping` within the timeout.
+- **Heartbeat.** The server sends a `ping` every 15s; if no `pong`
+  arrives within 5s, the connection is closed. The SDK handles
+  `ping`/`pong` automatically — if you write your own client, you must
+  respond to `ping` within the timeout.
 - **Backpressure.** Per-connection ring buffer (1 MB or 100 messages,
   whichever fills first); the bot connector applies a `drop_oldest`
   policy on overflow because only the latest `turn_request` matters.
@@ -110,9 +111,11 @@ network layer.
 
 ### Resource limits
 
-CPU, memory, decision timeout, tmpfs size, and max-bots are
-tier-bounded. Upload-archive size (250 MB compressed) and built-image
-size (200 MB) are non-tiered platform-wide caps. See
+Only your **bot-slot count** is tier-bounded (3 / 10 / 100 for free /
+pro / elite). CPU (0.5 vCPU), memory (256 MB), and tmpfs (10 MB) are
+non-tiered platform-wide limits, and decision timeout is resolved by
+match type, not tier. Upload-archive size (250 MB compressed) and
+built-image size (200 MB) are non-tiered platform-wide caps too. See
 [`docs/DEV-MANUAL.md` §7.2](docs/DEV-MANUAL.md#72-resource-limits).
 
 If you exceed the decision timeout, the platform safe-defaults to

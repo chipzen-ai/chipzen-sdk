@@ -78,15 +78,15 @@ In the chipzen-sdk repo on GitHub:
    ```bash
    git checkout main
    git pull
-   git tag rust-v0.2.0   # match the workspace.package version exactly
-   git push origin rust-v0.2.0
+   git tag rust-v0.3.0   # match the workspace.package version exactly
+   git push origin rust-v0.3.0
    ```
    Pushing the tag triggers the workflow, which builds + publishes
    both crates.
 4. **Approve** the publish (if reviewers were added in setup step 3).
 5. **Verify**:
    ```bash
-   cargo install chipzen-sdk --version 0.2.0
+   cargo install chipzen-sdk --version 0.3.0
    chipzen-sdk init verify-bot
    chipzen-sdk validate verify-bot
    ```
@@ -130,6 +130,6 @@ metadata. Either crate can be republished independently if needed
 (skip the other in `cargo publish -p ...`).
 
 The IP-protected starter at [`starters/rust/`](starters/rust/) uses
-`chipzen-bot = "0.2"` from the registry and is intentionally NOT a
+`chipzen-bot = "0.3"` from the registry and is intentionally NOT a
 workspace member, so it builds cleanly anywhere the user copies it
 once `chipzen-bot` is on crates.io.

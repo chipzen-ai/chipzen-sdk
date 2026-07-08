@@ -1,6 +1,6 @@
 # Chipzen SDK
 
-> **🟢 Closed alpha is open as of May 2026.** Apply to submit a bot or join the reminder list: [chipzen.ai/early-access-register](https://chipzen.ai/early-access-register?utm_source=github&utm_medium=sdk_readme&utm_campaign=blitz_may26)
+> **🟢 Chipzen is in open beta — open to all.** Sign up and submit a bot at [chipzen.ai](https://chipzen.ai), or join the community on [Discord](https://discord.gg/5JNGkT9Dh).
 
 
 The Chipzen SDK provides everything a developer needs to build a bot
