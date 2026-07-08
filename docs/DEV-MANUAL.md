@@ -428,7 +428,7 @@ chipzen-sdk validate ./my_bot/
 exits non-zero on any failure. Categories:
 
 - **Image / size budget** — bot directory size, presence of an entry
-  point, no source files larger than the per-tier upload cap.
+  point, no archive larger than the 250 MB compressed upload cap (§7.2).
 - **Imports** — your bot module imports cleanly under the same Python
   version the platform uses, with only the SDK + your stated deps on the
   path.
@@ -710,28 +710,42 @@ Your image must:
    `OSError: [Errno 30] Read-only file system`. The tmpfs goes away when
    the task stops, so don't put state there you need across matches.
 
-### 7.2 Resource limits per tier
+### 7.2 Resource limits
 
-Current per-tier resource caps:
+**Upload and image size caps are not tiered** — every bot, on every tier,
+gets the same two limits:
+
+- **Compressed upload archive** (`docker save | gzip > bot.tar.gz`): hard
+  cap **250 MB** (`bot_archive_max_compressed_mb`). This is the value the
+  upload endpoint actually rejects on.
+- **Built image**: separately capped at **200 MB** (`bot_max_image_size_mb`),
+  independent of the compressed-archive cap.
+
+Other runtime resources are still per tier:
 
 | Resource | Free | Pro | Elite |
 |---|---|---|---|
-| Upload size (compressed) | 5 MB | 25 MB | 100 MB |
 | CPU cores | 0.5 | 1.0 | 2.0 |
 | Memory | 256 MB | 512 MB | 1024 MB |
 | tmpfs `/tmp` | 10 MB | 50 MB | 200 MB |
 | Decision timeout (ranked) | 500 ms | 1000 ms | 2000 ms |
 | Max bots per user | 1 | 5 | 20 |
 
-Decompressed image size is capped at 100 MB independent of tier.
 Human-vs-bot play uses the global 5000 ms (see §6.2).
+
+> Earlier versions of this manual listed per-tier upload-size caps
+> (Free 5 MB / Pro 25 MB / Elite 100 MB) alongside a legacy 100 MB POST
+> path and a 500 MB direct-to-S3 path. Those were unified into the single
+> non-tiered **250 MB compressed / 200 MB image** cap; tier no longer
+> affects upload size.
 
 ### 7.3 Size budget
 
 The reference bot (Alpine + SDK + 60-line `bot.py`) is ~20 MB compressed.
 A non-trivial bot with numpy/scipy + a small model checkpoint typically
-runs 100–150 MB compressed and may exceed the free tier cap. If you
-are hitting the size cap:
+runs 100–150 MB compressed, well under the 250 MB cap — but a bundled
+large model checkpoint can push you over. If you are hitting the size
+cap:
 
 - **`python:3.11-alpine` instead of `slim`.** ~50 MB base vs ~125 MB.
   Only works with pure-Python deps; numpy/scipy need musl wheels or a
@@ -846,8 +860,8 @@ the Developer UI. Click "Show rejection reason" — it's in
 
 **Common reasons:**
 
-- `Image exceeds <N> MB compressed` — you're over the tier upload cap
-  (§7.2). Use Alpine + wheels-only + strip pycache.
+- `Image exceeds <N> MB compressed` — you're over the 250 MB compressed
+  upload cap (§7.2). Use Alpine + wheels-only + strip pycache.
 - `Smoke test failed: no hello within 10s` — the bot never completed the
   `authenticate` + `hello` handshake. Check `ENTRYPOINT`, check
   `CHIPZEN_WS_URL` parsing, check `python -u`.

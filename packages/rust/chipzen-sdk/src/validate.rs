@@ -30,8 +30,8 @@ pub struct ValidationResult {
 
 #[derive(Debug, Clone)]
 pub struct ValidateOptions {
-    /// Hard-fail upload size threshold, in bytes. Defaults to 500 MB
-    /// (platform cap).
+    /// Hard-fail compressed-archive size threshold, in bytes. Defaults to
+    /// 250 MB (platform cap).
     pub max_upload_bytes: u64,
 }
 
@@ -43,7 +43,11 @@ impl Default for ValidateOptions {
     }
 }
 
-pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
+// Compressed-archive hard cap enforced by the platform
+// (bot_archive_max_compressed_mb = 250). Single, non-tiered cap; the
+// upload endpoint rejects anything larger. The built image is separately
+// capped at 200 MB.
+pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 250 * 1024 * 1024;
 
 /// Crates whose presence in `Cargo.toml` indicates a class of bot we
 /// don't allow. Mirrors the BLOCKED_MODULES sets in the Python and

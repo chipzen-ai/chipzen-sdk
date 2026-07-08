@@ -36,8 +36,10 @@ docker save my-bot:v1 | gzip > my-bot.tar.gz
 # 5. Upload via the Chipzen platform UI.
 ```
 
-Recommended max upload size: **300 MB compressed**. Hard cap: **500 MB**.
-The starter image (no extra deps beyond the SDK) typically lands at
+Hard upload cap: **250 MB compressed** (the built image is separately
+capped at **200 MB**); the upload endpoint rejects anything larger.
+Smaller images cold-start faster. The starter image (no extra deps beyond
+the SDK) typically lands at
 ~50 MB compressed — most of that is the Bun runtime statically linked
 into the binary.
 

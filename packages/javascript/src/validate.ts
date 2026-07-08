@@ -44,7 +44,7 @@ export interface ValidationResult {
 export interface ValidateOptions {
   /** Override entry point filename (default: auto-detect bot.js / bot.mjs / bot.cjs). */
   entryPoint?: string;
-  /** Hard-fail upload size threshold, in bytes. Defaults to 500 MB (platform cap). */
+  /** Hard-fail compressed-archive size threshold, in bytes. Defaults to 250 MB (platform cap). */
   maxUploadBytes?: number;
   /** Warn if `decide()` takes longer than this (ms). */
   timeoutWarnMs?: number;
@@ -58,7 +58,11 @@ export interface ValidateOptions {
   conformanceTimeoutMs?: number;
 }
 
-export const DEFAULT_MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+// Compressed-archive hard cap enforced by the platform
+// (bot_archive_max_compressed_mb = 250). Single, non-tiered cap; the
+// upload endpoint rejects anything larger. The built image is separately
+// capped at 200 MB.
+export const DEFAULT_MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
 export const DEFAULT_TIMEOUT_WARN_MS = 100;
 export const PLATFORM_TIMEOUT_MS = 500;
 
