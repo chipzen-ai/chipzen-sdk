@@ -18,10 +18,12 @@ from typing import Literal
 # Severity levels for validation results
 Severity = Literal["pass", "warn", "fail"]
 
-# Default upload size limit in bytes — hard cap enforced by the platform.
-# Recommended ceiling for most bots is ~300 MB; the validator treats
-# anything over the 500 MB hard cap as a failure.
-DEFAULT_MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+# Default upload size limit in bytes — the compressed-archive hard cap
+# enforced by the platform (bot_archive_max_compressed_mb = 250). The
+# platform rejects uploads larger than this at the upload endpoint. This
+# is a single, non-tiered cap. (The built image is separately capped at
+# 200 MB; smaller images also cold-start faster.)
+DEFAULT_MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 
 # Default decide() timeout warning threshold in milliseconds
 DEFAULT_TIMEOUT_WARN_MS = 100

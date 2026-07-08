@@ -50,7 +50,7 @@ bot accordingly.
 ### Container hardening
 
 - **Read-only root filesystem.** `/tmp` (tmpfs, capped per tier — see
-  [`docs/DEV-MANUAL.md` §7.2](docs/DEV-MANUAL.md#72-resource-limits-per-tier))
+  [`docs/DEV-MANUAL.md` §7.2](docs/DEV-MANUAL.md#72-resource-limits))
   is the only writable path. Anywhere else returns
   `OSError: [Errno 30] Read-only file system`.
 - **All Linux capabilities dropped.** The platform spawns your task
@@ -110,9 +110,10 @@ network layer.
 
 ### Resource limits
 
-CPU, memory, decision timeout, image size, tmpfs size, and max-bots
-are tier-bounded. See
-[`docs/DEV-MANUAL.md` §7.2](docs/DEV-MANUAL.md#72-resource-limits-per-tier).
+CPU, memory, decision timeout, tmpfs size, and max-bots are
+tier-bounded. Upload-archive size (250 MB compressed) and built-image
+size (200 MB) are non-tiered platform-wide caps. See
+[`docs/DEV-MANUAL.md` §7.2](docs/DEV-MANUAL.md#72-resource-limits).
 
 If you exceed the decision timeout, the platform safe-defaults to
 `check` (or `fold` if check is illegal) and emits a `bot_error`

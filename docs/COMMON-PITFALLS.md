@@ -914,7 +914,7 @@ even starts — see pitfall in `docs/DEV-MANUAL.md` §7.4.
 
 **Cross-references.**
 
-- `docs/DEV-MANUAL.md` §7.2 (Resource limits per tier)
+- `docs/DEV-MANUAL.md` §7.2 (Resource limits)
 - Historical issue: CZ issue 1295
   (bot container resource limit policies)
 

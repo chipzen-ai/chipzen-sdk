@@ -113,10 +113,12 @@ docker save my-first-bot:v1 | gzip > my-first-bot.tar.gz
 ls -lh my-first-bot.tar.gz
 ```
 
-Expected: ~**20 MB**. Recommended max: **300 MB compressed**; hard
-upload cap is **500 MB**. Non-trivial bots with numpy/scipy + a model
-checkpoint typically run 100–250 MB — trim caches/tests, drop unused
-deps, or use `python:3.11-alpine` if you're brushing the recommendation.
+Expected: ~**20 MB**. The platform's hard upload cap is **250 MB
+compressed** (the built image is separately capped at **200 MB**); the
+upload endpoint rejects anything larger. Smaller images also cold-start
+faster, so trim where you can. Non-trivial bots with numpy/scipy + a
+model checkpoint typically run 100–250 MB — trim caches/tests, drop
+unused deps, or use `python:3.11-alpine` if you're brushing the cap.
 
 **Common failure:** Windows PowerShell mangles the pipe and produces a
 corrupt archive. Use Git Bash or WSL.

@@ -49,7 +49,7 @@ pub enum Command {
     Validate {
         /// Path to the bot project directory.
         path: PathBuf,
-        /// Override max upload size in MB (default: 500).
+        /// Override max upload size in MB (default: 250).
         #[arg(long)]
         max_size_mb: Option<u64>,
         /// Disable colored output.
