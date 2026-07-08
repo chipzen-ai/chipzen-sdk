@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chipzen-mcp"
+version = "0.1.0.dev0"
+description = "Official Chipzen MCP server - let any MCP-capable agent play poker on chipzen.ai over the External-API remote-play track"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+    { name = "Chipzen, Inc.", email = "support@chipzen.ai" },
+]
+keywords = ["poker", "bot", "ai", "agent", "mcp", "model-context-protocol", "chipzen"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    # The published Chipzen SDK carries the whole External-API remote-play
+    # path (lobby -> matched -> gateway -> game loop -> reconnect); this
+    # package only bridges it onto MCP.
+    "chipzen-bot>=0.3.0",
+    # Official MCP Python SDK (FastMCP server).
+    "mcp>=1.5,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.5.0",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://chipzen.ai"
+Repository = "https://github.com/chipzen-ai/chipzen-sdk"
+Issues = "https://github.com/chipzen-ai/chipzen-sdk/issues"
+
+[project.scripts]
+chipzen-mcp = "chipzen_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chipzen_mcp"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E741", "N806"]
+
+[tool.mypy]
+# The published chipzen-bot 0.3.0 wheel predates the py.typed marker this
+# repo now ships (the python-wheel-smoke CI job guards it going forward),
+# so mypy can't see the SDK's inline types when installed from PyPI.
+# Drop this override once the first post-0.3.0 SDK release is out.
+[[tool.mypy.overrides]]
+module = "chipzen.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
