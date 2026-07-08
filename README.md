@@ -50,6 +50,12 @@ for the full developer manual: SDK reference, protocol details, testing
 harness, debugging surfaces, performance budgets, containerization,
 and troubleshooting.
 
+**Packaging with a coding agent.** Already have a bot and short on time?
+[`docs/PACKAGING-WITH-AI-AGENTS.md`](docs/PACKAGING-WITH-AI-AGENTS.md) has
+copy-pasteable prompts you hand to a coding agent (Claude Code, Codex,
+Cursor, …) so it does the packaging for you — either producing an
+upload-ready Docker image or wiring up the remote-play API path.
+
 ## Layout
 
 ```

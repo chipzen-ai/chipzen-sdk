@@ -14,6 +14,12 @@ Want more detail? Read the full developer manual at
 [`protocol/TRANSPORT-PROTOCOL.md`](protocol/TRANSPORT-PROTOCOL.md) and
 [`protocol/POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md).
 
+**Prefer to let a coding agent do it?** If you already have a bot, hand the
+prompts in [`PACKAGING-WITH-AI-AGENTS.md`](PACKAGING-WITH-AI-AGENTS.md) to
+Claude Code / Codex / Cursor and it will port your strategy into the right
+starter, validate it, and produce the upload tarball (or wire up the
+remote-play API path) for you.
+
 ## 1. Prerequisites
 
 - **Docker** installed and running (`docker version` prints Client + Server).
