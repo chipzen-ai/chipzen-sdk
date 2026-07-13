@@ -19,17 +19,22 @@ between the two:
   worker thread) until some match needs an action, so the agent's reasoning
   time IS the decision time.
 
-Implementation status (chipzen-ai/Chipzen#3748 skeleton): the registry and
-:class:`BridgeBot` are functional (they are pure-Python and unit-tested);
-:class:`ExternalSession` is a minimal thread wrapper whose lifecycle edges
-(cooperative stop, lobby-presence surfacing) are explicitly phase-3.
+Lifecycle (phase 3, chipzen-ai/Chipzen#3748): :class:`ExternalSession` owns
+the SDK thread end-to-end — cooperative stop (``stop()`` cancels the session
+from any thread and joins it), and truthful lobby-presence / reconnect-state
+surfacing via :class:`SdkLogTap`, which derives session state from the SDK's
+own log events (the SDK's public surface is ``Bot``; it exposes no lifecycle
+hook, and the tap avoids forking the protocol code just to observe it).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import threading
 import time
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -115,6 +120,16 @@ class _PendingTurn:
     action: Action | None = None
 
 
+#: Per-match gateway connection states surfaced in match summaries.
+#: ``pending`` (dispatched, gateway not opened yet) -> ``connected`` ->
+#: possibly ``reconnecting`` (mid-match drop, resume in progress) ->
+#: ``abandoned`` (reconnect budget exhausted; the match is forfeit).
+MATCH_CONN_PENDING = "pending"
+MATCH_CONN_CONNECTED = "connected"
+MATCH_CONN_RECONNECTING = "reconnecting"
+MATCH_CONN_ABANDONED = "abandoned"
+
+
 @dataclass
 class _MatchRecord:
     """Everything the registry tracks for one match."""
@@ -122,6 +137,8 @@ class _MatchRecord:
     match_id: str
     rated: bool | None = None
     hand_number: int = 0
+    connection: str = MATCH_CONN_PENDING
+    reconnect_attempt: int | None = None
     last_turn: TurnSnapshot | None = None
     pending: _PendingTurn | None = None
     last_round_result: dict[str, Any] | None = None
@@ -132,6 +149,8 @@ class _MatchRecord:
             "match_id": self.match_id,
             "rated": self.rated,
             "hand_number": self.hand_number,
+            "connection": self.connection,
+            "reconnect_attempt": self.reconnect_attempt,
             "my_turn": self.pending is not None,
             "finished": self.match_end is not None,
         }
@@ -158,6 +177,15 @@ class TurnRegistry:
             record = self._matches.setdefault(match_id, _MatchRecord(match_id=match_id))
             if rated is not None:
                 record.rated = rated
+
+    def set_match_connection(
+        self, match_id: str, state: str, *, attempt: int | None = None
+    ) -> None:
+        """Record the gateway-connection state of one match (see MATCH_CONN_*)."""
+        with self._lock:
+            record = self._matches.setdefault(match_id, _MatchRecord(match_id=match_id))
+            record.connection = state
+            record.reconnect_attempt = attempt
 
     def publish_turn(self, snapshot: TurnSnapshot) -> _PendingTurn:
         """Expose a pending decision and return the rendezvous to block on."""
@@ -347,64 +375,358 @@ class BridgeBot(Bot):
         return fallback
 
 
+# ---------------------------------------------------------------------------
+# Lobby presence + reconnect visibility (derived from SDK log events)
+# ---------------------------------------------------------------------------
+
+#: Lobby-presence states surfaced by ``get_status``.
+LOBBY_STARTING = "starting"  # session thread up, lobby handshake not seen yet
+LOBBY_CONNECTED = "connected"  # lobby `hello` received; matches can dispatch
+LOBBY_RECONNECTING = "reconnecting"  # lobby dropped; SDK is retrying
+LOBBY_EVICTED = "evicted"  # replaced by a newer connection (terminal)
+LOBBY_ENDED = "ended"  # session over (stop, budget exhausted, or clean end)
+
+#: The SDK logger the tap listens to (all lobby/gateway lifecycle events).
+SDK_LOGGER_NAME = "chipzen.external"
+
+
+class SessionPresence:
+    """Thread-safe lobby-presence state, written by the log tap.
+
+    ``connected`` answers "can the platform dispatch a match to me right
+    now"; ``snapshot()`` is folded into ``get_status`` so the agent can tell
+    connected / reconnecting / evicted apart instead of guessing from thread
+    liveness.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state = LOBBY_STARTING
+        self._detail = ""
+        self._since = time.time()
+
+    def transition(self, state: str, detail: str = "") -> None:
+        with self._lock:
+            if self._state == state and self._detail == detail:
+                return
+            self._state = state
+            self._detail = detail
+            self._since = time.time()
+
+    def session_over(self, detail: str) -> None:
+        """Mark the session ended. Idempotent: the FIRST terminal verdict
+        (``evicted``, or the first ``ended`` detail) wins; later generic
+        teardown calls don't overwrite it."""
+        with self._lock:
+            if self._state in (LOBBY_EVICTED, LOBBY_ENDED):
+                return
+            self._state = LOBBY_ENDED
+            self._detail = detail
+            self._since = time.time()
+
+    @property
+    def connected(self) -> bool:
+        with self._lock:
+            return self._state == LOBBY_CONNECTED
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "lobby_state": self._state,
+                "lobby_detail": self._detail,
+                "lobby_state_since": self._since,
+            }
+
+
+class SdkLogTap(logging.Handler):
+    """Derive lobby presence + per-match reconnect state from SDK log events.
+
+    The SDK's public surface is :class:`chipzen.Bot` -- it deliberately has no
+    lobby/connection lifecycle hooks, and reimplementing the protocol here
+    just to observe it would fork battle-tested code. Instead this handler
+    listens on the ``chipzen.external`` logger and routes on ``record.msg``
+    (the pre-format TEMPLATE, a stable identity -- not the rendered text).
+
+    Template drift is the obvious risk, so the templates are pinned two ways:
+    ``tests/test_bridge.py`` asserts every REQUIRED template appears verbatim
+    in the installed SDK's source (fails loudly on an SDK release that
+    rewords them), and OPTIONAL templates cover events newer SDKs emit
+    (mid-match gateway reconnect, added after chipzen-bot 0.3.0) -- with an
+    older SDK those simply never fire and match ``connection`` stays at its
+    last known state.
+    """
+
+    def __init__(self, registry: TurnRegistry, presence: SessionPresence) -> None:
+        super().__init__(level=logging.DEBUG)
+        self._registry = registry
+        self._presence = presence
+
+    # -- template routes ----------------------------------------------------
+    # Emitted by every supported SDK (chipzen-bot >= 0.3.0).
+    T_LOBBY_CONNECTING = "external: connecting lobby %s"
+    T_LOBBY_CONNECTED = "lobby: connected (endpoint=%s)"
+    T_LOBBY_CLOSED = "lobby: connection closed"
+    T_LOBBY_RETRYING = "lobby: closed; reconnecting in %.1fs"
+    T_LOBBY_CONNECT_FAILED = "lobby: connect failed (%s); retrying in %.1fs (attempt %d/%d)"
+    T_LOBBY_EVICTED = "lobby: evicted (replaced by a newer connection)"
+    T_LOBBY_GAVE_UP = "lobby: closed and reconnect budget exhausted; done"
+    T_SESSION_ENDED = "external: session ended (%d match(es) played)"
+    T_MATCHED = "lobby: matched -> match %s (rated=%s); playing"
+    T_GATEWAY_CONNECTING = "match %s: connecting gateway"
+    # Emitted by SDKs newer than the published 0.3.0 wheel (mid-match
+    # gateway reconnect); absent templates simply never fire.
+    T_MATCH_RECONNECTING = "match %s: reconnecting in %.1fs (attempt %d/%d; %s)"
+    T_MATCH_ABANDONED = "match %s: reconnect budget exhausted (%s); abandoning"
+
+    REQUIRED_TEMPLATES: tuple[str, ...] = (
+        T_LOBBY_CONNECTING,
+        T_LOBBY_CONNECTED,
+        T_LOBBY_CLOSED,
+        T_LOBBY_RETRYING,
+        T_LOBBY_CONNECT_FAILED,
+        T_LOBBY_EVICTED,
+        T_LOBBY_GAVE_UP,
+        T_SESSION_ENDED,
+        T_MATCHED,
+        T_GATEWAY_CONNECTING,
+    )
+    OPTIONAL_TEMPLATES: tuple[str, ...] = (
+        T_MATCH_RECONNECTING,
+        T_MATCH_ABANDONED,
+    )
+
+    def emit(self, record: logging.LogRecord) -> None:  # noqa: C901 - flat dispatch
+        try:
+            template = record.msg if isinstance(record.msg, str) else ""
+            args: tuple[Any, ...] = record.args if isinstance(record.args, tuple) else ()
+            presence = self._presence
+            if template == self.T_LOBBY_CONNECTED:
+                presence.transition(LOBBY_CONNECTED)
+            elif template == self.T_LOBBY_CONNECTING:
+                presence.transition(LOBBY_STARTING, "connecting")
+            elif template == self.T_LOBBY_CLOSED:
+                presence.transition(LOBBY_RECONNECTING, "lobby connection closed")
+            elif template == self.T_LOBBY_RETRYING:
+                presence.transition(LOBBY_RECONNECTING, "retrying")
+            elif template == self.T_LOBBY_CONNECT_FAILED:
+                attempt = f"attempt {args[2]}/{args[3]}" if len(args) >= 4 else "retrying"
+                presence.transition(LOBBY_RECONNECTING, attempt)
+            elif template == self.T_LOBBY_EVICTED:
+                presence.transition(LOBBY_EVICTED, "replaced by a newer connection")
+            elif template == self.T_LOBBY_GAVE_UP:
+                presence.session_over("lobby reconnect budget exhausted")
+            elif template == self.T_SESSION_ENDED:
+                presence.session_over("session ended")
+            elif template == self.T_MATCHED and args:
+                rated = args[1] if len(args) >= 2 and isinstance(args[1], bool) else None
+                self._registry.match_started(str(args[0]), rated=rated)
+            elif template == self.T_GATEWAY_CONNECTING and args:
+                self._registry.set_match_connection(str(args[0]), MATCH_CONN_CONNECTED)
+            elif template == self.T_MATCH_RECONNECTING and args:
+                attempt_n = int(args[2]) if len(args) >= 3 else None
+                self._registry.set_match_connection(
+                    str(args[0]), MATCH_CONN_RECONNECTING, attempt=attempt_n
+                )
+            elif template == self.T_MATCH_ABANDONED and args:
+                self._registry.set_match_connection(str(args[0]), MATCH_CONN_ABANDONED)
+        except Exception:  # noqa: BLE001 - a tap must never break SDK logging
+            self.handleError(record)
+
+
+# ---------------------------------------------------------------------------
+# The background SDK session
+# ---------------------------------------------------------------------------
+
+#: How long ``stop()`` lets in-flight work unwind inside the session loop
+#: before cancelling stragglers (mirrors the SDK's own teardown grace).
+DEFAULT_STOP_DRAIN_GRACE_S = 5.0
+
+
 class ExternalSession:
     """Background thread running the SDK's External-API session.
 
-    Owns a daemon thread that runs ``chipzen.run_external_bot`` with a
-    :class:`BridgeBot`-per-match factory. Starting the session is what puts
-    the bot "online" in the lobby so the platform can dispatch matches to it.
+    Owns a thread that runs ``chipzen.run_external_bot`` with a
+    :class:`BridgeBot`-per-match factory on its own event loop. Starting the
+    session is what puts the bot "online" in the lobby so the platform can
+    dispatch matches to it.
 
-    Phase-3 notes (deliberately NOT implemented in the skeleton):
+    Lifecycle:
 
-    * **Cooperative stop** -- ``run_external_bot`` has no external stop
-      signal today; ``stop()`` is best-effort (the daemon thread dies with
-      the process). Phase 3 either adds a stop event upstream in the SDK or
-      drives the session loop directly here.
-    * **Lobby-presence surfacing** -- the SDK logs lobby connect/evict but
-      exposes no hook; ``get_status`` currently reports thread liveness,
-      not lobby state. Phase 3 adds a small SDK hook (or log-handler tap)
-      so ``lobby_connected`` is truthful.
+    * :meth:`start` spins the thread up (idempotent) and installs the
+      :class:`SdkLogTap` so lobby presence / reconnect state stay truthful.
+    * :meth:`stop` is a cooperative, thread-safe shutdown: it cancels the
+      session task on the session loop, gives in-flight match tasks a short
+      grace to unwind (sockets close cleanly), then joins the thread. Called
+      from ``main()`` when the MCP transport closes, and safe to call twice.
+    * ``run_external_bot`` returning on its own (lobby closed for good,
+      eviction, fatal error) just ends the thread; ``error`` carries any
+      exception and presence reports the terminal state.
     """
 
-    def __init__(self, config: McpConfig, registry: TurnRegistry) -> None:
+    def __init__(
+        self,
+        config: McpConfig,
+        registry: TurnRegistry,
+        *,
+        runner: Callable[[], Coroutine[Any, Any, Any]] | None = None,
+        drain_grace_s: float = DEFAULT_STOP_DRAIN_GRACE_S,
+    ) -> None:
+        """``runner`` overrides the session coroutine (tests inject a fake
+        instead of monkeypatching the SDK); ``None`` runs the real
+        ``chipzen.run_external_bot``."""
         self._config = config
         self._registry = registry
+        self._runner = runner
+        self._drain_grace_s = drain_grace_s
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None
+        self._presence = SessionPresence()
+        self._tap = SdkLogTap(registry, self._presence)
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop_event: asyncio.Event | None = None
+        self._loop_ready = threading.Event()
+        self._stop_requested = threading.Event()
+
+    # -- lifecycle -----------------------------------------------------------
 
     def start(self) -> None:
         """Start the session thread (idempotent)."""
         if self._thread is not None and self._thread.is_alive():
             return
+        self._stop_requested.clear()
+        self._loop_ready.clear()
+        self._error = None
+        self._presence.transition(LOBBY_STARTING, "session thread starting")
+        sdk_logger = logging.getLogger(SDK_LOGGER_NAME)
+        # The tap feeds on INFO-level SDK events; an embedding app that never
+        # configured logging would leave the effective level at WARNING and
+        # silently blind lobby presence. Opening the logger (not the root)
+        # is the minimal intervention.
+        if sdk_logger.getEffectiveLevel() > logging.INFO:
+            sdk_logger.setLevel(logging.INFO)
+        sdk_logger.addHandler(self._tap)
         self._thread = threading.Thread(target=self._run, name="chipzen-mcp-session", daemon=True)
         self._thread.start()
 
+    def stop(self, timeout: float = 10.0) -> bool:
+        """Cooperatively stop the session and join the thread.
+
+        Cancels the session task on ITS loop (thread-safe), which closes the
+        lobby/gateway sockets and lets :meth:`_main` drain in-flight tasks
+        for up to ``drain_grace_s`` before cancelling them. Idempotent; safe
+        to call when the session never started or already finished.
+
+        Returns:
+            ``True`` when the thread has exited within ``timeout`` seconds
+            (or was never running); ``False`` if it is still winding down --
+            it is a daemon thread either way, so process exit is never held
+            hostage.
+        """
+        self._stop_requested.set()
+        thread = self._thread
+        stopped = True
+        if thread is not None and thread.is_alive():
+            # Wait for the loop to exist (start() may have just been called),
+            # then set the stop event ON the session loop.
+            if self._loop_ready.wait(timeout=min(timeout, 5.0)):
+                loop, stop_event = self._loop, self._stop_event
+                if loop is not None and stop_event is not None:
+                    with contextlib.suppress(RuntimeError):  # loop already closed
+                        loop.call_soon_threadsafe(stop_event.set)
+            thread.join(timeout)
+            stopped = not thread.is_alive()
+        if stopped:
+            self._presence.session_over("stopped")
+        logging.getLogger(SDK_LOGGER_NAME).removeHandler(self._tap)
+        return stopped
+
+    # -- session thread ------------------------------------------------------
+
     def _run(self) -> None:
-        import asyncio
-
-        from chipzen import run_external_bot
-
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        self._stop_event = asyncio.Event()
+        self._loop_ready.set()
         try:
-            asyncio.run(
-                run_external_bot(
-                    lambda: BridgeBot(self._registry),
-                    bot_id=self._config.bot_id or None,
-                    env=self._config.env,  # type: ignore[arg-type]
-                    url=self._config.lobby_url,
-                    token=self._config.token,
-                    client_name="chipzen-mcp",
-                )
-            )
+            loop.run_until_complete(self._main())
         except BaseException as exc:  # noqa: BLE001 - surfaced via .error
             logger.exception("external session thread died")
             self._error = exc
+            self._presence.session_over(f"error: {exc}")
+        finally:
+            with contextlib.suppress(Exception):
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            asyncio.set_event_loop(None)
+            loop.close()
+            self._presence.session_over("session thread exited")
 
-    def stop(self) -> None:
-        """Best-effort teardown -- see the phase-3 note in the class docstring."""
+    async def _main(self) -> None:
+        """Run the session, racing it against the cooperative stop signal."""
+        assert self._stop_event is not None
+        if self._stop_requested.is_set():  # stop() won the race with start()
+            return
+        session_task = asyncio.ensure_future(self._session_coro())
+        stop_task = asyncio.ensure_future(self._stop_event.wait())
+        done, _ = await asyncio.wait({session_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+        if session_task in done:
+            stop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stop_task
+            session_task.result()  # propagate a session error to _run
+            return
+        # Cooperative stop: cancel the session (closes lobby + gateway
+        # sockets), then give any straggler tasks a grace window to unwind
+        # before cancelling them -- mirroring the SDK's own teardown.
+        session_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await session_task
+        await self._drain_stragglers()
+
+    async def _drain_stragglers(self) -> None:
+        current = asyncio.current_task()
+        pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+        if not pending:
+            return
+        _, still_pending = await asyncio.wait(pending, timeout=self._drain_grace_s)
+        for task in still_pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    def _session_coro(self) -> Coroutine[Any, Any, Any]:
+        if self._runner is not None:
+            return self._runner()
+        from chipzen import run_external_bot
+
+        return run_external_bot(
+            lambda: BridgeBot(self._registry),
+            bot_id=self._config.bot_id or None,
+            env=self._config.env,  # type: ignore[arg-type]
+            url=self._config.lobby_url,
+            token=self._config.token,
+            client_name="chipzen-mcp",
+        )
+
+    # -- state surfaced to get_status ------------------------------------------
 
     @property
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def lobby_connected(self) -> bool:
+        """Truthful lobby presence: thread alive AND lobby handshake seen."""
+        return self.running and self._presence.connected
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._stop_requested.is_set()
+
+    def presence_snapshot(self) -> dict[str, Any]:
+        """Lobby-presence view folded into ``get_status``."""
+        snap = self._presence.snapshot()
+        snap["lobby_connected"] = self.lobby_connected
+        return snap
 
     @property
     def error(self) -> BaseException | None:

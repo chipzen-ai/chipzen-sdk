@@ -1,11 +1,13 @@
 """Tests for the MCP tool surface."""
 
+import asyncio
 import time
 
 import pytest
 
-from chipzen_mcp.bridge import TurnRegistry, TurnSnapshot
+from chipzen_mcp.bridge import ExternalSession, TurnRegistry, TurnSnapshot
 from chipzen_mcp.config import McpConfig
+from chipzen_mcp.housebot import HttpResult
 from chipzen_mcp.server import (
     act_impl,
     build_server,
@@ -60,6 +62,17 @@ def test_get_status_reports_config_and_counts() -> None:
     assert status["active_matches"] == 1
     assert status["pending_turns"] == 1
     assert status["concurrent_match_cap"] == 5
+    assert status["lobby_connected"] is False  # no session -> not connected
+
+
+def test_get_status_surfaces_lobby_presence() -> None:
+    registry = TurnRegistry()
+    config = McpConfig(token="cz_extbot_x", bot_id="b-1", env="staging")
+    session = ExternalSession(config, registry)
+    status = get_status_impl(registry, session, config)
+    assert status["lobby_connected"] is False
+    assert status["lobby_state"] == "starting"
+    assert "lobby_detail" in status
 
 
 def test_wait_for_turn_idle_and_your_turn() -> None:
@@ -125,8 +138,53 @@ def test_list_matches_and_last_result() -> None:
     assert get_last_result_impl(registry, MATCH)["match_end"] == {"reason": "completed"}
 
 
-def test_challenge_house_bot_is_an_honest_stub() -> None:
-    result = challenge_house_bot_impl("nexus")
-    assert result["status"] == "not_implemented"
-    assert "3750" in result["note"]
-    assert result["requested_bot"] == "nexus"
+class TestChallengeHouseBotWiring:
+    """The endpoint contract itself is covered in test_housebot.py; this is
+    the tool-level wiring (config gate, lobby-liveness annotation)."""
+
+    CONFIG = McpConfig(token="cz_extbot_x", bot_id="b-1", env="staging")
+
+    def test_requires_configuration(self) -> None:
+        result = challenge_house_bot_impl(None, None, "boss-1")
+        assert result["status"] == "error" and result["error"] == "not_configured"
+
+    def test_success_passes_through(self) -> None:
+        def post(url: str, headers: dict, body: dict) -> HttpResult:
+            return HttpResult(status=201, body={"match_id": "m-7", "decision_timeout_ms": 30000})
+
+        result = challenge_house_bot_impl(self.CONFIG, None, "boss-1", post=post)
+        assert result["status"] == "challenge_created"
+        assert result["match_id"] == "m-7"
+        assert "warning" not in result  # no session to second-guess
+
+    def test_success_warns_when_lobby_looks_down(self) -> None:
+        async def never_runs() -> None:  # session constructed but not started
+            raise AssertionError("not reached")
+
+        session = ExternalSession(self.CONFIG, TurnRegistry(), runner=never_runs)
+
+        def post(url: str, headers: dict, body: dict) -> HttpResult:
+            return HttpResult(status=201, body={"match_id": "m-7"})
+
+        result = challenge_house_bot_impl(self.CONFIG, session, post=post)
+        assert result["status"] == "challenge_created"
+        assert "lobby" in result["warning"]
+
+    def test_error_passes_through_unannotated(self) -> None:
+        def post(url: str, headers: dict, body: dict) -> HttpResult:
+            return HttpResult(status=404, body={})
+
+        result = challenge_house_bot_impl(self.CONFIG, None, post=post)
+        assert result["error"] == "endpoint_not_available"
+        assert "warning" not in result
+
+
+async def test_challenge_house_bot_tool_runs_off_loop() -> None:
+    """The registered tool must not block the server loop (urllib is sync)."""
+    server = build_server(TurnRegistry(), None, None)
+    result = await asyncio.wait_for(
+        server.call_tool("challenge_house_bot", {"bot_name": "boss-1"}), timeout=5.0
+    )
+    # No config injected -> the impl's config gate answers, proving the
+    # async wrapper + to_thread path works end-to-end through FastMCP.
+    assert "not_configured" in str(result)

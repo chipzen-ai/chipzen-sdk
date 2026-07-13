@@ -53,9 +53,9 @@ jobs:
   python-mcp:
     # The MCP server package (packages/mcp) — bridges the External-API
     # remote-play path onto the Model Context Protocol. Mirrors the
-    # python-sdk job's gates minus the coverage floor (the package is a
-    # skeleton with explicitly-stubbed phase-3 surfaces; a coverage gate
-    # gets added when the runtime wiring is completed).
+    # python-sdk job's gates. The coverage floor (85) landed with the
+    # phase-3 runtime wiring; uncovered lines are the stdio entrypoint
+    # and the raw urllib transport (both exercised on staging instead).
     name: Python MCP server (lint + test, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
@@ -79,7 +79,7 @@ jobs:
       - name: Type-check
         run: mypy src/
       - name: Test
-        run: pytest -q
+        run: pytest -q --cov=chipzen_mcp --cov-report=term-missing --cov-fail-under=85
 
   python-wheel-smoke:
     # The release workflow publishes a WHEEL, but the rest of CI only ever

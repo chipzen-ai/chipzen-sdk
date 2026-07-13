@@ -2,12 +2,13 @@
 
 This is the drop-in path: you have an MCP-capable agent (Claude Desktop,
 Claude Code, anything that can mount an MCP server) and you want it playing
-poker on [chipzen.ai](https://chipzen.ai). No SDK, no protocol code.
+poker on [chipzen.ai](https://chipzen.ai). No SDK, no protocol code, and the
+agent starts its own first match.
 
-> **Skeleton-phase note:** this doc ships with the package skeleton
-> (chipzen-ai/Chipzen#3748). Install is from source until the first PyPI
-> release, and step 5 uses the dashboard until the agent-initiated
-> challenge endpoint lands (chipzen-ai/Chipzen#3750).
+> **Pre-release note:** install is from source until the first PyPI
+> release. Agent-initiated challenges (step 4) reach staging first
+> (server side of chipzen-ai/Chipzen#3750); the dashboard fallback at the
+> bottom covers environments that don't have them yet.
 
 ## 0–2 min — create an External-API bot
 
@@ -50,48 +51,62 @@ Add the server to your agent's MCP config (Claude Desktop:
 
 Restart the agent. The server connects your bot to the Chipzen lobby in the
 background — ask the agent to call `get_status` and you should see
-`session_running: true`.
+`lobby_connected: true`.
 
-## 7–9 min — start a match
+## 7–8 min — the agent starts its own match
 
-Until chipzen-ai/Chipzen#3750 lands (agent-initiated house-bot challenges
-via the `challenge_house_bot` tool), start the first match from the
-dashboard: open **/challenges → New challenge**, pick your bot as the
-challenger and a house bot as the opponent, and choose an **unranked
-exhibition** match. Dispatch routes the match to your connected agent
-automatically.
+Tell your agent:
 
-## 9–10 min — the "your agent is seated" moment
+> Call `challenge_house_bot` to start an unrated practice match against a
+> house bot.
 
-Tell your agent something like:
+That's it — the challenge is unrated (never touches ratings), runs on a
+relaxed **~30 second decision clock** built for reasoning agents, and is
+dispatched straight back to this session. No dashboard round-trip.
 
-> You're seated at a poker table via the chipzen MCP server. Loop on
-> `wait_for_turn`; each time it returns a turn, reason about the state and
-> call `act`. Keep playing until the match ends, then report the result.
+## 8–10 min — the "your agent is seated" moment
 
-The agent will see its hole cards, the board, pot, stacks, and legal
-actions on every turn, and plays by calling `act(match_id, action, amount)`.
-When `get_last_result` shows the outcome — that's the moment.
+Follow up with something like:
+
+> You're seated. Loop on `wait_for_turn`; each time it returns a turn,
+> reason about the state and call `act`. Keep playing until the match ends,
+> then report the result.
+
+The agent sees its hole cards, the board, pot, stacks, and legal actions on
+every turn, and plays by calling `act(match_id, action, amount)`. When
+`get_last_result` shows the outcome — that's the moment.
 
 ## Expectations, honestly
 
-- **Decision clock.** Agent matches are unrated/casual with a ~30 s clock
-  (chipzen-ai/Chipzen#3750). Rated ladder/tournament matches use a 2 s
-  clock built for compiled bots — a per-turn-reasoning LLM **will** time
-  out there and auto-check/fold. Watch `remaining_ms` in every turn.
+- **Decision clock.** Agent challenges are unrated/casual with a ~30 s
+  clock. Rated ladder/tournament matches use a 2 s clock built for compiled
+  bots — a per-turn-reasoning LLM **will** time out there and
+  auto-check/fold. Watch `remaining_ms` in every turn.
 - **Concurrency.** One token can hold up to 5 simultaneous matches; the
   `wait_for_turn` loop serves whichever seat is most urgent.
 - **Unrated vs rated.** House-bot practice matches never move your rating.
   The competitive ladders remain the SDK bots' home turf — for now.
+
+## Fallback: starting a match from the dashboard
+
+Agent-initiated challenges roll out staging-first. If `challenge_house_bot`
+returns `endpoint_not_available` on your environment, start the first match
+from the dashboard instead: open **/challenges → New challenge**, pick your
+bot as the challenger and a house bot as the opponent, and choose an
+**unranked exhibition** match. Dispatch routes the match to your connected
+agent automatically; the `wait_for_turn` loop is identical from there.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
 | `get_status` → `session_error` mentioning 4001 | Token/bot-id mismatch, or a revoked token — check both env vars |
-| Challenge dispatch fails on the dashboard | Your agent wasn't connected (lobby presence) at dispatch time — check `get_status` first |
-| `wait_for_turn` always `idle` | No match has been started — see step 5 |
+| `challenge_house_bot` → `unauthorized` | Same: the token was rejected — verify or rotate it |
+| `challenge_house_bot` → `endpoint_not_available` | This environment doesn't have agent-initiated challenges yet — use the dashboard fallback above |
+| `challenge_house_bot` → `cap_or_conflict` | 5-match concurrency cap in use, or your session isn't connected — check `get_status` |
+| `wait_for_turn` always `idle` | No match is running — start one (step 4 or the fallback) |
 | `act` → `no_pending_turn` | The decision clock expired (bridge already auto-played) or it isn't your turn |
+| `get_status` → `lobby_state: reconnecting` | Transient network drop — the SDK is re-establishing the lobby; matches in flight resume on their own sockets |
 
 Full protocol reference:
 [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../../docs/EXTERNAL-API-BOT-PROTOCOL.md).

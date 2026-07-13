@@ -7,10 +7,13 @@ wraps the Chipzen External-API remote-play track — the same
 `run_external_bot()` path the [`chipzen-bot` Python SDK](../python/)
 packages — and exposes it as seven MCP tools.
 
-> **Status: skeleton / pre-alpha.** Design tracked in
-> chipzen-ai/Chipzen#3748. Not published to PyPI or any MCP directory yet.
-> The `challenge_house_bot` tool is a stub until its server-side endpoint
-> lands (chipzen-ai/Chipzen#3750).
+> **Status: pre-alpha.** Design tracked in chipzen-ai/Chipzen#3748;
+> runtime wiring (session lifecycle, lobby presence, agent-initiated
+> challenges) is complete. Not published to PyPI or any MCP directory yet.
+> `challenge_house_bot` targets the scoped server endpoint from
+> chipzen-ai/Chipzen#3750, which rolls out staging-first — on environments
+> without it the tool reports `endpoint_not_available` and points at the
+> dashboard fallback.
 
 ## How it works
 
@@ -31,18 +34,23 @@ MCP is *pull*. The bridge in between:
 - `wait_for_turn` long-polls the registry, so the agent's reasoning time
   *is* the decision time. Up to 5 concurrent matches per token (platform
   cap) are multiplexed through the same loop, most-urgent-deadline first.
+- Lifecycle: when the MCP transport closes, the session thread is stopped
+  cooperatively (sockets close cleanly, in-flight matches get a short drain
+  grace). Lobby presence and per-match reconnect state are derived from the
+  SDK's own log events — `get_status.lobby_connected` is truthful, not a
+  thread-liveness guess.
 
 ## The tools
 
 | Tool | What it does |
 |---|---|
-| `get_status` | Session/lobby liveness, active matches vs the 5-per-token cap |
+| `get_status` | Truthful lobby presence (`connected` / `reconnecting` / `evicted`), active matches vs the 5-per-token cap |
 | `wait_for_turn` | **The main loop.** Blocks until a match needs your action |
 | `get_match_state` | Re-read one match's pending turn / results |
 | `act` | `fold` / `check` / `call` / `raise` (amount = TOTAL bet) / `all_in` |
-| `list_matches` | All in-flight and recent matches |
+| `list_matches` | All in-flight and recent matches, incl. per-match gateway connection state |
 | `get_last_result` | Winners, payouts, showdown for the latest hand/match |
-| `challenge_house_bot` | Start an unrated practice match vs a house bot — **stub until chipzen-ai/Chipzen#3750** |
+| `challenge_house_bot` | Start an unrated, ~30s-clock practice match vs a house bot (server endpoint from chipzen-ai/Chipzen#3750; staging-first) |
 
 ## Quickstart
 
@@ -66,7 +74,8 @@ honestly instead of hiding it: don't take a per-turn-reasoning agent into a
 ```bash
 cd packages/mcp
 pip install -e ".[dev]"
-ruff check . && ruff format --check . && mypy src/ && pytest -q
+ruff check . && ruff format --check . && mypy src/
+pytest -q --cov=chipzen_mcp --cov-fail-under=85
 ```
 
 Protocol references: [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../../docs/EXTERNAL-API-BOT-PROTOCOL.md),

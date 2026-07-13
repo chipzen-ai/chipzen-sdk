@@ -13,9 +13,10 @@ chipzen-ai/Chipzen#3748):
                         turn.
 ``list_matches``        All in-flight/recent matches at a glance.
 ``get_last_result``     Round/match outcome (winners, payouts, showdown).
-``challenge_house_bot`` START a practice match vs a house bot. STUB until
-                        the scoped server endpoint lands
-                        (chipzen-ai/Chipzen#3750).
+``challenge_house_bot`` START an unrated ~30s-clock practice match vs a house
+                        bot via the scoped extbot-token endpoint
+                        (chipzen-ai/Chipzen#3750; on environments without it
+                        the tool reports the dashboard fallback).
 ======================  =====================================================
 
 Transport is stdio. Everything written to stdout is protocol traffic, so all
@@ -34,6 +35,7 @@ from mcp.server.fastmcp import FastMCP
 
 from chipzen_mcp.bridge import ExternalSession, TurnRegistry
 from chipzen_mcp.config import McpConfig, McpConfigError, load_config
+from chipzen_mcp.housebot import HttpPost, request_house_bot_challenge
 
 logger = logging.getLogger("chipzen_mcp.server")
 
@@ -51,11 +53,15 @@ _VALID_ACTIONS = ("fold", "check", "call", "raise", "all_in")
 
 _INSTRUCTIONS = """\
 You are connected to Chipzen (chipzen.ai), an AI poker arena, as an
-External-API bot. Matches are dispatched TO you; once seated, the loop is:
+External-API bot. Start a practice match yourself with
+`challenge_house_bot` (unrated, ~30s decision clock), or wait for a match
+started from the dashboard; either way, once seated the loop is:
 
     wait_for_turn -> read the state -> act(match_id, action[, amount])
 
 Rules of the road:
+- Check `get_status` first: `lobby_connected` must be true before a match
+  can reach you (or be started by `challenge_house_bot`).
 - `wait_for_turn` blocks until a match needs your decision. Call it in a
   loop; `{"status": "idle"}` just means nothing needs you yet.
 - Decide within `remaining_ms`. If you don't act in time the bridge (and
@@ -88,6 +94,10 @@ def get_status_impl(
             "concurrent_match_cap": CONCURRENT_MATCH_CAP,
         }
     )
+    if session is not None:
+        status.update(session.presence_snapshot())
+    else:
+        status.update({"lobby_connected": False, "lobby_state": None, "lobby_detail": None})
     return status
 
 
@@ -153,20 +163,43 @@ def get_last_result_impl(registry: TurnRegistry, match_id: str | None = None) ->
     return result
 
 
-def challenge_house_bot_impl(bot_name: str | None = None) -> dict[str, Any]:
-    """STUB -- requires server support landing in chipzen-ai/Chipzen#3750."""
-    return {
-        "status": "not_implemented",
-        "note": (
-            "Starting a match from the agent requires the scoped house-bot "
-            "challenge endpoint for External-API tokens, which is tracked in "
-            "chipzen-ai/Chipzen#3750 and has not landed yet. Until then: keep "
-            "this server connected, then start an UNRANKED challenge against "
-            "a house bot from the Chipzen dashboard (/challenges) -- the "
-            "match will be dispatched here automatically."
-        ),
-        "requested_bot": bot_name,
-    }
+def challenge_house_bot_impl(
+    config: McpConfig | None,
+    session: ExternalSession | None,
+    bot_name: str | None = None,
+    *,
+    post: HttpPost | None = None,
+) -> dict[str, Any]:
+    """Start an unrated house-bot challenge via the #3750 endpoint.
+
+    The HTTP contract lives entirely in :mod:`chipzen_mcp.housebot`. The
+    server is the authority on every precondition (token validity, lobby
+    presence, concurrency cap) -- this impl only refuses locally when there
+    is no configuration to authenticate with, and annotates the one local
+    fact the server cannot know better than us: whether our own lobby
+    session looks down (a dispatch to a disconnected bot cannot succeed).
+    """
+    if config is None:
+        return {
+            "status": "error",
+            "error": "not_configured",
+            "note": (
+                "The server was started without Chipzen credentials; set "
+                "CHIPZEN_EXTBOT_TOKEN and CHIPZEN_BOT_ID in the MCP config."
+            ),
+        }
+    result = request_house_bot_challenge(config, bot_name, post=post)
+    if (
+        result.get("status") == "challenge_created"
+        and session is not None
+        and not session.lobby_connected
+    ):
+        result["warning"] = (
+            "Challenge accepted, but this session's lobby connection does "
+            "not look live -- check get_status; the match can only be "
+            "dispatched to a connected session."
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -226,12 +259,15 @@ def build_server(
         return get_last_result_impl(registry, match_id)
 
     @mcp.tool()
-    def challenge_house_bot(bot_name: str | None = None) -> dict[str, Any]:
-        """Start an UNRATED practice match against a Chipzen house bot.
-        NOT FUNCTIONAL YET: requires server support landing in
-        chipzen-ai/Chipzen#3750; until then start the challenge from the
-        dashboard and it will be dispatched to this session."""
-        return challenge_house_bot_impl(bot_name)
+    async def challenge_house_bot(bot_name: str | None = None) -> dict[str, Any]:
+        """Start an UNRATED practice match against a Chipzen house bot on a
+        relaxed ~30s decision clock (never affects ratings). On success the
+        match is dispatched to this session -- go straight into the
+        wait_for_turn loop. bot_name optionally names the house bot;
+        omitted, the server picks the default first opponent. If this
+        environment doesn't have the endpoint yet you get
+        error=endpoint_not_available with a dashboard fallback."""
+        return await asyncio.to_thread(challenge_house_bot_impl, config, session, bot_name)
 
     return mcp
 
@@ -259,7 +295,18 @@ def main() -> int:
         config.env or "prod",
     )
     server = build_server(registry, session, config)
-    server.run()
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        logger.info("chipzen-mcp: interrupted")
+    finally:
+        # The MCP transport is gone (client exited, stdin closed, or ^C):
+        # cooperatively stop the SDK session so the lobby/gateway sockets
+        # close cleanly instead of dying with the daemon thread.
+        if session.stop():
+            logger.info("chipzen-mcp: session stopped cleanly")
+        else:
+            logger.warning("chipzen-mcp: session still winding down at exit")
     return 0
 
 

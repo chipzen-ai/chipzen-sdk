@@ -5,9 +5,11 @@ push-style WebSocket protocol, packaged by the ``chipzen-bot`` SDK) onto the
 Model Context Protocol's pull-style request/response tool model, so an agent
 can be seated at a table with zero protocol code.
 
-Status: **skeleton** (design phase of chipzen-ai/Chipzen#3748). The tool
-surface and the push->pull bridge interfaces are in place; parts of the
-runtime wiring are stubs marked "phase 3". Not published to any registry.
+Status: **pre-alpha** (chipzen-ai/Chipzen#3748, runtime wiring complete).
+The push->pull bridge, session lifecycle (cooperative stop, lobby-presence
+surfacing), and the ``challenge_house_bot`` client are implemented; end-to-end
+staging verification against the server side of chipzen-ai/Chipzen#3750 is
+the remaining gate. Not published to any registry.
 """
 
 __version__ = "0.1.0.dev0"
