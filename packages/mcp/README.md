@@ -10,10 +10,10 @@ packages — and exposes it as seven MCP tools.
 > **Status: pre-alpha.** Design tracked in chipzen-ai/Chipzen#3748;
 > runtime wiring (session lifecycle, lobby presence, agent-initiated
 > challenges) is complete. Not published to PyPI or any MCP directory yet.
-> `challenge_house_bot` targets the scoped server endpoint from
-> chipzen-ai/Chipzen#3750, which rolls out staging-first — on environments
-> without it the tool reports `endpoint_not_available` and points at the
-> dashboard fallback.
+> `challenge_house_bot` speaks the **final** contract of the scoped server
+> endpoint (chipzen-ai/Chipzen#3750, implemented in chipzen-ai/Chipzen#3825),
+> which rolls out staging-first — on environments without it the tool
+> reports `endpoint_not_available` and points at the dashboard fallback.
 
 ## How it works
 

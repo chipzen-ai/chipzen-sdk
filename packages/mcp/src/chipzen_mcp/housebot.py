@@ -5,30 +5,32 @@ Chipzen endpoint that lets a ``cz_extbot_`` token start an UNRATED,
 relaxed-clock (~30s) practice match against a house bot -- the server-side
 feature tracked in chipzen-ai/Chipzen#3750.
 
-Contract status
----------------
+Contract status: FINAL -- aligned to the server implementation
+(chipzen-ai/Chipzen#3825, ``api/routes/external_api_challenges.py``). The
+whole contract stays isolated in this module:
 
-The server side is being implemented concurrently and its HTTP contract is
-not final. EVERY assumption about it is isolated in this module and pinned
-to named constants:
-
-* :data:`CHALLENGE_HOUSE_BOT_PATH` -- the endpoint path (derived from the
-  established External-API route shape, ``/api/external-api/...``).
-* :func:`_build_request` -- request body + auth header
-  (``Authorization: Bearer cz_extbot_...``; the token is bot-scoped, but
-  ``bot_id`` is sent too so the server can cross-check).
-* :func:`_map_response` -- response fields consumed (``match_id``,
-  ``opponent``, ``rated``, ``decision_timeout_ms``) and error mapping.
-
-When the server PR lands, aligning this client is a constants-level edit
-here plus the mocked-endpoint tests in ``tests/test_housebot.py`` -- nothing
-outside this module encodes the contract.
-
-Error surface is deliberately honest: bad token (401), house-bot challenges
-disabled (403), endpoint not deployed on this environment yet (404, with the
-dashboard fallback spelled out), concurrency cap / bot-offline conflicts
-(409/429), and plain network failure each map to a distinct ``error`` code
-the agent can act on.
+* ``POST /api/external-api/challenges/house-bot`` with
+  ``Authorization: Bearer cz_extbot_<token>``. The token IS the bot
+  identity; the body's optional ``bot_id`` is a pure cross-check (sent only
+  when configured; a mismatch comes back as the opaque 401) and optional
+  ``opponent`` names a house bot by UUID or exact name (omitted -> the
+  server's default first opponent). The request model forbids extra fields.
+* ``200``: ``{match_id, participant_id, gateway_ws_url, opponent,
+  opponent_bot_id, rated: false, decision_timeout_ms: 30000}``. The tool
+  surfaces ``match_id`` / ``opponent`` / ``opponent_bot_id`` / ``rated`` /
+  ``decision_timeout_ms`` and tolerates unknown extras. ``gateway_ws_url``
+  is deliberately NOT surfaced: the match reaches this session through the
+  normal lobby dispatch; the agent never dials sockets.
+* Errors arrive in the platform envelope ``{error_code, message,
+  request_id}`` and map 1:1 onto tool ``error`` values:
+  ``401 EXTAPI_INVALID_TOKEN`` (opaque -- missing / malformed / unknown /
+  revoked token, retired bot, or ``bot_id`` mismatch),
+  ``400 EXTAPI_HOUSE_BOT_NOT_FOUND`` (opponent selector miss; the server
+  deliberately does NOT 404 for this), ``409 EXT_BOT_OFFLINE``,
+  ``429 TOKEN_AT_CONCURRENT_MATCH_CAP`` / ``429 FREE_TIER_LIMIT_EXCEEDED``
+  (distinguished by ``error_code``), ``502 EXTAPI_DISPATCH_FAILED``.
+* A plain ``404`` on this path still means "endpoint not deployed on this
+  environment" (older server) -> the dashboard-fallback message.
 """
 
 from __future__ import annotations
@@ -46,11 +48,18 @@ from chipzen_mcp.config import McpConfig
 
 logger = logging.getLogger("chipzen_mcp.housebot")
 
-#: Path of the scoped house-bot challenge endpoint (chipzen-ai/Chipzen#3750).
-#: SPECULATIVE until the server PR merges -- follows the External-API route
-#: family (``POST /api/external-api/bots/{bot_id}/tokens`` etc.). If the
-#: server lands elsewhere, this constant is the one-line fix.
+#: Path of the scoped house-bot challenge endpoint. FINAL, confirmed against
+#: the server implementation (chipzen-ai/Chipzen#3825).
 CHALLENGE_HOUSE_BOT_PATH = "/api/external-api/challenges/house-bot"
+
+#: Server ``error_code`` values from the platform error envelope
+#: (``chipzen/errors.py``, #3825). Matched exactly.
+CODE_INVALID_TOKEN = "EXTAPI_INVALID_TOKEN"
+CODE_HOUSE_BOT_NOT_FOUND = "EXTAPI_HOUSE_BOT_NOT_FOUND"
+CODE_BOT_OFFLINE = "EXT_BOT_OFFLINE"
+CODE_CONCURRENT_CAP = "TOKEN_AT_CONCURRENT_MATCH_CAP"
+CODE_FREE_TIER = "FREE_TIER_LIMIT_EXCEEDED"
+CODE_DISPATCH_FAILED = "EXTAPI_DISPATCH_FAILED"
 
 #: HTTP origins per environment, mirroring the SDK's lobby-URL env mapping
 #: (``chipzen.connect._ENV_URL_TEMPLATES``) with ws(s) -> http(s).
@@ -134,20 +143,33 @@ def _build_request(
     return url, headers, body
 
 
-def _detail(body: dict[str, Any]) -> str:
-    """Best-effort server-supplied error detail."""
-    detail = body.get("detail") or body.get("message") or body.get("error") or ""
-    return detail if isinstance(detail, str) else json.dumps(detail)
+def _server_message(body: dict[str, Any]) -> str:
+    """The envelope's user-safe ``message`` (best-effort on odd bodies)."""
+    message = body.get("message") or body.get("detail") or ""
+    return message if isinstance(message, str) else json.dumps(message)
+
+
+def _error(error: str, body: dict[str, Any], note: str) -> dict[str, Any]:
+    """Uniform tool-error payload: our stable ``error`` + the server's words."""
+    return {
+        "status": "error",
+        "error": error,
+        "server_error_code": body.get("error_code"),
+        "detail": _server_message(body),
+        "note": note,
+    }
 
 
 def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
     """Map the endpoint's HTTP outcome onto the MCP tool payload."""
     body = result.body
+    code = body.get("error_code")
     if result.status in (200, 201):
         return {
             "status": "challenge_created",
             "match_id": body.get("match_id"),
             "opponent": body.get("opponent", bot_name),
+            "opponent_bot_id": body.get("opponent_bot_id"),
             "rated": body.get("rated", False),
             "decision_timeout_ms": body.get("decision_timeout_ms"),
             "note": (
@@ -157,57 +179,68 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
             ),
         }
     if result.status == 401:
-        return {
-            "status": "error",
-            "error": "unauthorized",
-            "note": (
-                "The server rejected the CHIPZEN_EXTBOT_TOKEN (invalid or "
-                "revoked). Verify the token, or rotate it from the bot's "
-                "dashboard page and update the MCP server config."
-            ),
-        }
-    if result.status == 403:
-        return {
-            "status": "error",
-            "error": "forbidden",
-            "detail": _detail(body),
-            "note": (
-                "The server refused the challenge. Agent-initiated house-bot "
-                "challenges may be disabled on this environment, or this "
-                "token's bot is not allowed to use them."
-            ),
-        }
+        return _error(
+            "unauthorized",
+            body,
+            "The server rejected the request (opaque 401: invalid, malformed "
+            "or revoked CHIPZEN_EXTBOT_TOKEN, a retired bot, or a "
+            "CHIPZEN_BOT_ID that doesn't match the token's bot). Verify both "
+            "env vars, or rotate the token from the bot's dashboard page.",
+        )
+    if result.status == 400 and code == CODE_HOUSE_BOT_NOT_FOUND:
+        return _error(
+            "house_bot_not_found",
+            body,
+            f"No house bot matches the requested opponent {bot_name!r}. Pass "
+            "a house bot's exact name or UUID, or omit bot_name to challenge "
+            "the default house bot.",
+        )
     if result.status == 404:
-        return {
-            "status": "error",
-            "error": "endpoint_not_available",
-            "note": (
-                "This Chipzen environment does not expose agent-initiated "
-                "house-bot challenges yet (server side of "
-                "chipzen-ai/Chipzen#3750; staging gets it first). Fallback: "
-                "keep this session connected and start an UNRANKED challenge "
-                "against a house bot from the dashboard (/challenges) -- the "
-                "match will be dispatched here automatically."
-            ),
-        }
-    if result.status in (409, 429):
-        return {
-            "status": "error",
-            "error": "cap_or_conflict",
-            "detail": _detail(body),
-            "note": (
-                "The challenge was refused: either the per-token concurrent-"
-                "match cap (5) is used up, or your bot is not currently "
-                "connected to the lobby. Check get_status (lobby_connected "
-                "must be true), finish or wait out an active match, then retry."
-            ),
-        }
-    return {
-        "status": "error",
-        "error": f"http_{result.status}",
-        "detail": _detail(body),
-        "note": "Unexpected response from the challenge endpoint.",
-    }
+        return _error(
+            "endpoint_not_available",
+            body,
+            "This Chipzen environment does not expose agent-initiated "
+            "house-bot challenges yet (server side of "
+            "chipzen-ai/Chipzen#3750; staging gets it first). Fallback: "
+            "keep this session connected and start an UNRANKED challenge "
+            "against a house bot from the dashboard (/challenges) -- the "
+            "match will be dispatched here automatically.",
+        )
+    if result.status == 409 and code == CODE_BOT_OFFLINE:
+        return _error(
+            "bot_offline",
+            body,
+            "Your bot has no live lobby presence, so a match could not be "
+            "dispatched to it. Check get_status: lobby_connected must be "
+            "true (the background session connects it automatically -- give "
+            "it a moment or look at session_error), then retry.",
+        )
+    if result.status == 429 and code == CODE_FREE_TIER:
+        return _error(
+            "free_tier_limit",
+            body,
+            "A free-tier usage limit was exceeded for this account. The "
+            "detail field says which limit and when it resets.",
+        )
+    if result.status == 429 and code == CODE_CONCURRENT_CAP:
+        return _error(
+            "concurrent_cap",
+            body,
+            "This token is at its concurrent-match cap (5). Finish or wait "
+            "out an active match (see list_matches), then retry.",
+        )
+    if result.status == 502:
+        return _error(
+            "dispatch_failed",
+            body,
+            "The platform accepted the challenge but failed to launch the "
+            "match (transient executor/allocation error). Retry shortly.",
+        )
+    return _error(
+        f"http_{result.status}",
+        body,
+        "Unexpected response from the challenge endpoint.",
+    )
 
 
 def request_house_bot_challenge(

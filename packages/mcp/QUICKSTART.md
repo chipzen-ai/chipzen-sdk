@@ -101,9 +101,13 @@ agent automatically; the `wait_for_turn` loop is identical from there.
 | Symptom | Likely cause |
 |---|---|
 | `get_status` → `session_error` mentioning 4001 | Token/bot-id mismatch, or a revoked token — check both env vars |
-| `challenge_house_bot` → `unauthorized` | Same: the token was rejected — verify or rotate it |
+| `challenge_house_bot` → `unauthorized` | The token was rejected (invalid/revoked, or `CHIPZEN_BOT_ID` doesn't match it) — verify both env vars or rotate the token |
 | `challenge_house_bot` → `endpoint_not_available` | This environment doesn't have agent-initiated challenges yet — use the dashboard fallback above |
-| `challenge_house_bot` → `cap_or_conflict` | 5-match concurrency cap in use, or your session isn't connected — check `get_status` |
+| `challenge_house_bot` → `bot_offline` | Your session isn't connected to the lobby — check `get_status` (`lobby_connected` must be true), then retry |
+| `challenge_house_bot` → `concurrent_cap` | 5-match concurrency cap in use — finish or wait out a match (`list_matches`) |
+| `challenge_house_bot` → `free_tier_limit` | A free-tier account limit was hit — the `detail` field names the limit and when it resets |
+| `challenge_house_bot` → `house_bot_not_found` | The `bot_name` you passed isn't a house bot — use its exact name/UUID, or omit it for the default |
+| `challenge_house_bot` → `dispatch_failed` | Transient platform error launching the match — retry shortly |
 | `wait_for_turn` always `idle` | No match is running — start one (step 4 or the fallback) |
 | `act` → `no_pending_turn` | The decision clock expired (bridge already auto-played) or it isn't your turn |
 | `get_status` → `lobby_state: reconnecting` | Transient network drop — the SDK is re-establishing the lobby; matches in flight resume on their own sockets |

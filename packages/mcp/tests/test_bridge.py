@@ -191,6 +191,14 @@ class TestBridgeBot:
         last = registry.last_result(MATCH)
         assert last is not None and last["match_end"] is not None
 
+    def test_announced_clock_surfaces_on_the_match_record(self) -> None:
+        """The match_start clock (30s casual / 2s rated, chipzen-ai/Chipzen#3750
+        advertises it end-to-end) must be visible in match summaries."""
+        registry = TurnRegistry()
+        self._started_bot(registry, timeout_ms=30000, margin_ms=0)
+        summary = registry.list_matches()[0]
+        assert summary["turn_timeout_ms"] == 30000
+
 
 def test_state_payload_mirrors_wire_schema() -> None:
     payload = state_payload(_turn_state())

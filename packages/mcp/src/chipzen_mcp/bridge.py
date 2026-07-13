@@ -139,6 +139,7 @@ class _MatchRecord:
     hand_number: int = 0
     connection: str = MATCH_CONN_PENDING
     reconnect_attempt: int | None = None
+    turn_timeout_ms: int | None = None
     last_turn: TurnSnapshot | None = None
     pending: _PendingTurn | None = None
     last_round_result: dict[str, Any] | None = None
@@ -151,6 +152,7 @@ class _MatchRecord:
             "hand_number": self.hand_number,
             "connection": self.connection,
             "reconnect_attempt": self.reconnect_attempt,
+            "turn_timeout_ms": self.turn_timeout_ms,
             "my_turn": self.pending is not None,
             "finished": self.match_end is not None,
         }
@@ -171,12 +173,26 @@ class TurnRegistry:
 
     # -- written by the session thread (BridgeBot hooks) -------------------
 
-    def match_started(self, match_id: str, *, rated: bool | None = None) -> None:
-        """Record a match the platform dispatched to us."""
+    def match_started(
+        self,
+        match_id: str,
+        *,
+        rated: bool | None = None,
+        turn_timeout_ms: int | None = None,
+    ) -> None:
+        """Record a match the platform dispatched to us.
+
+        ``turn_timeout_ms`` is the match's announced decision clock (from
+        ``match_start``; the casual agent division advertises + enforces
+        ~30s per chipzen-ai/Chipzen#3750), surfaced in match summaries so
+        the agent can see the clock it is playing under.
+        """
         with self._lock:
             record = self._matches.setdefault(match_id, _MatchRecord(match_id=match_id))
             if rated is not None:
                 record.rated = rated
+            if turn_timeout_ms is not None:
+                record.turn_timeout_ms = turn_timeout_ms
 
     def set_match_connection(
         self, match_id: str, state: str, *, attempt: int | None = None
@@ -331,7 +347,10 @@ class BridgeBot(Bot):
         announced = match_info.get("turn_timeout_ms")
         if isinstance(announced, (int, float)) and announced > 0:
             self._turn_timeout_ms = int(announced)
-        self._registry.match_started(self._match_id)
+        # Surface the announced clock on the match record too, so
+        # list_matches / get_match_state show what clock each match runs
+        # under (~30s for the casual agent division, 2s rated).
+        self._registry.match_started(self._match_id, turn_timeout_ms=self._turn_timeout_ms)
 
     def on_round_result(self, message: dict) -> None:
         result = dict(message.get("result", {}) or {})
