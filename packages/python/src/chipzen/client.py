@@ -61,11 +61,13 @@ async def _send_json(ws: Any, message: dict) -> None:
 
 
 class BotDecisionError(Exception):
-    """Raised when ``bot.decide()`` errors and ``safe_mode=False``.
+    """Raised when ``bot.decide()`` (or a lifecycle hook) errors and
+    ``safe_mode=False``.
 
     Distinguished from transport/connection errors so the caller treats it as
     terminal (a deterministic bot bug, not a transient disconnect) and does NOT
-    reconnect-retry it. See chipzen-ai/chipzen-sdk#52.
+    reconnect-retry it. See chipzen-ai/chipzen-sdk#52 (decide) and #80
+    (lifecycle hooks).
     """
 
 
@@ -207,6 +209,31 @@ async def _run_session(
             action = Action.fold()
         return action, (time.monotonic() - start) * 1000.0
 
+    def _call_hook(hook: Any, *args: Any) -> None:
+        """Invoke a bot lifecycle hook with the same safe-mode guard as decide().
+
+        A user exception in a lifecycle/stats callback must never tear down
+        the WS session (chipzen-ai/chipzen-sdk#80): historically the raise
+        killed the connection, the reconnect loop logged only "Connection
+        lost, retrying" (hiding the real traceback), and the reconnect never
+        re-attached — the bot zombied into an auto-substitute forfeit. Log
+        the full traceback loudly at ERROR and keep the session alive.
+
+        Under ``safe_mode=False`` (dev/eval) the exception propagates as
+        :class:`BotDecisionError` so the bug surfaces immediately —
+        mirroring the ``decide()`` semantics above.
+        """
+        try:
+            hook(*args)
+        except Exception as exc:
+            logger.exception(
+                "Bot lifecycle hook %s() raised an exception; "
+                "ignoring it and continuing the session",
+                getattr(hook, "__name__", repr(hook)),
+            )
+            if not safe_mode:
+                raise BotDecisionError(str(exc)) from exc
+
     # --- Layer 1 handshake --------------------------------------------
     auth_msg: dict[str, Any] = {
         "type": "authenticate",
@@ -304,13 +331,13 @@ async def _run_session(
                 if seat_info.get("is_self"):
                     your_seat = int(seat_info.get("seat", 0))
                     break
-            bot.on_match_start(payload)
+            _call_hook(bot.on_match_start, payload)
 
         elif msg_type == "round_start":
             state = payload.get("state", {}) or {}
             dealer_seat = int(state.get("dealer_seat", dealer_seat))
             current_round_id = str(payload.get("round_id", current_round_id))
-            bot.on_round_start(payload)
+            _call_hook(bot.on_round_start, payload)
 
         elif msg_type == "turn_request":
             # ``turn_request`` has no round_id of its own; inject the one we
@@ -333,7 +360,7 @@ async def _run_session(
                     **action.to_wire(),
                 },
             )
-            bot.on_decision_latency(decision_ms)
+            _call_hook(bot.on_decision_latency, decision_ms)
 
         elif msg_type == "action_rejected":
             # Retry within ``remaining_ms`` using the SAME request_id.
@@ -368,13 +395,13 @@ async def _run_session(
             )
 
         elif msg_type == "turn_result":
-            bot.on_turn_result(payload)
+            _call_hook(bot.on_turn_result, payload)
 
         elif msg_type == "phase_change":
-            bot.on_phase_change(payload)
+            _call_hook(bot.on_phase_change, payload)
 
         elif msg_type == "round_result":
-            bot.on_round_result(payload)
+            _call_hook(bot.on_round_result, payload)
 
         elif msg_type == "action_timeout":
             logger.info(
@@ -417,10 +444,10 @@ async def _run_session(
                         **action.to_wire(),
                     },
                 )
-                bot.on_decision_latency(decision_ms)
+                _call_hook(bot.on_decision_latency, decision_ms)
 
         elif msg_type == "match_end":
-            bot.on_match_end(payload)
+            _call_hook(bot.on_match_end, payload)
             return payload
 
         else:
