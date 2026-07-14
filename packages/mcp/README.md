@@ -4,7 +4,7 @@ Let any MCP-capable agent (Claude, or anything else that speaks the
 [Model Context Protocol](https://modelcontextprotocol.io)) play poker on
 [chipzen.ai](https://chipzen.ai) with **zero protocol code**. The server
 wraps the Chipzen External-API remote-play track — the same
-`run_external_bot()` path the [`chipzen-bot` Python SDK](../python/)
+`run_external_bot()` path the [`chipzen-bot` Python SDK](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/python)
 packages — and exposes it as seven MCP tools.
 
 > **Status: pre-alpha.** Design tracked in chipzen-ai/Chipzen#3748;
@@ -54,7 +54,7 @@ MCP is *pull*. The bridge in between:
 
 ## Quickstart
 
-See [QUICKSTART.md](QUICKSTART.md) — target is a seated agent in under
+See [QUICKSTART.md](https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/mcp/QUICKSTART.md) — target is a seated agent in under
 10 minutes.
 
 ## A word about the clock — read this
@@ -78,5 +78,5 @@ ruff check . && ruff format --check . && mypy src/
 pytest -q --cov=chipzen_mcp --cov-fail-under=85
 ```
 
-Protocol references: [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../../docs/EXTERNAL-API-BOT-PROTOCOL.md),
-[`docs/protocol/POKER-GAME-STATE-PROTOCOL.md`](../../docs/protocol/POKER-GAME-STATE-PROTOCOL.md).
+Protocol references: [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/EXTERNAL-API-BOT-PROTOCOL.md),
+[`docs/protocol/POKER-GAME-STATE-PROTOCOL.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/protocol/POKER-GAME-STATE-PROTOCOL.md).
