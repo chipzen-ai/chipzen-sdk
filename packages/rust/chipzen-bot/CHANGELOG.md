@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Lifecycle hooks are now safe-mode wrapped — a user panic in a stats
+  callback no longer forfeits the match.** All bot lifecycle hook invocations
+  (`on_match_start`, `on_round_start`, `on_phase_change`, `on_turn_result`,
+  `on_round_result`, `on_match_end`, `on_decision_latency`) are now guarded
+  with the same `catch_unwind` used for `decide()`: the panic is reported
+  loudly on stderr and the WS session continues. Previously a panic unwound
+  through the session loop and the bot zombied into an auto-substitute
+  forfeit. Under `safe_mode = false` the panic surfaces as
+  `Error::BotDecision`, mirroring `decide()`.
+  ([#80](https://github.com/chipzen-ai/chipzen-sdk/issues/80))
+
 ### Security
 
 - **External-API: refuse a cross-origin or `wss`→`ws` gateway URL.**

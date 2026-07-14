@@ -321,11 +321,21 @@ where
                 let pong = json!({ "type": "pong", "match_id": ctx.match_id });
                 writer.send(pong.to_string()).await?;
             }
-            "match_start" => bot.on_match_start(&msg),
-            "round_start" => bot.on_round_start(&msg),
-            "phase_change" => bot.on_phase_change(&msg),
-            "turn_result" => bot.on_turn_result(&msg),
-            "round_result" => bot.on_round_result(&msg),
+            "match_start" => {
+                call_hook("on_match_start", ctx.safe_mode, || bot.on_match_start(&msg))?
+            }
+            "round_start" => {
+                call_hook("on_round_start", ctx.safe_mode, || bot.on_round_start(&msg))?
+            }
+            "phase_change" => call_hook("on_phase_change", ctx.safe_mode, || {
+                bot.on_phase_change(&msg)
+            })?,
+            "turn_result" => {
+                call_hook("on_turn_result", ctx.safe_mode, || bot.on_turn_result(&msg))?
+            }
+            "round_result" => call_hook("on_round_result", ctx.safe_mode, || {
+                bot.on_round_result(&msg)
+            })?,
             "turn_request" => {
                 let request_id = msg
                     .get("request_id")
@@ -335,7 +345,9 @@ where
                 let state = parse_game_state(&msg);
                 let (action, latency_ms) = decide_timed(bot, &state, &msg, ctx.safe_mode)?;
                 send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
-                bot.on_decision_latency(latency_ms);
+                call_hook("on_decision_latency", ctx.safe_mode, || {
+                    bot.on_decision_latency(latency_ms)
+                })?;
             }
             "action_rejected" => {
                 let request_id = msg
@@ -369,13 +381,15 @@ where
                         let (action, latency_ms) =
                             decide_timed(bot, &state, pending, ctx.safe_mode)?;
                         send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
-                        bot.on_decision_latency(latency_ms);
+                        call_hook("on_decision_latency", ctx.safe_mode, || {
+                            bot.on_decision_latency(latency_ms)
+                        })?;
                     }
                 }
             }
             "match_end" => {
                 let results = msg.get("results").cloned().unwrap_or_else(|| msg.clone());
-                bot.on_match_end(&results);
+                call_hook("on_match_end", ctx.safe_mode, || bot.on_match_end(&results))?;
                 return Ok(Some(msg));
             }
             "error" => {
@@ -456,6 +470,34 @@ fn decide_timed<B: Bot>(
             })
             .unwrap_or_else(|| state.valid_actions.clone());
         Ok((_safe_fallback_action(&valid), latency_ms))
+    }
+}
+
+/// Invoke a bot lifecycle hook with the same safe-mode guard as
+/// [`decide_timed`] (chipzen-ai/chipzen-sdk#80).
+///
+/// A panic in a lifecycle/stats hook must never tear down the WS session:
+/// historically it unwound through the session loop, the reconnect path
+/// obscured the real failure, and the bot zombied into an auto-substitute
+/// forfeit. The panic is caught and reported loudly on stderr (the default
+/// panic hook has already printed the panic location/backtrace); the
+/// session continues. Under `safe_mode = false` (dev/eval) it surfaces as
+/// [`Error::BotDecision`] so the bug is terminal — mirroring `decide()`.
+fn call_hook<F: FnOnce()>(name: &str, safe_mode: bool, hook: F) -> Result<(), Error> {
+    match std::panic::catch_unwind(AssertUnwindSafe(hook)) {
+        Ok(()) => Ok(()),
+        Err(payload) => {
+            let detail = panic_message(payload.as_ref());
+            eprintln!(
+                "chipzen-sdk: bot {name}() panicked; ignoring it and continuing the session \
+                 (chipzen-ai/chipzen-sdk#80): {detail}"
+            );
+            if safe_mode {
+                Ok(())
+            } else {
+                Err(Error::BotDecision(detail))
+            }
+        }
     }
 }
 
