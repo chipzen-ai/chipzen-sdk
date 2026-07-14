@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-07-14
+
 ### Fixed
 
 - **Lifecycle hooks are now safe-mode wrapped — a user exception in a stats
@@ -269,4 +271,5 @@ debugging at the wire level:
 Apache-2.0 (changed from MIT in earlier internal builds — aligns with
 the chipzen-sdk repo's root LICENSE).
 
+[0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.1
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.2.0
