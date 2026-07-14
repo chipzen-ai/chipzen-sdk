@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Bot } from "../src/bot.js";
 import {
   _extractMatchId,
   _runSession,
   _safeFallbackAction,
+  BotDecisionError,
   type AsyncMessageReader,
   type SessionWebSocket,
 } from "../src/client.js";
@@ -309,5 +310,73 @@ describe("_runSession robustness", () => {
     const end = await _runSession(ws, new RecordingBot(), SESSION_CTX, reader);
     // Clean exit on match_end returns the payload.
     expect(end?.type).toBe("match_end");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// _runSession — lifecycle-hook safety (chipzen-ai/chipzen-sdk#80)
+// ---------------------------------------------------------------------------
+
+/** A bot whose `onRoundResult` throws — the #80 failure shape. */
+class CrashingHookBot extends RecordingBot {
+  override onRoundResult(_m: Record<string, unknown>): void {
+    this.events.push("round_result");
+    throw new Error("winner key missing");
+  }
+}
+
+function crashingHookScript(): Array<Record<string, unknown>> {
+  return [
+    { type: "hello", match_id: "m_test", seq: 1 },
+    { type: "round_result", match_id: "m_test", seq: 2 }, // hook throws here
+    {
+      type: "turn_request",
+      match_id: "m_test",
+      seq: 3,
+      request_id: "req_after_crash",
+      valid_actions: ["fold", "check"],
+      state: { hand_number: 2, phase: "preflop" },
+    },
+    { type: "match_end", match_id: "m_test", seq: 4 },
+  ];
+}
+
+describe("_runSession lifecycle-hook safety (#80)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the session alive when a lifecycle hook throws, and logs loudly", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reader = new ScriptedReader(crashingHookScript());
+    const ws = new CapturingSocket();
+    const bot = new CrashingHookBot();
+
+    const end = await _runSession(ws, bot, SESSION_CTX, reader);
+
+    // Session survived to a clean match_end.
+    expect(end?.type).toBe("match_end");
+    expect(bot.events).toContain("match_end");
+
+    // The next decide() after the throwing hook was still answered.
+    const turnAction = ws.sentParsed.find((m) => m.type === "turn_action");
+    expect(turnAction?.request_id).toBe("req_after_crash");
+    expect(bot.events).toContain("decide");
+
+    // The failure was logged loudly, naming the hook, with the stack.
+    expect(errorSpy).toHaveBeenCalled();
+    const [message, detail] = errorSpy.mock.calls[0] ?? [];
+    expect(String(message)).toContain("onRoundResult");
+    expect(String(detail)).toContain("winner key missing");
+  });
+
+  it("propagates a hook error as BotDecisionError when safeMode is false", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const reader = new ScriptedReader(crashingHookScript());
+    const ws = new CapturingSocket();
+
+    await expect(
+      _runSession(ws, new CrashingHookBot(), { ...SESSION_CTX, safeMode: false }, reader),
+    ).rejects.toThrow(BotDecisionError);
   });
 });
