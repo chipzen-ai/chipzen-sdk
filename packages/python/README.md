@@ -133,7 +133,7 @@ repo](https://github.com/chipzen-ai/chipzen-sdk):
   — what the platform enforces on uploaded bots (sandbox, network
   egress, resource limits).
 
-Per-package quickstart: [QUICKSTART.md](QUICKSTART.md).
+Per-package quickstart: [QUICKSTART.md](https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/python/QUICKSTART.md).
 
 ## License
 

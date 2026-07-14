@@ -27,7 +27,7 @@ This directory is a Cargo workspace. The crates in it:
 
 | Crate | What it is |
 |---|---|
-| [`chipzen-bot`](chipzen-bot/) | The SDK library. `Bot` trait, `Action`/`Card`/`GameState` types, async WebSocket client, and the conformance harness. |
+| [`chipzen-bot`](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/rust/chipzen-bot) | The SDK library. `Bot` trait, `Action`/`Card`/`GameState` types, async WebSocket client, and the conformance harness. |
 | `chipzen-sdk` | The `chipzen-sdk` CLI binary — `init` for scaffolding new bot projects, `validate` for pre-upload checks. |
 
 ## Quick start
@@ -88,8 +88,8 @@ async fn main() -> Result<(), chipzen_bot::Error> {
 }
 ```
 
-See [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../../docs/EXTERNAL-API-BOT-PROTOCOL.md)
-and [`docs/PORTING-BETWEEN-SDKS.md`](../../docs/PORTING-BETWEEN-SDKS.md) §7.
+See [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/EXTERNAL-API-BOT-PROTOCOL.md)
+and [`docs/PORTING-BETWEEN-SDKS.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/PORTING-BETWEEN-SDKS.md) §7.
 Run `chipzen-sdk run-external` to verify your `chipzen.toml` + env setup
 before connecting.
 
@@ -117,9 +117,9 @@ packages/rust/
         └── models.rs
 ```
 
-The IP-protected starter at [`starters/rust/`](starters/rust/) uses the
+The IP-protected starter at [`starters/rust/`](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/rust/starters/rust) uses the
 SDK's `Bot` trait and ships a multi-stage Dockerfile that compiles your
 `lib.rs` to a single statically-linked release binary (your `.rs` source
 is not in the uploaded image). The protocol spec at
-[`../../docs/protocol/`](../../docs/protocol/) remains authoritative if
+[`docs/protocol/`](https://github.com/chipzen-ai/chipzen-sdk/tree/main/docs/protocol) remains authoritative if
 you ever need to write a non-Rust client from scratch.
