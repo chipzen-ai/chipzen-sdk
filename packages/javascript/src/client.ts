@@ -19,11 +19,13 @@ import { VERSION } from "./version.js";
 // ---------------------------------------------------------------------------
 
 /**
- * Raised when `bot.decide()` errors and `safeMode` is `false`.
+ * Raised when `bot.decide()` (or a lifecycle hook) errors and `safeMode`
+ * is `false`.
  *
  * Distinguished from transport/connection errors so the caller treats it
  * as terminal (a deterministic bot bug, not a transient disconnect) and
- * does NOT reconnect-retry it. See chipzen-ai/chipzen-sdk#52.
+ * does NOT reconnect-retry it. See chipzen-ai/chipzen-sdk#52 (decide)
+ * and #80 (lifecycle hooks).
  */
 export class BotDecisionError extends Error {
   constructor(message: string) {
@@ -203,6 +205,34 @@ function _decide(
 }
 
 /**
+ * Invoke a bot lifecycle hook with the same safe-mode guard as `_decide`.
+ *
+ * A user exception in a lifecycle/stats callback must never tear down the
+ * WS session (chipzen-ai/chipzen-sdk#80): historically the throw killed
+ * the connection, the reconnect path hid the real error, and the bot
+ * zombied into an auto-substitute forfeit. The SDK otherwise stays quiet,
+ * but a swallowed user bug must be LOUD — log the full stack to stderr
+ * and keep the session alive.
+ *
+ * Under `safeMode = false` (dev/eval) the error propagates as a
+ * {@link BotDecisionError} so the bug surfaces immediately — mirroring
+ * the `_decide` semantics.
+ */
+function _callHook(hookName: string, invoke: () => void, safeMode: boolean): void {
+  try {
+    invoke();
+  } catch (err) {
+    console.error(
+      `chipzen-sdk: bot ${hookName}() threw; ignoring it and continuing the session (chipzen-ai/chipzen-sdk#80)`,
+      err instanceof Error ? (err.stack ?? err.message) : err,
+    );
+    if (!safeMode) {
+      throw new BotDecisionError(err instanceof Error ? err.message : String(err));
+    }
+  }
+}
+
+/**
  * Drive a single connected session: handshake + message loop until
  * `match_end`. Returns the `match_end` payload on a clean finish, or
  * `null` if the handshake failed / the socket closed without a
@@ -277,23 +307,23 @@ export async function _runSession(
         break;
 
       case "match_start":
-        bot.onMatchStart(msg);
+        _callHook("onMatchStart", () => bot.onMatchStart(msg), safeMode);
         break;
 
       case "round_start":
-        bot.onRoundStart(msg);
+        _callHook("onRoundStart", () => bot.onRoundStart(msg), safeMode);
         break;
 
       case "phase_change":
-        bot.onPhaseChange(msg);
+        _callHook("onPhaseChange", () => bot.onPhaseChange(msg), safeMode);
         break;
 
       case "turn_result":
-        bot.onTurnResult(msg);
+        _callHook("onTurnResult", () => bot.onTurnResult(msg), safeMode);
         break;
 
       case "round_result":
-        bot.onRoundResult(msg);
+        _callHook("onRoundResult", () => bot.onRoundResult(msg), safeMode);
         break;
 
       case "turn_request": {
@@ -313,7 +343,7 @@ export async function _runSession(
           request_id: requestId,
           ...action.toWire(),
         });
-        bot.onDecisionLatency(latencyMs);
+        _callHook("onDecisionLatency", () => bot.onDecisionLatency(latencyMs), safeMode);
         break;
       }
 
@@ -352,13 +382,17 @@ export async function _runSession(
             request_id: requestId,
             ...action.toWire(),
           });
-          bot.onDecisionLatency(latencyMs);
+          _callHook("onDecisionLatency", () => bot.onDecisionLatency(latencyMs), safeMode);
         }
         break;
       }
 
       case "match_end":
-        bot.onMatchEnd((msg.results as Record<string, unknown>) ?? msg);
+        _callHook(
+          "onMatchEnd",
+          () => bot.onMatchEnd((msg.results as Record<string, unknown>) ?? msg),
+          safeMode,
+        );
         return msg; // clean exit — hand the match_end payload to the caller
 
       case "error":

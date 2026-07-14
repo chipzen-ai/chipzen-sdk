@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Lifecycle hooks are now safe-mode wrapped — a user exception in a stats
+  callback no longer forfeits the match.** All bot lifecycle hook invocations
+  (`onMatchStart`, `onRoundStart`, `onPhaseChange`, `onTurnResult`,
+  `onRoundResult`, `onMatchEnd`, `onDecisionLatency`) now use the same guard
+  as `decide()`: the error (with stack) is logged loudly to stderr and the
+  WS session continues. Previously a throw tore down the session and the
+  bot zombied into an auto-substitute forfeit. Under `safeMode: false` the
+  error propagates as `BotDecisionError`, mirroring `decide()`.
+  ([#80](https://github.com/chipzen-ai/chipzen-sdk/issues/80))
+
 ### Security
 
 - **External-API: refuse a cross-origin or `wss`→`ws` gateway URL.**

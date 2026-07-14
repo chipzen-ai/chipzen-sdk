@@ -1,6 +1,7 @@
 """Tests for the two-layer WebSocket client flow (mock server)."""
 
 import json
+import logging
 import os
 import sys
 
@@ -11,6 +12,7 @@ import pytest
 from chipzen.bot import ChipzenBot
 from chipzen.client import (
     SUPPORTED_PROTOCOL_VERSIONS,
+    BotDecisionError,
     _extract_match_id,
     _run_session,
     _safe_fallback_action,
@@ -484,6 +486,99 @@ async def test_bot_exception_falls_back_to_fold():
     assert len(turn_actions) == 1
     assert turn_actions[0]["action"] == "fold"
     assert turn_actions[0]["request_id"] == "req_crash"
+
+
+class CrashingHookBot(RecordingBot):
+    """A bot whose ``on_round_result`` raises — the chipzen-ai/chipzen-sdk#80
+    failure shape (NovaCaine read a nonexistent ``result["winner"]`` key)."""
+
+    def on_round_result(self, message: dict) -> None:
+        self.events.append("round_result")
+        raise KeyError("winner")
+
+
+@pytest.mark.asyncio
+async def test_hook_exception_keeps_session_alive(caplog):
+    """A raising lifecycle hook must not tear down the WS session (#80).
+
+    The session survives the raise, the NEXT ``turn_request`` is still
+    answered, the match completes cleanly, and the full traceback is logged
+    at ERROR (not swallowed into a bare "Connection lost, retrying").
+    """
+    messages = [
+        _server_hello(),
+        _match_start(),
+        _round_start(),
+        _turn_request(),
+        _round_result(seq=5),  # hook raises here
+        _round_start(hand_number=2, seq=6),
+        _turn_request(seq=7, request_id="req_2"),
+        _match_end(seq=8),
+    ]
+    mock_ws = MockWebSocket(messages)
+    bot = CrashingHookBot()
+
+    with caplog.at_level(logging.ERROR, logger="chipzen"):
+        result = await _run_session(
+            mock_ws,
+            bot,
+            match_id=MATCH_ID,
+            token="",
+            ticket=None,
+            client_name="chipzen-sdk-test",
+            client_version="0.2.0",
+        )
+
+    # Session survived to a clean match_end (payload returned, hook fired).
+    assert result is not None
+    assert result["type"] == "match_end"
+    assert "match_end" in bot.events
+
+    # The next decide() after the raising hook was still asked and answered.
+    sent = [json.loads(s) for s in mock_ws.sent]
+    turn_actions = [s for s in sent if s["type"] == "turn_action"]
+    assert len(turn_actions) == 2
+    assert turn_actions[1]["request_id"] == "req_2"
+
+    # The traceback was logged loudly: an ERROR record naming the hook,
+    # carrying exc_info, with the real exception visible in the output.
+    records = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.ERROR and "on_round_result" in r.getMessage()
+    ]
+    assert records, "expected an ERROR log naming the raising hook"
+    assert records[0].exc_info is not None
+    assert "KeyError" in caplog.text
+    assert "winner" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_hook_exception_propagates_when_safe_mode_off():
+    """Under ``safe_mode=False`` a hook exception is terminal (#80) —
+    same semantics as ``decide()`` (chipzen-ai/chipzen-sdk#52)."""
+    messages = [
+        _server_hello(),
+        _match_start(),
+        _round_start(),
+        _turn_request(),
+        _round_result(seq=5),  # hook raises here
+        _match_end(seq=6),
+    ]
+    mock_ws = MockWebSocket(messages)
+    bot = CrashingHookBot()
+
+    with pytest.raises(BotDecisionError):
+        await _run_session(
+            mock_ws,
+            bot,
+            match_id=MATCH_ID,
+            token="",
+            ticket=None,
+            client_name="chipzen-sdk-test",
+            client_version="0.2.0",
+            safe_mode=False,
+        )
 
 
 @pytest.mark.asyncio

@@ -332,6 +332,92 @@ async fn run_session_skips_malformed_envelope_and_continues() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Lifecycle-hook safety (chipzen-ai/chipzen-sdk#80)
+// ---------------------------------------------------------------------------
+
+/// A bot whose `on_round_result` panics — the #80 failure shape.
+struct PanickingHookBot;
+impl Bot for PanickingHookBot {
+    fn decide(&mut self, state: &GameState) -> Action {
+        if state.valid_actions.iter().any(|a| a == "check") {
+            Action::Check
+        } else {
+            Action::Fold
+        }
+    }
+    fn on_round_result(&mut self, _msg: &Value) {
+        panic!("winner key missing");
+    }
+}
+
+fn crashing_hook_script() -> Vec<String> {
+    let server_hello = json!({"type": "hello", "match_id": "m_test", "seq": 1});
+    // Hook panics here.
+    let round_result = json!({
+        "type": "round_result",
+        "seq": 2,
+        "result": { "hand_number": 1, "winner_seats": [0], "pot": 40 },
+    });
+    // The bot must still answer the NEXT turn_request after the panic.
+    let turn_request = json!({
+        "type": "turn_request",
+        "seq": 3,
+        "request_id": "req_after_crash",
+        "valid_actions": ["fold", "check"],
+        "state": {"phase": "preflop", "valid_actions": ["fold", "check"]},
+    });
+    let match_end = json!({"type": "match_end", "seq": 4, "reason": "complete"});
+    [server_hello, round_result, turn_request, match_end]
+        .into_iter()
+        .map(|v| v.to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn run_session_survives_panicking_lifecycle_hook() {
+    let mut reader = ScriptedReader {
+        messages: crashing_hook_script(),
+        index: 0,
+    };
+    let mut writer = CapturingWriter::default();
+    let mut bot = PanickingHookBot;
+    let context = ctx(); // safe_mode = true
+
+    let result = _run_session(&mut reader, &mut writer, &mut bot, &context).await;
+    let end = result.expect("a panicking hook must not tear down the session");
+    assert!(end.is_some(), "expected a clean match_end payload");
+
+    // The next decide() after the panicking hook was still answered.
+    let sent = writer.sent.lock().unwrap().clone();
+    let turn_action: Value = serde_json::from_str(&sent[2]).unwrap();
+    assert_eq!(turn_action["type"], "turn_action");
+    assert_eq!(turn_action["request_id"], "req_after_crash");
+    assert_eq!(turn_action["action"], "check");
+}
+
+#[tokio::test]
+async fn run_session_propagates_hook_panic_when_safe_mode_off() {
+    let mut reader = ScriptedReader {
+        messages: crashing_hook_script(),
+        index: 0,
+    };
+    let mut writer = CapturingWriter::default();
+    let mut bot = PanickingHookBot;
+    let mut context = ctx();
+    context.safe_mode = false;
+
+    let err = _run_session(&mut reader, &mut writer, &mut bot, &context)
+        .await
+        .expect_err("safe_mode=false must surface the hook panic");
+    assert!(
+        matches!(err, Error::BotDecision(_)),
+        "expected Error::BotDecision, got: {err:?}"
+    );
+    let s = format!("{err}");
+    assert!(s.contains("winner key missing"), "unexpected error: {s}");
+}
+
 #[tokio::test]
 async fn run_session_errors_when_server_skips_hello() {
     let weird_first_message = json!({"type": "match_start", "seq": 1});

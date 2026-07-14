@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Lifecycle hooks are now safe-mode wrapped — a user exception in a stats
+  callback no longer forfeits the match.** All bot lifecycle hook invocations
+  (`on_match_start`, `on_round_start`, `on_turn_result`, `on_phase_change`,
+  `on_round_result`, `on_match_end`, `on_decision_latency`) now use the same
+  guard as `decide()`: the full traceback is logged at ERROR and the WS
+  session continues. Previously a raise tore down the session, the reconnect
+  loop logged only "Connection lost, retrying" (hiding the real traceback),
+  and the bot zombied into an auto-substitute forfeit. Under
+  `safe_mode=False` the exception propagates as `BotDecisionError`,
+  mirroring `decide()`.
+  ([#80](https://github.com/chipzen-ai/chipzen-sdk/issues/80))
 - **External-API: a mid-match gateway disconnect no longer silently forfeits
   the match.** `run_external_bot()` now reconnects a dropped per-match gateway
   socket (bounded by the `RetryPolicy`) and resumes via the platform's
