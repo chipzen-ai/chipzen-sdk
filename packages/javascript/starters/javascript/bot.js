@@ -11,9 +11,44 @@
 
 import { Bot, Action, runBot } from "@chipzen-ai/bot";
 
+/**
+ * Derive your seat's table position from the button.
+ *
+ * The protocol is multiway-shaped: `opponentStacks` is a LIST, so the table
+ * size is `opponentStacks.length + 1`. Combined with `yourSeat` and
+ * `dealerSeat` (both already on the parsed GameState), that is everything you
+ * need to know where you sit:
+ *
+ *     seatsAfterButton = (yourSeat - dealerSeat + numPlayers) % numPlayers
+ *
+ * Heads-up is the special case the scaffold default below was written for: the
+ * button posts the small blind and acts first preflop. See
+ * docs/protocol/POKER-GAME-STATE-PROTOCOL.md section 5.9.
+ */
+export function tablePosition(yourSeat, dealerSeat, numPlayers) {
+  if (numPlayers <= 1) return "button";
+  const sab = (((yourSeat - dealerSeat) % numPlayers) + numPlayers) % numPlayers;
+  if (numPlayers === 2) return sab === 0 ? "button_sb" : "big_blind";
+  if (sab === 0) return "button";
+  if (sab === 1) return "small_blind";
+  if (sab === 2) return "big_blind";
+  if (sab === numPlayers - 1) return "cutoff";
+  if (sab === 3) return "early";
+  return "middle";
+}
+
 class MyBot extends Bot {
   /** Replace with your strategy. Must return an Action. */
   decide(state) {
+    // Seat-count-aware: opponentStacks is a LIST of every other seat (length
+    // N-1), so this bot keeps running unchanged at a 3-6 player table. yourSeat
+    // + dealerSeat give your position. When you add real strategy, iterate /
+    // aggregate opponentStacks instead of assuming a single opponent (reading
+    // opponentStacks[0] sees only one neighbor).
+    const numPlayers = state.opponentStacks.length + 1;
+    const _position = tablePosition(state.yourSeat, state.dealerSeat, numPlayers);
+    void _position;
+
     if (state.validActions.includes("check")) return Action.check();
     return Action.fold();
   }

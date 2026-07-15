@@ -198,7 +198,7 @@ Built from the `turn_request` message. The full definition is in
 | `board` | `list[Card]` | 0, 3, 4, or 5 community cards. |
 | `pot` | `int` | Total chips in the pot (includes all prior bets this hand). |
 | `your_stack` | `int` | Your remaining stack. |
-| `opponent_stacks` | `list[int]` | Opponents' remaining stacks, ordered by seat, excluding yours. |
+| `opponent_stacks` | `list[int]` | Opponents' remaining stacks, ordered by seat, excluding yours. A LIST: length N-1 at an N-player table, exactly one entry in heads-up. See the multi-player note below before reading `opponent_stacks[0]`. |
 | `your_seat` | `int` | 0-based. |
 | `dealer_seat` | `int` | Button seat. |
 | `to_call` | `int` | Chips to call. `0` means you can check. |
@@ -211,6 +211,33 @@ Built from the `turn_request` message. The full definition is in
 
 `Card` is a `(rank, suit)` frozen dataclass; `Card.from_str("Ah")` parses
 the wire format; `str(card)` renders it back.
+
+#### Multi-player tables: a heads-up bot keeps running, but watch `opponent_stacks[0]`
+
+The protocol is multiplayer-shaped already, so the platform can seat your bot at
+a 3-6 player table with no protocol-version bump and no code change required to
+keep it running. `opponent_stacks` has been a `list[int]` from day one, and the
+seat fields (`your_seat`, `dealer_seat`, and `winner_seats` in results) are
+already seat-indexed. The catch is behavioral, not a crash:
+
+- **Silent-failure risk.** A bot that hardcodes `opponent_stacks[0]` does NOT
+  raise at a larger table, but it reads a SINGLE neighbor's stack instead of the
+  whole field. If you meant "the opponents", iterate or aggregate the list
+  (`sum(...)`, `min(...)`, `max(...)`, or index by the seat you care about)
+  rather than assuming exactly one opponent. Because there is no exception and no
+  rejected action, this kind of bug stays invisible until you inspect results.
+- **Table size.** Read it from `match_start`'s `game_config.num_players`, or
+  derive it from any turn state as `len(opponent_stacks) + 1`.
+- **Position.** Derive your seat's offset from the button with
+  `seats_after_button = (your_seat - dealer_seat) % num_players` (`0` is the
+  button; in heads-up the button is the small blind). The full taxonomy and a
+  worked example live in
+  [`POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md) Section
+  5.9, and the reference starters in `packages/<lang>/starters/` show the
+  seat-count-aware pattern (`table_position()` plus opponent iteration).
+
+If your strategy is genuinely heads-up only, that is fine; just gate it on
+`len(opponent_stacks) == 1` rather than silently assuming it.
 
 ### 2.4 `Action`
 

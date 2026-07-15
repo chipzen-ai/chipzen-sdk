@@ -126,7 +126,8 @@ Sent once at the start of a match. Defines the rules for all hands in the match.
   "small_blind": 5,
   "big_blind": 10,
   "ante": 0,
-  "total_hands": 0
+  "total_hands": 0,
+  "num_players": 2
 }
 ```
 
@@ -138,6 +139,7 @@ Sent once at the start of a match. Defines the rules for all hands in the match.
 | `big_blind`      | integer | Yes      | Big blind amount. Must be >= `small_blind`.                    |
 | `ante`           | integer | No       | Per-player ante posted each hand. Default `0`.                 |
 | `total_hands`    | integer | Yes      | Number of hands to play. `0` = elimination (play until bust).  |
+| `num_players`    | integer | Yes      | Seat count N for the table (`2` for heads-up, up to `6`). Added for multi-player tables; see Section 5.9 for using it to derive table position. |
 
 ### 3.2 Round Start State (`round_start.state`)
 
@@ -194,7 +196,7 @@ The core decision payload. Contains everything a bot needs to choose an action.
 | `your_hole_cards` | array of string        | Yes      | The 2 hole cards dealt to the acting player.                                                    |
 | `pot`             | integer                | Yes      | Total chips in the pot, including bets in the current round.                                    |
 | `your_stack`      | integer                | Yes      | The acting player's remaining stack (chips not yet in the pot).                                 |
-| `opponent_stacks` | array of integer       | Yes      | Other players' remaining stacks, ordered by seat (excluding the acting player's seat).          |
+| `opponent_stacks` | array of integer       | Yes      | Other players' remaining stacks, ordered by seat (excluding the acting player's seat). Always a list: length N-1 at an N-player table, so exactly one entry in heads-up. Reading `opponent_stacks[0]` sees only one neighbor, not the whole field. See Section 5.9. |
 | `to_call`         | integer                | Yes      | Amount the acting player must add to call. `0` when checking is free.                           |
 | `min_raise`       | integer                | Yes      | Minimum legal raise total. `0` if raising is not a valid action.                                |
 | `max_raise`       | integer                | Yes      | Maximum legal raise total (the acting player's effective stack). `0` if raising is not valid.   |
@@ -833,6 +835,29 @@ In multi-player scenarios where players are all-in for different amounts, the se
 
 Timeouts are handled by Layer 1. When a player times out, the server substitutes a default action: `check` if checking is free, otherwise `fold`. This substituted action flows through `turn_result` and `action_history` normally. The `is_timeout` field on the action entry is set to `true` for timeout-forced actions, making them distinguishable from player-chosen actions without cross-referencing Layer 1 timeout messages.
 
+### 5.9 Multi-Player Tables and Position Derivation
+
+The protocol is multi-player ready without a breaking change. Heads-up is just the N = 2 case of the same seat-indexed shape, so a bot written against this spec extends to 3-6 seat tables by reading the fields it already receives:
+
+- `opponent_stacks` is a LIST of every OTHER seat's stack, in seat order (excluding your own seat). At an N-player table it has N-1 entries; in heads-up it has exactly one. A bot that reads `opponent_stacks[0]` does not crash at a larger table, but it sees a SINGLE neighbor, not the whole field (see the silent-failure note below).
+- `your_seat` is delivered at `match_start` (the `your_seat` field, or the `is_self` seat in the `seats` roster) and is fixed for the match.
+- `dealer_seat` is delivered on every `round_start.state` and rotates each hand.
+- `winner_seats`, `payouts`, `showdown`, and `action_history` are already seat-indexed and multi-entry, so no shape changes there either.
+
+**Table size.** Read it from `match_start.game_config.num_players`, or derive it from any turn state as `len(opponent_stacks) + 1`.
+
+**Deriving your position.** Position is your seat's offset from the button:
+
+```
+num_players        = len(opponent_stacks) + 1
+seats_after_button = (your_seat - dealer_seat) mod num_players
+```
+
+- `0` is the button. In heads-up the button posts the small blind and acts first preflop (Section 5.3), so seat-after-button `0` is the small blind and `1` is the big blind.
+- For three or more players, `1` is the small blind, `2` is the big blind, and the remaining offsets are the seats between the big blind and the button, counted clockwise. The offset `num_players - 1`, immediately to the button's right, is the cutoff and acts last postflop.
+
+**Silent-failure risk.** Because `opponent_stacks` is a list, a heads-up bot that hardcodes `opponent_stacks[0]` keeps running at a 3-6 seat table but reads only one neighbor's stack instead of aggregating across opponents. This is a behavioral bug, not a crash, so it will not surface as an error or a rejected action. Iterate the list (for example `sum`, `min`, `max`, or index by the specific seat you care about) rather than assuming a single opponent. The reference starters in `packages/<lang>/starters/` show the seat-count-aware pattern, and `docs/DEV-MANUAL.md` carries the bot-author guidance.
+
 ---
 
 ## 6. Regulatory and Integrity Fields
@@ -885,3 +910,5 @@ This document describes **v1** of the Poker Game State Protocol. The version is 
 - **Additive changes** (new optional fields): minor version bump, backward compatible.
 - **Breaking changes** (field removal, type changes, semantic changes): major version bump, requires client updates.
 - **New variants** (e.g., Pot-Limit Omaha): new `variant` value in `game_config`, separate Layer 2 specification document.
+
+**Multi-player tables (N > 2) ship under v1 with no version bump.** The seat-indexed fields (`opponent_stacks`, `your_seat`, `dealer_seat`, `winner_seats`, `payouts`, `action_history`) keep their existing types and semantics; the only addition is the `num_players` key in `game_config` (Section 3.1). A v1.0 client therefore needs no handshake change to be seated at a 3-6 player table (Section 5.9). The one caveat is behavioral, not a wire change: see the silent-failure note in Section 5.9.
