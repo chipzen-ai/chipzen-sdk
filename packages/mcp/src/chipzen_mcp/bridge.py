@@ -144,6 +144,11 @@ class _MatchRecord:
     pending: _PendingTurn | None = None
     last_round_result: dict[str, Any] | None = None
     match_end: dict[str, Any] | None = None
+    #: Registry-wide monotonic rank of this match's most recent result
+    #: (round result or match end). 0 means "no result yet". Used to answer
+    #: "most recent across all matches" by recency of the RESULT rather than
+    #: by dict-insertion order of the match (chipzen-ai/Chipzen#3884).
+    result_seq: int = 0
 
     def to_summary(self) -> dict[str, Any]:
         return {
@@ -170,6 +175,15 @@ class TurnRegistry:
         self._lock = threading.Lock()
         self._turn_available = threading.Condition(self._lock)
         self._matches: dict[str, _MatchRecord] = {}
+        #: Monotonic counter stamped onto each result as it lands, so
+        #: ``last_result()`` can pick the most-recently-produced result
+        #: across matches instead of the first in insertion order.
+        self._result_counter = 0
+
+    def _next_result_seq(self) -> int:
+        """Next monotonic result rank. Caller MUST hold ``self._lock``."""
+        self._result_counter += 1
+        return self._result_counter
 
     # -- written by the session thread (BridgeBot hooks) -------------------
 
@@ -227,12 +241,14 @@ class TurnRegistry:
         with self._lock:
             record = self._matches.setdefault(match_id, _MatchRecord(match_id=match_id))
             record.last_round_result = result
+            record.result_seq = self._next_result_seq()
 
     def record_match_end(self, match_id: str, end: dict[str, Any]) -> None:
         with self._lock:
             record = self._matches.setdefault(match_id, _MatchRecord(match_id=match_id))
             record.match_end = end
             record.pending = None
+            record.result_seq = self._next_result_seq()
 
     # -- read/answered by MCP tools ----------------------------------------
 
@@ -292,21 +308,40 @@ class TurnRegistry:
             return [r.to_summary() for r in self._matches.values()]
 
     def last_result(self, match_id: str | None = None) -> dict[str, Any] | None:
-        """Latest round/match result -- for ``match_id``, or any match."""
+        """Latest round/match result -- for ``match_id``, or the most recent
+        across all matches.
+
+        With no ``match_id`` this returns the result that landed most recently
+        (by :attr:`_MatchRecord.result_seq`), NOT the first match in insertion
+        order -- so a multi-tabling agent reads the outcome it actually just
+        produced (chipzen-ai/Chipzen#3884).
+
+        When ``match_id`` names a match the registry has never seen, this
+        returns ``None`` (surfaced as ``no_results_yet``) rather than silently
+        falling back to some other match's result -- a typo'd id must never be
+        answered with a different match's data.
+        """
         with self._lock:
-            records = (
-                [self._matches[match_id]]
-                if match_id is not None and match_id in self._matches
-                else list(self._matches.values())
-            )
-            for record in reversed(records):
-                if record.match_end is not None or record.last_round_result is not None:
-                    return {
-                        "match_id": record.match_id,
-                        "match_end": record.match_end,
-                        "last_round_result": record.last_round_result,
-                    }
-        return None
+            if match_id is not None:
+                record = self._matches.get(match_id)
+                if record is None:
+                    return None
+                candidates: list[_MatchRecord] = [record]
+            else:
+                candidates = list(self._matches.values())
+            best: _MatchRecord | None = None
+            for record in candidates:
+                if record.match_end is None and record.last_round_result is None:
+                    continue
+                if best is None or record.result_seq > best.result_seq:
+                    best = record
+            if best is None:
+                return None
+            return {
+                "match_id": best.match_id,
+                "match_end": best.match_end,
+                "last_round_result": best.last_round_result,
+            }
 
     def status(self) -> dict[str, Any]:
         with self._lock:

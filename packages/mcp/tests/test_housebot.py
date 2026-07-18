@@ -7,6 +7,7 @@ URL, auth header shape, body, the platform error envelope
 failure class the endpoint emits.
 """
 
+import importlib.metadata
 import urllib.error
 
 from chipzen_mcp import __version__
@@ -44,6 +45,29 @@ class _RecordingPost:
     def __call__(self, url: str, headers: dict, body: dict) -> HttpResult:
         self.url, self.headers, self.body = url, headers, body
         return self.result
+
+
+class TestVersion:
+    """chipzen-ai/Chipzen#3885: the runtime ``__version__`` must equal the
+    installed distribution version (it is derived from package metadata), so
+    it can never drift from the published wheel -- and must never carry a
+    ``dev`` placeholder, which would misattribute the outbound User-Agent."""
+
+    def test_matches_installed_distribution_metadata(self) -> None:
+        assert __version__ == importlib.metadata.version("chipzen-mcp")
+
+    def test_has_no_dev_placeholder(self) -> None:
+        assert "dev" not in __version__
+
+    def test_user_agent_carries_the_metadata_version(self) -> None:
+        # The header must reflect the metadata version independently -- not a
+        # separately-maintained string that could drift back to a dev suffix.
+        post = _RecordingPost(HttpResult(status=200, body={"match_id": "m-1"}))
+        request_house_bot_challenge(CONFIG, post=post)
+        assert post.headers is not None
+        expected = importlib.metadata.version("chipzen-mcp")
+        assert post.headers["User-Agent"] == f"chipzen-mcp/{expected}"
+        assert "dev" not in post.headers["User-Agent"]
 
 
 class TestApiOrigin:

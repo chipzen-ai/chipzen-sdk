@@ -12,7 +12,18 @@ staging verification against the server side of chipzen-ai/Chipzen#3750 is
 the remaining gate. Not published to any registry.
 """
 
-__version__ = "0.1.0.dev0"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
+
+try:
+    # Single source of truth: the installed distribution's version (from
+    # pyproject `version`). Deriving it here means the runtime constant and
+    # the published wheel can never drift -- which is exactly the failure
+    # this replaces (chipzen-ai/Chipzen#3885: a hand-maintained "0.1.0.dev0"
+    # leaked into the outbound User-Agent of the published 0.1.0 wheel).
+    __version__ = _dist_version("chipzen-mcp")
+except PackageNotFoundError:  # pragma: no cover - running from an uninstalled source tree
+    __version__ = "0.0.0+unknown"
 
 from chipzen_mcp.bridge import BridgeBot, ExternalSession, TurnRegistry, TurnSnapshot
 from chipzen_mcp.config import (

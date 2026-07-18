@@ -129,6 +129,56 @@ class TestTurnRegistry:
         assert registry.get_match("unknown") is None
         assert registry.status()["finished_matches"] == 1
 
+    def test_last_result_no_arg_returns_most_recent_across_matches(self) -> None:
+        # chipzen-ai/Chipzen#3884: with no match_id, the result that landed
+        # most recently wins -- NOT the first match in insertion order. Give
+        # the OLDER-created match (A) the newest result and it must surface.
+        registry = TurnRegistry()
+        registry.match_started("A")
+        registry.match_started("B")
+        registry.record_round_result("B", {"hand_number": 5, "which": "B-older"})
+        registry.record_round_result("A", {"hand_number": 9, "which": "A-newest"})
+        last = registry.last_result()
+        assert last is not None
+        assert last["match_id"] == "A"
+        assert last["last_round_result"]["which"] == "A-newest"
+
+    def test_last_result_recency_counts_match_end_too(self) -> None:
+        # Recency spans BOTH result kinds: a later round result on one match
+        # must beat an earlier match_end on another, and vice versa.
+        registry = TurnRegistry()
+        registry.match_started("X")
+        registry.match_started("Y")
+        registry.record_round_result("X", {"which": "X-round"})
+        registry.record_match_end("Y", {"reason": "Y-ended"})
+        # X then produces the most-recent result of the three events.
+        registry.record_round_result("X", {"which": "X-latest"})
+        assert registry.last_result()["match_id"] == "X"
+        # A newer match_end on Y now overtakes X.
+        registry.record_match_end("Y", {"reason": "Y-ended-later"})
+        latest = registry.last_result()
+        assert latest["match_id"] == "Y"
+        assert latest["match_end"] == {"reason": "Y-ended-later"}
+
+    def test_last_result_unknown_match_id_is_no_result_not_fallback(self) -> None:
+        # chipzen-ai/Chipzen#3884 (repro B): a match_id the registry has never
+        # seen must return None (surfaced as no_results_yet), never another
+        # match's data. A typo'd id previously fell through to an all-matches
+        # scan and reported an unrelated match.
+        registry = TurnRegistry()
+        registry.match_started("real-match")
+        registry.record_round_result("real-match", {"hand_number": 7, "which": "real"})
+        assert registry.last_result("TYPO-does-not-exist") is None
+
+    def test_last_result_known_match_without_result_is_none(self) -> None:
+        # A match that exists but has produced no result yet returns None
+        # (not some other match's result).
+        registry = TurnRegistry()
+        registry.match_started("A")
+        registry.record_round_result("A", {"which": "A"})
+        registry.match_started("B")  # exists, no result yet
+        assert registry.last_result("B") is None
+
     def test_match_connection_state_tracking(self) -> None:
         registry = TurnRegistry()
         registry.match_started(MATCH)
