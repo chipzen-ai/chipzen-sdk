@@ -138,6 +138,29 @@ def test_list_matches_and_last_result() -> None:
     assert get_last_result_impl(registry, MATCH)["match_end"] == {"reason": "completed"}
 
 
+def test_get_last_result_no_arg_is_most_recent() -> None:
+    # chipzen-ai/Chipzen#3884: the tool's "most recent across all matches"
+    # path returns the newest result by recency, not by match insertion order.
+    registry = TurnRegistry()
+    registry.match_started("A")
+    registry.match_started("B")
+    registry.record_round_result("B", {"which": "B-older"})
+    registry.record_round_result("A", {"which": "A-newest"})
+    out = get_last_result_impl(registry, None)
+    assert out["match_id"] == "A"
+    assert out["last_round_result"]["which"] == "A-newest"
+
+
+def test_get_last_result_unknown_match_id_is_no_results_yet() -> None:
+    # chipzen-ai/Chipzen#3884 (repro B): a typo'd match_id must report
+    # no_results_yet, never fall back to a different match's outcome.
+    registry = TurnRegistry()
+    registry.match_started("real-match")
+    registry.record_round_result("real-match", {"which": "real"})
+    out = get_last_result_impl(registry, "TYPO-does-not-exist")
+    assert out == {"status": "no_results_yet"}
+
+
 class TestChallengeHouseBotWiring:
     """The endpoint contract itself is covered in test_housebot.py; this is
     the tool-level wiring (config gate, lobby-liveness annotation)."""
