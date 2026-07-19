@@ -36,6 +36,7 @@ from mcp.server.fastmcp import FastMCP
 from chipzen_mcp.bridge import ExternalSession, TurnRegistry
 from chipzen_mcp.config import McpConfig, McpConfigError, load_config
 from chipzen_mcp.housebot import HttpPost, request_house_bot_challenge
+from chipzen_mcp.stdio_guard import run_guarded_stdio
 
 logger = logging.getLogger("chipzen_mcp.server")
 
@@ -48,6 +49,16 @@ CONCURRENT_MATCH_CAP = 5
 #: instead of erroring client-side.
 DEFAULT_WAIT_TIMEOUT_MS = 55_000
 MAX_WAIT_TIMEOUT_MS = 55_000
+
+#: ``wait_for_turn`` blocks in a worker thread (the registry's ``Condition``
+#: wait is not async), and a worker thread cannot be interrupted mid-wait when
+#: the awaiting coroutine is cancelled on transport close. So the long-poll is
+#: sliced into short blocking waits and re-driven from the coroutine: each
+#: slice's ``Condition`` wait still wakes *immediately* when a turn is
+#: published (no added latency for real turns), but a pending cancellation is
+#: delivered between slices — bounding shutdown to one slice instead of the
+#: full ~55s budget (chipzen-ai/Chipzen#3887).
+WAIT_POLL_SLICE_S = 0.25
 
 _VALID_ACTIONS = ("fold", "check", "call", "raise", "all_in")
 
@@ -101,14 +112,47 @@ def get_status_impl(
     return status
 
 
+def _idle_response() -> dict[str, Any]:
+    return {"status": "idle", "note": "No match is waiting on you; call wait_for_turn again."}
+
+
+def _turn_response(snapshot: Any) -> dict[str, Any]:
+    payload = snapshot.to_payload()
+    payload["status"] = "your_turn"
+    return payload
+
+
 def wait_for_turn_impl(registry: TurnRegistry, timeout_ms: int) -> dict[str, Any]:
     timeout_ms = max(0, min(int(timeout_ms), MAX_WAIT_TIMEOUT_MS))
     snapshot = registry.wait_for_any_turn(timeout_ms / 1000.0)
     if snapshot is None:
-        return {"status": "idle", "note": "No match is waiting on you; call wait_for_turn again."}
-    payload = snapshot.to_payload()
-    payload["status"] = "your_turn"
-    return payload
+        return _idle_response()
+    return _turn_response(snapshot)
+
+
+async def wait_for_turn_async(registry: TurnRegistry, timeout_ms: int) -> dict[str, Any]:
+    """Cancellable long-poll: the primary agent loop.
+
+    Semantically identical to :func:`wait_for_turn_impl`, but the blocking wait
+    runs one short :data:`WAIT_POLL_SLICE_S` slice at a time, re-driven from
+    this coroutine. That keeps the poll interruptible: when the MCP transport
+    closes and FastMCP cancels this coroutine, the ``CancelledError`` lands
+    between slices (within ~one slice) instead of being stuck behind the full
+    ~55s budget — so ``main()``'s cooperative ``session.stop()`` runs promptly
+    (chipzen-ai/Chipzen#3887). A published turn still wakes the current slice's
+    ``Condition`` wait instantly, so real turns incur no extra latency.
+    """
+    timeout_ms = max(0, min(int(timeout_ms), MAX_WAIT_TIMEOUT_MS))
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_ms / 1000.0
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return _idle_response()
+        slice_s = min(remaining, WAIT_POLL_SLICE_S)
+        snapshot = await asyncio.to_thread(registry.wait_for_any_turn, slice_s)
+        if snapshot is not None:
+            return _turn_response(snapshot)
 
 
 def get_match_state_impl(registry: TurnRegistry, match_id: str) -> dict[str, Any]:
@@ -231,7 +275,7 @@ def build_server(
         full decision state (hole cards, board, pot, valid_actions,
         remaining_ms). Returns {"status": "idle"} on timeout -- just call it
         again. This is your primary loop; think, then call act()."""
-        return await asyncio.to_thread(wait_for_turn_impl, registry, timeout_ms)
+        return await wait_for_turn_async(registry, timeout_ms)
 
     @mcp.tool()
     def get_match_state(match_id: str) -> dict[str, Any]:
@@ -296,7 +340,10 @@ def main() -> int:
     )
     server = build_server(registry, session, config)
     try:
-        server.run()
+        # Windows-resilient stdio transport (chipzen-ai/Chipzen#3888): owns the
+        # stdin reader so EOF always tears the server down, guards oversized
+        # frames, and watchdogs stdin-close so the process never lingers.
+        run_guarded_stdio(server)
     except KeyboardInterrupt:
         logger.info("chipzen-mcp: interrupted")
     finally:
