@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-07-19
+
+### Fixed
+
+- **External-API: a slow `decide()` no longer starves the session keepalive /
+  drops the lobby (and no longer cascades to sibling matches under
+  concurrency).** `_run_session` previously invoked `bot.decide()` synchronously
+  on the single shared session event loop, so any decision outstanding past the
+  ~20s WebSocket keepalive interval (well inside the 30s casual clock) blocked
+  the loop, starved the lobby heartbeat, and dropped the lobby server-side; under
+  concurrency one slow decision blocked every co-scheduled match. `decide()` now
+  runs off-loop via `asyncio.to_thread`, so the loop keeps servicing keepalives
+  and other matches while a decision is outstanding, up to the real decision
+  clock. Push→pull bridge semantics and the fallback margin are unchanged. This
+  chiefly affects LLM-backed agents (slow think times) playing via the MCP
+  server. ([#3904](https://github.com/chipzen-ai/Chipzen/issues/3904))
+
 ### Changed
 
 - **Starter is now seat-count-aware.** The Python starter
