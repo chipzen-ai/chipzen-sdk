@@ -1,6 +1,6 @@
 """The Chipzen MCP server: tool surface + entrypoint.
 
-Seven tools over the :mod:`chipzen_mcp.bridge` registry (design:
+Ten tools over the :mod:`chipzen_mcp.bridge` registry (design:
 chipzen-ai/Chipzen#3748):
 
 ======================  =====================================================
@@ -17,6 +17,13 @@ chipzen-ai/Chipzen#3748):
                         bot via the scoped extbot-token endpoint
                         (chipzen-ai/Chipzen#3750; on environments without it
                         the tool reports the dashboard fallback).
+``join_rated_queue``    OPT INTO a RATED heads-up match vs another remote
+                        agent via the matchmaking queue (chipzen-ai/Chipzen
+                        #3907). Pairs immediately or queues until a partner
+                        joins; the match seats via the same lobby push as
+                        house-bot -> wait_for_turn.
+``rated_queue_status``  Poll the rated queue: queued / idle / timed_out.
+``leave_rated_queue``   Cancel: drop out of the rated queue (idempotent).
 ======================  =====================================================
 
 Transport is stdio. Everything written to stdout is protocol traffic, so all
@@ -36,6 +43,12 @@ from mcp.server.fastmcp import FastMCP
 from chipzen_mcp.bridge import ExternalSession, TurnRegistry
 from chipzen_mcp.config import McpConfig, McpConfigError, load_config
 from chipzen_mcp.housebot import HttpPost, request_house_bot_challenge
+from chipzen_mcp.matchmaking import (
+    HttpRequest,
+    request_join_rated_queue,
+    request_leave_rated_queue,
+    request_rated_queue_status,
+)
 from chipzen_mcp.stdio_guard import run_guarded_stdio
 
 logger = logging.getLogger("chipzen_mcp.server")
@@ -64,15 +77,21 @@ _VALID_ACTIONS = ("fold", "check", "call", "raise", "all_in")
 
 _INSTRUCTIONS = """\
 You are connected to Chipzen (chipzen.ai), an AI poker arena, as an
-External-API bot. Start a practice match yourself with
-`challenge_house_bot` (unrated, ~30s decision clock), or wait for a match
-started from the dashboard; either way, once seated the loop is:
+External-API bot. You can start a match yourself two ways -- practice with
+`challenge_house_bot` (UNRATED, ~30s clock, vs a house bot) or ranked with
+`join_rated_queue` (RATED, vs another remote agent; pairs immediately or
+queues until a partner joins) -- or just wait for a match started from the
+dashboard. Either way, once seated the loop is:
 
     wait_for_turn -> read the state -> act(match_id, action[, amount])
 
 Rules of the road:
 - Check `get_status` first: `lobby_connected` must be true before a match
-  can reach you (or be started by `challenge_house_bot`).
+  can reach you (or be started by `challenge_house_bot` / `join_rated_queue`).
+- `join_rated_queue` may answer `queued` (no partner yet) -- then just call
+  `wait_for_turn`; the rated match seats itself when a partner joins. If
+  `wait_for_turn` stays idle, `rated_queue_status` tells you `timed_out` (no
+  partner in time -> re-join) vs still `queued`.
 - `wait_for_turn` blocks until a match needs your decision. Call it in a
   loop; `{"status": "idle"}` just means nothing needs you yet.
 - Decide within `remaining_ms`. If you don't act in time the bridge (and
@@ -246,6 +265,72 @@ def challenge_house_bot_impl(
     return result
 
 
+def _not_configured() -> dict[str, Any]:
+    """The local config gate shared by the rated-queue tools."""
+    return {
+        "status": "error",
+        "error": "not_configured",
+        "note": (
+            "The server was started without Chipzen credentials; set "
+            "CHIPZEN_EXTBOT_TOKEN and CHIPZEN_BOT_ID in the MCP config."
+        ),
+    }
+
+
+def join_rated_queue_impl(
+    config: McpConfig | None,
+    session: ExternalSession | None,
+    *,
+    request: HttpRequest | None = None,
+) -> dict[str, Any]:
+    """Opt into the rated matchmaking queue via the #3907 endpoint.
+
+    The HTTP contract lives entirely in :mod:`chipzen_mcp.matchmaking`. The
+    server is the authority on every precondition (token validity, eligibility,
+    lobby presence) -- this impl only refuses locally when there is no
+    configuration to authenticate with, and annotates the one local fact the
+    server cannot know better than us: whether our own lobby session looks down
+    (a rated match, like a house-bot match, can only be dispatched to a
+    connected session, and the ``matched`` seating push is delivered there).
+    """
+    if config is None:
+        return _not_configured()
+    result = request_join_rated_queue(config, request=request)
+    if (
+        result.get("status") in ("queued", "matched")
+        and session is not None
+        and not session.lobby_connected
+    ):
+        result["warning"] = (
+            "Queued/matched, but this session's lobby connection does not "
+            "look live -- check get_status; the match can only be dispatched "
+            "to a connected session."
+        )
+    return result
+
+
+def rated_queue_status_impl(
+    config: McpConfig | None,
+    *,
+    request: HttpRequest | None = None,
+) -> dict[str, Any]:
+    """Poll the rated-queue state via the #3907 endpoint."""
+    if config is None:
+        return _not_configured()
+    return request_rated_queue_status(config, request=request)
+
+
+def leave_rated_queue_impl(
+    config: McpConfig | None,
+    *,
+    request: HttpRequest | None = None,
+) -> dict[str, Any]:
+    """Cancel / drop out of the rated queue via the #3907 endpoint."""
+    if config is None:
+        return _not_configured()
+    return request_leave_rated_queue(config, request=request)
+
+
 # ---------------------------------------------------------------------------
 # Server assembly
 # ---------------------------------------------------------------------------
@@ -312,6 +397,41 @@ def build_server(
         environment doesn't have the endpoint yet you get
         error=endpoint_not_available with a dashboard fallback."""
         return await asyncio.to_thread(challenge_house_bot_impl, config, session, bot_name)
+
+    @mcp.tool()
+    async def join_rated_queue() -> dict[str, Any]:
+        """Opt into the RATED matchmaking queue to play another remote agent
+        heads-up for real Glicko rating. Returns status="matched" (an opponent
+        was waiting -- a rated match is dispatching to this session now, go
+        straight into the wait_for_turn loop) or status="queued" with your
+        1-based position (no partner yet). When queued, the match seats itself
+        via the lobby the moment a partner joins -- just call wait_for_turn; if
+        it stays idle, poll rated_queue_status (status="timed_out" means no
+        partner arrived within queue_ttl_seconds -- call join_rated_queue again
+        to re-enter). Use leave_rated_queue to cancel. Unlike
+        challenge_house_bot this is RATED and peer-vs-peer; no match id is
+        returned (seating comes via the lobby, same as house-bot). If this
+        environment lacks the endpoint you get error=endpoint_not_available."""
+        return await asyncio.to_thread(join_rated_queue_impl, config, session)
+
+    @mcp.tool()
+    async def rated_queue_status() -> dict[str, Any]:
+        """Poll your rated matchmaking queue state without changing it.
+        status is "queued" (still waiting; position/waiting_seconds included),
+        "idle" (not in the queue -- never joined, already matched, or left), or
+        "timed_out" (no partner within queue_ttl_seconds; your entry has now
+        been dropped -- reading timed_out is one-shot, re-join to retry). Use
+        this to detect a timeout while you wait; a live match still arrives via
+        wait_for_turn, not here."""
+        return await asyncio.to_thread(rated_queue_status_impl, config)
+
+    @mcp.tool()
+    async def leave_rated_queue() -> dict[str, Any]:
+        """Cancel: remove yourself from the rated matchmaking queue. Idempotent
+        -- returns status="left" if you were waiting, "not_queued" if you
+        weren't. Does nothing to a match that has already been dispatched (that
+        one plays out via wait_for_turn)."""
+        return await asyncio.to_thread(leave_rated_queue_impl, config)
 
     return mcp
 
