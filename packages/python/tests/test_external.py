@@ -15,6 +15,8 @@ import asyncio
 import json
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -389,6 +391,74 @@ def _server_hello_lobby() -> dict:
     """The lobby's server hello (endpoint=lobby); the client does NOT reply
     with a client hello on the lobby leg."""
     return {"type": "hello", "endpoint": "lobby"}
+
+
+# ---------------------------------------------------------------------------
+# Slow decision must NOT block the shared session loop (chipzen-ai/Chipzen#3904)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_slow_decide_does_not_block_the_session_loop(monkeypatch):
+    """Regression for #3904: a decision outstanding for the whole clock must
+    not pin the session event loop.
+
+    The External-API session runs the lobby WS (keepalive) and every match on
+    ONE shared loop. Before the fix, ``bot.decide()`` was called inline on that
+    loop, so a slow decision (an LLM agent, or the MCP bridge waiting on an
+    ``act`` call) blocked the loop entirely — starving the lobby heartbeat and
+    any co-scheduled work until the decision returned.
+
+    The probe: a ``releaser`` coroutine scheduled on the SAME loop must be able
+    to run and set ``released`` WHILE ``decide()`` is outstanding. With the fix
+    (``decide`` dispatched to a worker thread) the loop keeps running, the
+    releaser fires within milliseconds, and ``decide``'s bounded wait returns
+    released=True. On the old inline code the loop is pinned, the releaser never
+    runs during the block, and ``decide``'s wait times out (released=False) —
+    failing this test deterministically (no infinite hang).
+    """
+    released = threading.Event()
+    decide_started = threading.Event()
+
+    class _SlowBot(Bot):
+        def __init__(self):
+            self.released_in_time: bool | None = None
+
+        def decide(self, state):
+            decide_started.set()
+            # Block up to 2s waiting for the loop to release us. This stands in
+            # for a slow agent / the MCP bridge's threading.Event.wait().
+            self.released_in_time = released.wait(timeout=2.0)
+            return Action.check() if "check" in state.valid_actions else Action.fold()
+
+    calls = _install_transport(monkeypatch, [_server_hello_lobby(), _matched()])
+
+    async def releaser():
+        # If the loop is alive while decide() blocks, this runs and releases it
+        # near-instantly. If the loop is pinned by an inline decide(), this can
+        # only run AFTER decide() already returned — too late.
+        for _ in range(400):  # bounded (~2s) so the old code fails, never hangs
+            if decide_started.is_set():
+                released.set()
+                return
+            await asyncio.sleep(0.005)
+
+    bot = _SlowBot()
+    task = asyncio.create_task(releaser())
+    started = time.monotonic()
+    results = await run_external_bot(bot, url=LOBBY_URL, token="cz_extbot_x", max_matches=1)
+    await task
+    elapsed = time.monotonic() - started
+
+    # The loop kept running while decide() was outstanding: the releaser fired
+    # and decide() returned because it was released, not because it timed out.
+    assert bot.released_in_time is True
+    # And it happened promptly — nowhere near decide()'s 2s fallback timeout.
+    assert elapsed < 1.5
+    # Turn handoff intact: the match played through to a clean match_end.
+    assert len(results) == 1
+    assert results[0]["end"]["reason"] == "complete"
+    assert results[0]["match_id"] == "m1"
 
 
 # ---------------------------------------------------------------------------
