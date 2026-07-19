@@ -15,7 +15,10 @@ from chipzen_mcp.server import (
     get_last_result_impl,
     get_match_state_impl,
     get_status_impl,
+    join_rated_queue_impl,
+    leave_rated_queue_impl,
     list_matches_impl,
+    rated_queue_status_impl,
     wait_for_turn_impl,
 )
 
@@ -29,6 +32,9 @@ EXPECTED_TOOLS = {
     "list_matches",
     "get_last_result",
     "challenge_house_bot",
+    "join_rated_queue",
+    "rated_queue_status",
+    "leave_rated_queue",
 }
 
 
@@ -45,7 +51,7 @@ def _publish(registry: TurnRegistry, match_id: str = MATCH) -> None:
     )
 
 
-async def test_build_server_registers_the_seven_tools() -> None:
+async def test_build_server_registers_the_ten_tools() -> None:
     server = build_server(TurnRegistry())
     tools = {tool.name for tool in await server.list_tools()}
     assert tools == EXPECTED_TOOLS
@@ -211,3 +217,65 @@ async def test_challenge_house_bot_tool_runs_off_loop() -> None:
     # No config injected -> the impl's config gate answers, proving the
     # async wrapper + to_thread path works end-to-end through FastMCP.
     assert "not_configured" in str(result)
+
+
+class TestRatedQueueWiring:
+    """The endpoint contract itself is covered in test_matchmaking.py; this is
+    the tool-level wiring (config gate, lobby-liveness annotation)."""
+
+    CONFIG = McpConfig(token="cz_extbot_x", bot_id="b-1", env="staging")
+
+    def test_join_requires_configuration(self) -> None:
+        result = join_rated_queue_impl(None, None)
+        assert result["status"] == "error" and result["error"] == "not_configured"
+
+    def test_status_requires_configuration(self) -> None:
+        result = rated_queue_status_impl(None)
+        assert result["status"] == "error" and result["error"] == "not_configured"
+
+    def test_leave_requires_configuration(self) -> None:
+        result = leave_rated_queue_impl(None)
+        assert result["status"] == "error" and result["error"] == "not_configured"
+
+    def test_join_queued_passes_through(self) -> None:
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            return HttpResult(
+                status=200,
+                body={"status": "queued", "position": 2, "queue_ttl_seconds": 60, "rated": True},
+            )
+
+        result = join_rated_queue_impl(self.CONFIG, None, request=request)
+        assert result["status"] == "queued"
+        assert result["position"] == 2
+        assert "warning" not in result  # no session to second-guess
+
+    def test_join_matched_warns_when_lobby_looks_down(self) -> None:
+        async def never_runs() -> None:  # session constructed but not started
+            raise AssertionError("not reached")
+
+        session = ExternalSession(self.CONFIG, TurnRegistry(), runner=never_runs)
+
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            return HttpResult(status=200, body={"status": "matched", "rated": True})
+
+        result = join_rated_queue_impl(self.CONFIG, session, request=request)
+        assert result["status"] == "matched"
+        assert "lobby" in result["warning"]
+
+    def test_join_error_passes_through_unannotated(self) -> None:
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            return HttpResult(status=404, body={})
+
+        result = join_rated_queue_impl(self.CONFIG, None, request=request)
+        assert result["error"] == "endpoint_not_available"
+        assert "warning" not in result
+
+
+async def test_rated_queue_tools_run_off_loop() -> None:
+    """The registered rated-queue tools must not block the server loop."""
+    server = build_server(TurnRegistry(), None, None)
+    for tool in ("join_rated_queue", "rated_queue_status", "leave_rated_queue"):
+        result = await asyncio.wait_for(server.call_tool(tool, {}), timeout=5.0)
+        # No config injected -> the impl's config gate answers, proving the
+        # async wrapper + to_thread path works end-to-end through FastMCP.
+        assert "not_configured" in str(result)
