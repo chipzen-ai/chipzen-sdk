@@ -192,8 +192,22 @@ async def _run_session(
     handshake failed / the socket closed without a ``match_end``.
     """
 
-    def _decide(state: GameState) -> tuple[Action, float]:
-        """Run ``bot.decide`` with timing + safe_mode handling.
+    async def _decide(state: GameState) -> tuple[Action, float]:
+        """Run ``bot.decide`` OFF the session loop, with timing + safe_mode.
+
+        ``bot.decide`` is synchronous user code and may legitimately block for
+        the whole decision clock -- an LLM agent thinking, or the MCP bridge
+        waiting on the agent's ``act`` call (up to ~28.5s at the 30s casual
+        clock). Running it inline on the session's event loop would pin that
+        loop: the same loop holds the External-API lobby WS (keepalive/ping) and
+        co-schedules every concurrent match, so one outstanding decision left
+        past the ~20s keepalive drops the lobby server-side and cascades into
+        lost sibling matches (chipzen-ai/Chipzen#3904). Dispatch it to a worker
+        thread via :func:`asyncio.to_thread` so the loop keeps answering
+        heartbeats and servicing other matches while a decision is outstanding,
+        all the way to the real clock. Each match has its own bot instance and
+        the MCP bridge's registry is already thread-safe, so concurrent
+        off-loop decisions are safe.
 
         Returns ``(action, decision_ms)``. Under ``safe_mode`` a raised
         exception is logged and folded; otherwise it is re-raised as a
@@ -201,7 +215,7 @@ async def _run_session(
         """
         start = time.monotonic()
         try:
-            action = bot.decide(state)
+            action = await asyncio.to_thread(bot.decide, state)
         except Exception as exc:
             logger.exception("Bot.decide() raised an exception")
             if not safe_mode:
@@ -350,7 +364,7 @@ async def _run_session(
                 your_seat=your_seat,
                 dealer_seat=dealer_seat,
             )
-            action, decision_ms = _decide(state)
+            action, decision_ms = await _decide(state)
             await _send_json(
                 ws,
                 {
@@ -434,7 +448,7 @@ async def _run_session(
                     your_seat=your_seat,
                     dealer_seat=dealer_seat,
                 )
-                action, decision_ms = _decide(state)
+                action, decision_ms = await _decide(state)
                 await _send_json(
                     ws,
                     {
