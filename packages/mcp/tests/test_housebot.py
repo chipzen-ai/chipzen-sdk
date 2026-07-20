@@ -22,7 +22,9 @@ from chipzen_mcp.housebot import (
     CODE_INVALID_TOKEN,
     HttpResult,
     api_origin,
+    lower_headers,
     request_house_bot_challenge,
+    response_request_id,
 )
 
 CONFIG = McpConfig(token="cz_extbot_secret", bot_id="b-1", env="staging")
@@ -153,6 +155,33 @@ class TestChallengeSuccess:
         result = request_house_bot_challenge(CONFIG, post=post)
         assert result["status"] == "challenge_created"
 
+    def test_request_id_surfaced_from_header_on_success(self) -> None:
+        # A 2xx success body carries NO request_id (it's set on the route's
+        # response_model, not the envelope); the id lives only in the
+        # X-Request-ID response header -- surface it so the accepted challenge
+        # is traceable in the platform logs (chipzen-ai/Chipzen#3901).
+        post = _RecordingPost(
+            HttpResult(
+                status=200,
+                body={"match_id": "m-1", "rated": False},
+                headers={"x-request-id": "18fe80c7-abc"},
+            )
+        )
+        result = request_house_bot_challenge(CONFIG, post=post)
+        assert result["status"] == "challenge_created"
+        assert result["request_id"] == "18fe80c7-abc"
+        # The note tells the developer to quote it.
+        assert "18fe80c7-abc" in result["note"]
+        assert "request_id" in result["note"]
+
+    def test_request_id_is_none_when_no_header_present(self) -> None:
+        # No header, no envelope id -> request_id is None (never fabricated),
+        # and the note stays free of a bogus correlator.
+        post = _RecordingPost(HttpResult(status=200, body={"match_id": "m-1"}))
+        result = request_house_bot_challenge(CONFIG, post=post)
+        assert result["request_id"] is None
+        assert "request_id" not in result["note"]
+
 
 class TestChallengeErrors:
     def _result(self, status: int, body: dict | None = None) -> dict:
@@ -169,6 +198,39 @@ class TestChallengeErrors:
         # user can actually fix (token AND the bot_id cross-check).
         assert "CHIPZEN_EXTBOT_TOKEN" in result["note"]
         assert "CHIPZEN_BOT_ID" in result["note"]
+        # #3901: for a pre-match failure request_id is the ONLY correlator that
+        # exists server-side -- surface it and tell the dev to quote it.
+        assert result["request_id"] == "req-1"
+        assert "req-1" in result["note"]
+
+    def test_error_request_id_surfaced_on_every_envelope(self) -> None:
+        # request_id rides the platform error envelope on every failure class,
+        # so it must be surfaced on each one (not just the 401 above).
+        for status, code in (
+            (400, CODE_HOUSE_BOT_NOT_FOUND),
+            (409, CODE_BOT_OFFLINE),
+            (429, CODE_FREE_TIER),
+            (429, CODE_CONCURRENT_CAP),
+            (502, CODE_DISPATCH_FAILED),
+        ):
+            result = self._result(status, _envelope(code, "msg"))
+            assert result["request_id"] == "req-1", (status, code)
+
+    def test_error_request_id_falls_back_to_header(self) -> None:
+        # An edge/proxy failure whose body lost the envelope id still has the
+        # X-Request-ID header -- fall back to it rather than dropping the id.
+        post = _RecordingPost(
+            HttpResult(status=503, body={"message": "maintenance"}, headers={"x-request-id": "hx"})
+        )
+        result = request_house_bot_challenge(CONFIG, "boss-1", post=post)
+        assert result["error"] == "http_503"
+        assert result["request_id"] == "hx"
+
+    def test_error_request_id_is_none_without_any_id(self) -> None:
+        result = self._result(429, {})  # no envelope, no header
+        assert result["error"] == "http_429"
+        assert result["request_id"] is None
+        assert "request_id" not in result["note"]
 
     def test_400_house_bot_not_found(self) -> None:
         result = self._result(400, _envelope(CODE_HOUSE_BOT_NOT_FOUND, "House bot not found."))
@@ -234,3 +296,39 @@ class TestChallengeErrors:
         result = request_house_bot_challenge(CONFIG, post=broken)
         assert result["status"] == "error" and result["error"] == "network"
         assert "connection refused" in result["detail"]
+
+
+class TestResponseRequestId:
+    """Unit tests for the request_id extractor: body wins, header is the
+    fallback (chipzen-ai/Chipzen#3901)."""
+
+    def test_body_request_id_wins(self) -> None:
+        result = HttpResult(
+            status=401,
+            body={"request_id": "from-body"},
+            headers={"x-request-id": "from-header"},
+        )
+        assert response_request_id(result) == "from-body"
+
+    def test_header_is_used_when_body_has_none(self) -> None:
+        result = HttpResult(status=200, body={"match_id": "m"}, headers={"x-request-id": "hx"})
+        assert response_request_id(result) == "hx"
+
+    def test_none_when_neither_present(self) -> None:
+        assert response_request_id(HttpResult(status=200, body={})) is None
+
+    def test_empty_body_id_falls_through_to_header(self) -> None:
+        result = HttpResult(status=200, body={"request_id": ""}, headers={"x-request-id": "hx"})
+        assert response_request_id(result) == "hx"
+
+
+class TestLowerHeaders:
+    def test_lower_cases_keys_for_case_insensitive_lookup(self) -> None:
+        # urllib hands back mixed-case header names; we normalise so callers
+        # read `x-request-id` regardless of the wire casing.
+        headers = lower_headers({"X-Request-ID": "abc", "Content-Type": "application/json"})
+        assert headers["x-request-id"] == "abc"
+        assert headers["content-type"] == "application/json"
+
+    def test_none_yields_empty(self) -> None:
+        assert lower_headers(None) == {}

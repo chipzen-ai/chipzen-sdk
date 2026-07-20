@@ -395,7 +395,10 @@ def build_server(
         wait_for_turn loop. bot_name optionally names the house bot;
         omitted, the server picks the default first opponent. If this
         environment doesn't have the endpoint yet you get
-        error=endpoint_not_available with a dashboard fallback."""
+        error=endpoint_not_available with a dashboard fallback. Both success
+        and error results carry request_id -- the platform correlator; quote
+        it when reporting a problem (for a pre-match failure it is the only
+        id that exists)."""
         return await asyncio.to_thread(challenge_house_bot_impl, config, session, bot_name)
 
     @mcp.tool()
