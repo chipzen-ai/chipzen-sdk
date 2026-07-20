@@ -20,9 +20,15 @@ whole contract stays isolated in this module:
   surfaces ``match_id`` / ``opponent`` / ``opponent_bot_id`` / ``rated`` /
   ``decision_timeout_ms`` and tolerates unknown extras. ``gateway_ws_url``
   is deliberately NOT surfaced: the match reaches this session through the
-  normal lobby dispatch; the agent never dials sockets.
+  normal lobby dispatch; the agent never dials sockets. The accepted
+  challenge's ``request_id`` -- read from the ``X-Request-ID`` response
+  header (the success body carries no ``request_id``) -- IS surfaced: it
+  threads the whole dispatch fan-out in the platform logs, so it is the
+  correlator a developer quotes when reporting a problem with the match
+  (chipzen-ai/Chipzen#3901).
 * Errors arrive in the platform envelope ``{error_code, message,
-  request_id}`` and map 1:1 onto tool ``error`` values:
+  request_id}`` and map 1:1 onto tool ``error`` values (the tool re-surfaces
+  ``request_id`` from the envelope body, falling back to ``X-Request-ID``):
   ``401 EXTAPI_INVALID_TOKEN`` (opaque -- missing / malformed / unknown /
   revoked token, retired bot, or ``bot_id`` mismatch),
   ``400 EXTAPI_HOUSE_BOT_NOT_FOUND`` (opponent selector miss; the server
@@ -39,8 +45,8 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -74,10 +80,19 @@ _REQUEST_TIMEOUT_S = 15.0
 
 @dataclass(frozen=True)
 class HttpResult:
-    """Transport-agnostic HTTP outcome: status + parsed-JSON body."""
+    """Transport-agnostic HTTP outcome: status + parsed-JSON body + headers.
+
+    ``headers`` keys are lower-cased so the ``X-Request-ID`` correlator can be
+    read case-insensitively (chipzen-ai/Chipzen#3901). The platform returns
+    ``request_id`` in the error-envelope body, but on a 2xx success it lives
+    ONLY in the ``X-Request-ID`` response header, so surfacing it on the
+    success payload needs the header. Defaults to empty for test doubles /
+    transports that don't capture headers.
+    """
 
     status: int
     body: dict[str, Any]
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 #: Transport signature: ``(url, headers, json_body) -> HttpResult``.
@@ -110,9 +125,17 @@ def _urllib_post(url: str, headers: dict[str, str], body: dict[str, Any]) -> Htt
     request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_S) as response:
-            return HttpResult(status=response.status, body=_parse_json(response.read()))
+            return HttpResult(
+                status=response.status,
+                body=_parse_json(response.read()),
+                headers=lower_headers(response.headers),
+            )
     except urllib.error.HTTPError as exc:
-        return HttpResult(status=exc.code, body=_parse_json(exc.read()))
+        return HttpResult(
+            status=exc.code,
+            body=_parse_json(exc.read()),
+            headers=lower_headers(exc.headers),
+        )
 
 
 def _parse_json(raw: bytes) -> dict[str, Any]:
@@ -121,6 +144,38 @@ def _parse_json(raw: bytes) -> dict[str, Any]:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def lower_headers(raw: Any) -> dict[str, str]:
+    """Response headers as a lower-cased ``dict`` (empty when absent).
+
+    ``urllib`` hands back an ``http.client.HTTPMessage`` (case-insensitive on
+    its own, but stored here as a plain dict so :class:`HttpResult` stays a
+    trivial value). Lower-casing the keys lets callers read ``x-request-id``
+    without worrying about the wire casing.
+    """
+    if raw is None:
+        return {}
+    items = getattr(raw, "items", None)
+    if items is None:
+        return {}
+    return {str(k).lower(): str(v) for k, v in items()}
+
+
+def response_request_id(result: HttpResult) -> str | None:
+    """The platform request correlator for this HTTP outcome, or ``None``.
+
+    Prefers the error-envelope body's ``request_id`` (present on every
+    ``{error_code, message, request_id}`` error), falling back to the
+    ``X-Request-ID`` response header -- the only place it appears on a 2xx
+    success. Never fabricated: ``None`` means the response carried neither
+    (chipzen-ai/Chipzen#3901).
+    """
+    body_id = result.body.get("request_id")
+    if isinstance(body_id, str) and body_id:
+        return body_id
+    header_id = result.headers.get("x-request-id")
+    return header_id or None
 
 
 def _build_request(
@@ -149,15 +204,31 @@ def _server_message(body: dict[str, Any]) -> str:
     return message if isinstance(message, str) else json.dumps(message)
 
 
-def _error(error: str, body: dict[str, Any], note: str) -> dict[str, Any]:
-    """Uniform tool-error payload: our stable ``error`` + the server's words."""
+def _error(error: str, result: HttpResult, note: str) -> dict[str, Any]:
+    """Uniform tool-error payload: our stable ``error`` + the server's words.
+
+    ``request_id`` is surfaced from the error envelope (or the ``X-Request-ID``
+    header) so a failing call is traceable in the platform logs without
+    guessing, and the ``note`` tells the developer to quote it when reporting
+    the issue -- for a pre-match failure it is the ONLY correlator that exists
+    server-side (chipzen-ai/Chipzen#3901).
+    """
+    request_id = response_request_id(result)
     return {
         "status": "error",
         "error": error,
-        "server_error_code": body.get("error_code"),
-        "detail": _server_message(body),
-        "note": note,
+        "server_error_code": result.body.get("error_code"),
+        "request_id": request_id,
+        "detail": _server_message(result.body),
+        "note": _with_request_id_hint(note, request_id),
     }
+
+
+def _with_request_id_hint(note: str, request_id: str | None) -> str:
+    """Append the "quote request_id" support hint when we have a correlator."""
+    if not request_id:
+        return note
+    return f"{note} When reporting this to support, quote request_id={request_id}."
 
 
 def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
@@ -165,6 +236,18 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
     body = result.body
     code = body.get("error_code")
     if result.status in (200, 201):
+        request_id = response_request_id(result)
+        note = (
+            "Unrated house-bot challenge accepted. The match is dispatched "
+            "to this session's lobby connection -- call wait_for_turn now; "
+            "your first decision arrives there."
+        )
+        if request_id:
+            note = (
+                f"{note} This challenge's request_id={request_id} threads the "
+                "whole dispatch in the platform logs -- quote it if you need "
+                "support to trace this match."
+            )
         return {
             "status": "challenge_created",
             "match_id": body.get("match_id"),
@@ -172,16 +255,13 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
             "opponent_bot_id": body.get("opponent_bot_id"),
             "rated": body.get("rated", False),
             "decision_timeout_ms": body.get("decision_timeout_ms"),
-            "note": (
-                "Unrated house-bot challenge accepted. The match is dispatched "
-                "to this session's lobby connection -- call wait_for_turn now; "
-                "your first decision arrives there."
-            ),
+            "request_id": request_id,
+            "note": note,
         }
     if result.status == 401:
         return _error(
             "unauthorized",
-            body,
+            result,
             "The server rejected the request (opaque 401: invalid, malformed "
             "or revoked CHIPZEN_EXTBOT_TOKEN, a retired bot, or a "
             "CHIPZEN_BOT_ID that doesn't match the token's bot). Verify both "
@@ -190,7 +270,7 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
     if result.status == 400 and code == CODE_HOUSE_BOT_NOT_FOUND:
         return _error(
             "house_bot_not_found",
-            body,
+            result,
             f"No house bot matches the requested opponent {bot_name!r}. Pass "
             "a house bot's exact name or UUID, or omit bot_name to challenge "
             "the default house bot.",
@@ -198,7 +278,7 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
     if result.status == 404:
         return _error(
             "endpoint_not_available",
-            body,
+            result,
             "This Chipzen environment does not expose agent-initiated "
             "house-bot challenges yet (server side of "
             "chipzen-ai/Chipzen#3750; staging gets it first). Fallback: "
@@ -209,7 +289,7 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
     if result.status == 409 and code == CODE_BOT_OFFLINE:
         return _error(
             "bot_offline",
-            body,
+            result,
             "Your bot has no live lobby presence, so a match could not be "
             "dispatched to it. Check get_status: lobby_connected must be "
             "true (the background session connects it automatically -- give "
@@ -218,27 +298,27 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
     if result.status == 429 and code == CODE_FREE_TIER:
         return _error(
             "free_tier_limit",
-            body,
+            result,
             "A free-tier usage limit was exceeded for this account. The "
             "detail field says which limit and when it resets.",
         )
     if result.status == 429 and code == CODE_CONCURRENT_CAP:
         return _error(
             "concurrent_cap",
-            body,
+            result,
             "This token is at its concurrent-match cap (5). Finish or wait "
             "out an active match (see list_matches), then retry.",
         )
     if result.status == 502:
         return _error(
             "dispatch_failed",
-            body,
+            result,
             "The platform accepted the challenge but failed to launch the "
             "match (transient executor/allocation error). Retry shortly.",
         )
     return _error(
         f"http_{result.status}",
-        body,
+        result,
         "Unexpected response from the challenge endpoint.",
     )
 
@@ -260,7 +340,11 @@ def request_house_bot_challenge(
     Returns:
         The MCP tool payload -- ``status: "challenge_created"`` with match
         details, or ``status: "error"`` with a distinct ``error`` code and an
-        actionable ``note`` (never an exception for HTTP-level failures).
+        actionable ``note`` (never an exception for HTTP-level failures). Both
+        outcomes carry ``request_id`` (``None`` only when the platform returned
+        neither an envelope id nor an ``X-Request-ID`` header, e.g. a transport
+        failure with no response) so the call is traceable in the platform logs
+        (chipzen-ai/Chipzen#3901).
     """
     transport = post if post is not None else _urllib_post
     url, headers, body = _build_request(config, bot_name)
