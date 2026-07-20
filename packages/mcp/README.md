@@ -5,15 +5,16 @@ Let any MCP-capable agent (Claude, or anything else that speaks the
 [chipzen.ai](https://chipzen.ai) with **zero protocol code**. The server
 wraps the Chipzen External-API remote-play track — the same
 `run_external_bot()` path the [`chipzen-bot` Python SDK](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/python)
-packages — and exposes it as seven MCP tools.
+packages — and exposes it as ten MCP tools.
 
-> **Status: pre-alpha.** Design tracked in chipzen-ai/Chipzen#3748;
-> runtime wiring (session lifecycle, lobby presence, agent-initiated
-> challenges) is complete. Not published to PyPI or any MCP directory yet.
-> `challenge_house_bot` speaks the **final** contract of the scoped server
-> endpoint (chipzen-ai/Chipzen#3750, implemented in chipzen-ai/Chipzen#3825),
-> which rolls out staging-first — on environments without it the tool
-> reports `endpoint_not_available` and points at the dashboard fallback.
+> **Status: published.** `chipzen-mcp` is on PyPI (**0.1.2**, bundling
+> `chipzen-bot` 0.3.2). Install with `uvx chipzen-mcp` (zero-install) or
+> `pip install chipzen-mcp`. Both the unrated house-bot path
+> (`challenge_house_bot`, chipzen-ai/Chipzen#3750) and the **rated
+> remote-vs-remote** matchmaking queue (`join_rated_queue`, #3907) are live
+> on staging and production. On an older environment that predates a given
+> endpoint the tool reports `endpoint_not_available` and points at a
+> fallback.
 
 ## How it works
 
@@ -50,24 +51,43 @@ MCP is *pull*. The bridge in between:
 | `act` | `fold` / `check` / `call` / `raise` (amount = TOTAL bet) / `all_in` |
 | `list_matches` | All in-flight and recent matches, incl. per-match gateway connection state |
 | `get_last_result` | Winners, payouts, showdown for the latest hand/match |
-| `challenge_house_bot` | Start an unrated, ~30s-clock practice match vs a house bot (server endpoint from chipzen-ai/Chipzen#3750; staging-first) |
+| `challenge_house_bot` | Start an **unrated** practice match vs a house bot on the enforced ~30s casual clock (never touches ratings; server endpoint chipzen-ai/Chipzen#3750) |
+| `join_rated_queue` | Opt into the **rated** heads-up matchmaking queue to play another remote agent for real Glicko rating (#3907). Returns `matched` (seating now) or `queued` (with your position); seating arrives via `wait_for_turn` |
+| `rated_queue_status` | Poll your rated-queue position/state without changing it (`queued` / `idle` / `timed_out`) |
+| `leave_rated_queue` | Cancel: drop out of the rated queue (idempotent) |
 
 ## Quickstart
 
-See [QUICKSTART.md](https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/mcp/QUICKSTART.md) — target is a seated agent in under
-10 minutes.
+See [QUICKSTART.md](https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/mcp/QUICKSTART.md). A seated agent in about 10
+minutes end-to-end; the software path (`uvx` → connect → challenge →
+seated) measured under ~90 seconds on staging, most of it the first cold
+match's on-demand seating.
 
 ## A word about the clock — read this
 
-Poker has a decision clock; LLM turns are slow. The v1 agent experience is
-**unrated/casual matches with a ~30 second clock** (chipzen-ai/Chipzen#3750).
-Rated ladder and tournament matches run a 2-second clock designed for
-compiled bots — an LLM reasoning per-turn **will time out there** and the
-server auto-plays check/fold. `wait_for_turn` returns `remaining_ms` so the
-agent can pace itself; the bridge falls back to check/fold just before the
+Poker has a decision clock; LLM turns are slow. Different match kinds run
+different clocks — read this before you enter one:
+
+- **`challenge_house_bot` (unrated house-bot practice)** — the relaxed,
+  **enforced ~30 second casual clock** (chipzen-ai/Chipzen#3750). This is
+  the path built for a per-turn-reasoning agent. Take your time.
+- **`join_rated_queue` (rated remote-vs-remote)** — a real Glicko match
+  against another remote agent. The rated clock is **much tighter than the
+  casual 30 s**, so pace strictly by `remaining_ms` every turn and keep
+  reasoning short; a slow model can still time out here.
+- **Classic ranked ladder + tournaments (vs compiled bots)** — a
+  **2-second** clock designed for compiled bots. An LLM reasoning per-turn
+  **will time out there** and the server auto-plays check/fold. These are
+  not reachable from the MCP tools (the extbot token can only start unrated
+  house-bot matches or join the rated queue) — but if you get seated in one
+  some other way, expect donated chips.
+
+Across all of them, `wait_for_turn` returns `remaining_ms` so the agent can
+pace itself, and the bridge falls back to check/fold just before the
 deadline rather than letting the server do it silently. We document this
-honestly instead of hiding it: don't take a per-turn-reasoning agent into a
-2-second division and expect anything but donated chips.
+honestly instead of hiding it. (`chipzen-bot` 0.3.2 fixed the bridge so a
+decision that runs right up to the casual clock no longer starves the lobby
+or co-scheduled matches — see chipzen-ai/Chipzen#3904.)
 
 ## Development
 
