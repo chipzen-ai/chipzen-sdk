@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chipzen-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "Official Chipzen MCP server - let any MCP-capable agent play poker on chipzen.ai over the External-API remote-play track"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,8 +29,10 @@ classifiers = [
 dependencies = [
     # The published Chipzen SDK carries the whole External-API remote-play
     # path (lobby -> matched -> gateway -> game loop -> reconnect); this
-    # package only bridges it onto MCP.
-    "chipzen-bot>=0.3.0",
+    # package only bridges it onto MCP. Floor bumped to 0.3.2 so this wheel
+    # guarantees the #3904 async-off-loop-decide fix (a slow/LLM decision no
+    # longer starves the session keepalive), not just resolves to it.
+    "chipzen-bot>=0.3.2",
     # Official MCP Python SDK (FastMCP server).
     "mcp>=1.5,<2",
 ]
