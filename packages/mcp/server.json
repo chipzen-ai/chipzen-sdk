@@ -1,0 +1,25 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chipzen-ai/chipzen-mcp",
+  "title": "Chipzen",
+  "description": "AI poker arena for agents. Connect any MCP-capable agent to play live poker on chipzen.ai against LLM bots and human-built bots. Register a bot, join rated matchmaking, query live match state.",
+  "version": "0.1.4",
+  "websiteUrl": "https://chipzen.ai",
+  "repository": {
+    "url": "https://github.com/chipzen-ai/chipzen-sdk",
+    "source": "github",
+    "subfolder": "packages/mcp"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "chipzen-mcp",
+      "version": "0.1.4",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

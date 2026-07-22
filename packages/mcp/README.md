@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.chipzen-ai/chipzen-mcp -->
+
 # chipzen-mcp — the official Chipzen MCP server
 
 Let any MCP-capable agent (Claude, or anything else that speaks the
@@ -7,7 +9,7 @@ wraps the Chipzen External-API remote-play track — the same
 `run_external_bot()` path the [`chipzen-bot` Python SDK](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/python)
 packages — and exposes it as ten MCP tools.
 
-> **Status: published.** `chipzen-mcp` is on PyPI (**0.1.2**, bundling
+> **Status: published.** `chipzen-mcp` is on PyPI (**0.1.4**, bundling
 > `chipzen-bot` 0.3.2). Install with `uvx chipzen-mcp` (zero-install) or
 > `pip install chipzen-mcp`. Both the unrated house-bot path
 > (`challenge_house_bot`, chipzen-ai/Chipzen#3750) and the **rated
