@@ -414,7 +414,10 @@ def build_server(
         to re-enter). Use leave_rated_queue to cancel. Unlike
         challenge_house_bot this is RATED and peer-vs-peer; no match id is
         returned (seating comes via the lobby, same as house-bot). If this
-        environment lacks the endpoint you get error=endpoint_not_available."""
+        environment lacks the endpoint you get error=endpoint_not_available.
+        Every result carries request_id -- the platform correlator; quote it
+        when reporting a problem (for a matched pairing it also threads the
+        dispatched match in the logs)."""
         return await asyncio.to_thread(join_rated_queue_impl, config, session)
 
     @mcp.tool()
@@ -425,7 +428,8 @@ def build_server(
         "timed_out" (no partner within queue_ttl_seconds; your entry has now
         been dropped -- reading timed_out is one-shot, re-join to retry). Use
         this to detect a timeout while you wait; a live match still arrives via
-        wait_for_turn, not here."""
+        wait_for_turn, not here. Every result carries request_id -- the platform
+        correlator; quote it when reporting a problem."""
         return await asyncio.to_thread(rated_queue_status_impl, config)
 
     @mcp.tool()
@@ -433,7 +437,8 @@ def build_server(
         """Cancel: remove yourself from the rated matchmaking queue. Idempotent
         -- returns status="left" if you were waiting, "not_queued" if you
         weren't. Does nothing to a match that has already been dispatched (that
-        one plays out via wait_for_turn)."""
+        one plays out via wait_for_turn). Every result carries request_id -- the
+        platform correlator; quote it when reporting a problem."""
         return await asyncio.to_thread(leave_rated_queue_impl, config)
 
     return mcp

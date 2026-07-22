@@ -41,7 +41,11 @@ prefix). The whole contract stays isolated in this module:
   evicts the entry, then ``idle`` until you re-join.
 
 * Errors arrive in the platform envelope ``{error_code, message, request_id}``
-  and map 1:1 onto tool ``error`` values. ``join`` can emit:
+  and map 1:1 onto tool ``error`` values (the tool re-surfaces ``request_id``
+  from the envelope body, falling back to ``X-Request-ID``, on both error and
+  success payloads -- the same correlator ``challenge_house_bot`` exposes, kept
+  consistent across the whole tool surface, chipzen-ai/Chipzen#3901). ``join``
+  can emit:
   ``401 EXTAPI_INVALID_TOKEN`` (opaque -- missing / malformed / unknown /
   revoked token, retired bot, non-``external_api`` bot, or ``bot_id``
   mismatch), ``403 EXTAPI_MATCHMAKING_INELIGIBLE`` (a system/house-owned bot
@@ -71,7 +75,10 @@ from chipzen_mcp.config import McpConfig
 from chipzen_mcp.housebot import (
     CODE_BOT_OFFLINE,
     HttpResult,
+    _with_request_id_hint,
     api_origin,
+    lower_headers,
+    response_request_id,
 )
 
 logger = logging.getLogger("chipzen_mcp.matchmaking")
@@ -110,9 +117,17 @@ def _urllib_request(
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_S) as response:
-            return HttpResult(status=response.status, body=_parse_json(response.read()))
+            return HttpResult(
+                status=response.status,
+                body=_parse_json(response.read()),
+                headers=lower_headers(response.headers),
+            )
     except urllib.error.HTTPError as exc:
-        return HttpResult(status=exc.code, body=_parse_json(exc.read()))
+        return HttpResult(
+            status=exc.code,
+            body=_parse_json(exc.read()),
+            headers=lower_headers(exc.headers),
+        )
 
 
 def _parse_json(raw: bytes) -> dict[str, Any]:
@@ -149,27 +164,31 @@ def _server_message(body: dict[str, Any]) -> str:
     return message if isinstance(message, str) else json.dumps(message)
 
 
-def _error(error: str, body: dict[str, Any], note: str) -> dict[str, Any]:
+def _error(error: str, result: HttpResult, note: str) -> dict[str, Any]:
     """Uniform tool-error payload: our stable ``error`` + the server's words.
 
-    ``request_id`` is surfaced from the envelope (chipzen-ai/Chipzen#3901) so a
-    failing call is traceable in the platform logs without guessing.
+    ``request_id`` is surfaced from the error envelope (or the ``X-Request-ID``
+    header) so a failing call is traceable in the platform logs without
+    guessing, and the ``note`` tells the developer to quote it when reporting
+    the issue -- the same treatment ``challenge_house_bot`` gives, kept
+    consistent across the whole tool surface (chipzen-ai/Chipzen#3901).
     """
+    request_id = response_request_id(result)
     return {
         "status": "error",
         "error": error,
-        "server_error_code": body.get("error_code"),
-        "request_id": body.get("request_id"),
-        "detail": _server_message(body),
-        "note": note,
+        "server_error_code": result.body.get("error_code"),
+        "request_id": request_id,
+        "detail": _server_message(result.body),
+        "note": _with_request_id_hint(note, request_id),
     }
 
 
-def _unauthorized(body: dict[str, Any]) -> dict[str, Any]:
+def _unauthorized(result: HttpResult) -> dict[str, Any]:
     """The opaque-401 mapping shared by join / leave / status."""
     return _error(
         "unauthorized",
-        body,
+        result,
         "The server rejected the request (opaque 401: invalid, malformed or "
         "revoked CHIPZEN_EXTBOT_TOKEN, a retired or non-external_api bot, or a "
         "CHIPZEN_BOT_ID that doesn't match the token's bot). Verify both env "
@@ -177,11 +196,11 @@ def _unauthorized(body: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _endpoint_not_available(body: dict[str, Any]) -> dict[str, Any]:
+def _endpoint_not_available(result: HttpResult) -> dict[str, Any]:
     """The 404 mapping shared by join / leave / status."""
     return _error(
         "endpoint_not_available",
-        body,
+        result,
         "This Chipzen environment does not expose rated matchmaking yet "
         "(server side of chipzen-ai/Chipzen#3907; staging/dev gets it first). "
         "There is no self-serve fallback for rated agent-vs-agent play on this "
@@ -204,18 +223,32 @@ def _map_join_response(result: HttpResult) -> dict[str, Any]:
         queue_status = body.get("status")
         rated = body.get("rated", True)
         queue_ttl = body.get("queue_ttl_seconds")
+        # The success body carries no request_id (it's set on the route's
+        # response_model, not the envelope); the id lives only in the
+        # X-Request-ID response header -- surface it so the call, and for a
+        # "matched" pairing the dispatched match, are traceable in the platform
+        # logs (chipzen-ai/Chipzen#3901).
+        request_id = response_request_id(result)
         if queue_status == "matched":
+            note = (
+                "An eligible opponent was found and a RATED heads-up match "
+                "is being dispatched to this session. Go straight into the "
+                "wait_for_turn loop -- the match seats itself via the lobby "
+                "and your first decision arrives there. Like "
+                "challenge_house_bot, no match id is returned here."
+            )
+            if request_id:
+                note = (
+                    f"{note} This match's request_id={request_id} threads the "
+                    "whole dispatch in the platform logs -- quote it if you "
+                    "need support to trace this match."
+                )
             return {
                 "status": "matched",
                 "rated": rated,
                 "queue_ttl_seconds": queue_ttl,
-                "note": (
-                    "An eligible opponent was found and a RATED heads-up match "
-                    "is being dispatched to this session. Go straight into the "
-                    "wait_for_turn loop -- the match seats itself via the lobby "
-                    "and your first decision arrives there. Like "
-                    "challenge_house_bot, no match id is returned here."
-                ),
+                "request_id": request_id,
+                "note": note,
             }
         # Anything that isn't an explicit "matched" is a still-waiting queue
         # entry; echo the server's status verbatim so an unexpected value is
@@ -225,6 +258,7 @@ def _map_join_response(result: HttpResult) -> dict[str, Any]:
             "rated": rated,
             "position": body.get("position"),
             "queue_ttl_seconds": queue_ttl,
+            "request_id": request_id,
             "note": (
                 "You are waiting in the rated queue. When an eligible partner "
                 "joins, a RATED match is dispatched to this session "
@@ -236,11 +270,11 @@ def _map_join_response(result: HttpResult) -> dict[str, Any]:
             ),
         }
     if result.status == 401:
-        return _unauthorized(body)
+        return _unauthorized(result)
     if result.status == 403 and code == CODE_MATCHMAKING_INELIGIBLE:
         return _error(
             "ineligible",
-            body,
+            result,
             "This bot may not enter the rated matchmaking queue: the queue is "
             "for real developer-owned external_api bots, and a Chipzen "
             "house/system bot is rejected. Use a bot you own.",
@@ -248,7 +282,7 @@ def _map_join_response(result: HttpResult) -> dict[str, Any]:
     if result.status == 409 and code == CODE_BOT_OFFLINE:
         return _error(
             "bot_offline",
-            body,
+            result,
             "Your bot has no live lobby presence, so it cannot be queued (the "
             "seating push is delivered over the lobby WS). Check get_status: "
             "lobby_connected must be true (the background session connects it "
@@ -256,10 +290,10 @@ def _map_join_response(result: HttpResult) -> dict[str, Any]:
             "retry.",
         )
     if result.status == 404:
-        return _endpoint_not_available(body)
+        return _endpoint_not_available(result)
     return _error(
         f"http_{result.status}",
-        body,
+        result,
         "Unexpected response from the matchmaking join endpoint.",
     )
 
@@ -279,7 +313,10 @@ def request_join_rated_queue(
         The MCP tool payload -- ``status: "matched"`` (partner found, rated
         match dispatching), ``status: "queued"`` (waiting, with ``position``),
         or ``status: "error"`` with a distinct ``error`` code and an actionable
-        ``note`` (never an exception for HTTP-level failures).
+        ``note`` (never an exception for HTTP-level failures). Every outcome
+        carries ``request_id`` (``None`` only when the platform returned neither
+        an envelope id nor an ``X-Request-ID`` header) so the call is traceable
+        in the platform logs (chipzen-ai/Chipzen#3901).
     """
     transport = request if request is not None else _urllib_request
     url = f"{api_origin(config)}{MATCHMAKING_JOIN_PATH}"
@@ -304,6 +341,7 @@ def _map_status_response(result: HttpResult) -> dict[str, Any]:
             "position": body.get("position"),
             "waiting_seconds": body.get("waiting_seconds"),
             "queue_ttl_seconds": body.get("queue_ttl_seconds"),
+            "request_id": response_request_id(result),
         }
         if queue_status == "queued":
             note = (
@@ -326,12 +364,12 @@ def _map_status_response(result: HttpResult) -> dict[str, Any]:
             note = "Unexpected status from the matchmaking status endpoint."
         return {"status": queue_status or "idle", **common, "note": note}
     if result.status == 401:
-        return _unauthorized(body)
+        return _unauthorized(result)
     if result.status == 404:
-        return _endpoint_not_available(body)
+        return _endpoint_not_available(result)
     return _error(
         f"http_{result.status}",
-        body,
+        result,
         "Unexpected response from the matchmaking status endpoint.",
     )
 
@@ -345,7 +383,9 @@ def request_rated_queue_status(
 
     Returns the MCP tool payload -- ``status`` is ``"queued"`` / ``"idle"`` /
     ``"timed_out"`` (see module docstring), or ``status: "error"`` on failure.
-    ``timed_out`` is one-shot server-side: reading it evicts the queue entry.
+    Every outcome carries ``request_id`` (the platform correlator, ``None`` when
+    absent) for traceability. ``timed_out`` is one-shot server-side: reading it
+    evicts the queue entry.
     """
     transport = request if request is not None else _urllib_request
     url = f"{api_origin(config)}{MATCHMAKING_STATUS_PATH}"
@@ -370,14 +410,18 @@ def _map_leave_response(result: HttpResult) -> dict[str, Any]:
             note = "You were not in the rated queue; nothing to cancel (idempotent)."
         else:
             note = "Removed from the rated queue."
-        return {"status": queue_status or "left", "note": note}
+        return {
+            "status": queue_status or "left",
+            "request_id": response_request_id(result),
+            "note": note,
+        }
     if result.status == 401:
-        return _unauthorized(body)
+        return _unauthorized(result)
     if result.status == 404:
-        return _endpoint_not_available(body)
+        return _endpoint_not_available(result)
     return _error(
         f"http_{result.status}",
-        body,
+        result,
         "Unexpected response from the matchmaking leave endpoint.",
     )
 
@@ -390,7 +434,9 @@ def request_leave_rated_queue(
     """Cancel: remove the configured bot from the rated queue (idempotent).
 
     Returns the MCP tool payload -- ``status: "left"`` (removed) /
-    ``status: "not_queued"`` (was not waiting), or ``status: "error"``.
+    ``status: "not_queued"`` (was not waiting), or ``status: "error"``. Every
+    outcome carries ``request_id`` (the platform correlator, ``None`` when
+    absent) for traceability (chipzen-ai/Chipzen#3901).
     """
     transport = request if request is not None else _urllib_request
     url = f"{api_origin(config)}{MATCHMAKING_LEAVE_PATH}"

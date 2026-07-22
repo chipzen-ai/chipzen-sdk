@@ -110,6 +110,42 @@ class TestJoinSuccess:
         result = request_join_rated_queue(CONFIG, request=req)
         assert result["rated"] is True
 
+    def test_request_id_surfaced_from_header_on_matched(self) -> None:
+        # The success body carries no request_id (it's on the route's
+        # response_model, not the envelope); the id lives only in the
+        # X-Request-ID header -- surface it, and tell the dev to quote it for
+        # the dispatched match (chipzen-ai/Chipzen#3901, house-bot parity).
+        req = _RecordingRequest(
+            HttpResult(
+                status=200,
+                body={"status": "matched", "rated": True},
+                headers={"x-request-id": "18fe80c7-abc"},
+            )
+        )
+        result = request_join_rated_queue(CONFIG, request=req)
+        assert result["status"] == "matched"
+        assert result["request_id"] == "18fe80c7-abc"
+        assert "18fe80c7-abc" in result["note"]
+
+    def test_request_id_surfaced_from_header_on_queued(self) -> None:
+        req = _RecordingRequest(
+            HttpResult(
+                status=200,
+                body={"status": "queued", "position": 1},
+                headers={"x-request-id": "hx-q"},
+            )
+        )
+        result = request_join_rated_queue(CONFIG, request=req)
+        assert result["status"] == "queued"
+        assert result["request_id"] == "hx-q"
+
+    def test_request_id_is_none_when_no_header(self) -> None:
+        # No header and no envelope id on the success body -> request_id is
+        # None (never fabricated).
+        req = _RecordingRequest(HttpResult(status=200, body={"status": "queued"}))
+        result = request_join_rated_queue(CONFIG, request=req)
+        assert result["request_id"] is None
+
 
 class TestJoinErrors:
     def _result(self, status: int, body: dict | None = None) -> dict:
@@ -122,10 +158,30 @@ class TestJoinErrors:
         )
         assert result["status"] == "error" and result["error"] == "unauthorized"
         assert result["server_error_code"] == CODE_INVALID_TOKEN
-        # #3901: the request_id is surfaced so the failure is traceable.
+        # #3901: the request_id is surfaced so the failure is traceable, and the
+        # note tells the developer to quote it (house-bot parity).
         assert result["request_id"] == "req-1"
+        assert "req-1" in result["note"]
         assert "CHIPZEN_EXTBOT_TOKEN" in result["note"]
         assert "CHIPZEN_BOT_ID" in result["note"]
+
+    def test_error_request_id_falls_back_to_header(self) -> None:
+        # An edge/proxy failure whose body lost the envelope id still has the
+        # X-Request-ID header -- fall back to it rather than dropping the id.
+        req = _RecordingRequest(
+            HttpResult(status=503, body={"message": "maintenance"}, headers={"x-request-id": "hx"})
+        )
+        result = request_join_rated_queue(CONFIG, request=req)
+        assert result["error"] == "http_503"
+        assert result["request_id"] == "hx"
+
+    def test_error_request_id_is_none_without_any_id(self) -> None:
+        # No envelope id, no header -> request_id is None and the note stays
+        # free of a bogus correlator.
+        result = self._result(429, {})
+        assert result["error"] == "http_429"
+        assert result["request_id"] is None
+        assert "request_id" not in result["note"]
 
     def test_403_ineligible_system_bot(self) -> None:
         result = self._result(
@@ -210,6 +266,16 @@ class TestStatus:
         assert result["status"] == "idle"
         assert "join_rated_queue" in result["note"]
 
+    def test_request_id_surfaced_from_header_on_success(self) -> None:
+        # A status read's body carries no request_id; surface it from the
+        # X-Request-ID header so the poll is traceable (chipzen-ai/Chipzen#3901).
+        req = _RecordingRequest(
+            HttpResult(status=200, body={"status": "queued"}, headers={"x-request-id": "hx-s"})
+        )
+        result = request_rated_queue_status(CONFIG, request=req)
+        assert result["status"] == "queued"
+        assert result["request_id"] == "hx-s"
+
     def test_401_is_opaque(self) -> None:
         req = _RecordingRequest(
             HttpResult(status=401, body=_envelope(CODE_INVALID_TOKEN, "Invalid token."))
@@ -258,6 +324,16 @@ class TestLeave:
         result = request_leave_rated_queue(CONFIG, request=req)
         assert result["status"] == "not_queued"
         assert "idempotent" in result["note"]
+
+    def test_request_id_surfaced_from_header_on_success(self) -> None:
+        # The leave response body carries no request_id; surface it from the
+        # X-Request-ID header for traceability (chipzen-ai/Chipzen#3901).
+        req = _RecordingRequest(
+            HttpResult(status=200, body={"status": "left"}, headers={"x-request-id": "hx-l"})
+        )
+        result = request_leave_rated_queue(CONFIG, request=req)
+        assert result["status"] == "left"
+        assert result["request_id"] == "hx-l"
 
     def test_401_is_opaque(self) -> None:
         req = _RecordingRequest(
