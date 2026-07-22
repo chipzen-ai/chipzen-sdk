@@ -111,3 +111,58 @@ jobs:
           repository-url: ${{ inputs.target_index == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
           # Defaults from gh-action-pypi-publish v1.14.0+:
           #   verbose: true, print-hash: true
+
+  registry-publish:
+    name: Publish to MCP Registry
+    needs: publish
+    # Only for real PyPI publishes — the official registry validates the
+    # PyPI package's ownership marker, so there is nothing to point at on a
+    # TestPyPI-only or dry run. Namespace `io.github.chipzen-ai/*` is proven
+    # via GitHub Actions OIDC (this repo is owned by the chipzen-ai org), so
+    # no secret is stored. The PyPI ownership check reads the
+    # `mcp-name: io.github.chipzen-ai/chipzen-mcp` marker from the published
+    # package README (see packages/mcp/README.md and server.json).
+    if: ${{ inputs.dry_run != true && (inputs.target_index || 'pypi') == 'pypi' }}
+    runs-on: ubuntu-latest
+    permissions:
+      # OIDC token issuance — proves org namespace ownership to the registry.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read package version
+        id: ver
+        working-directory: packages/mcp
+        run: |
+          set -euo pipefail
+          version=$(python -c "import json; print(json.load(open('server.json'))['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Wait for PyPI to expose the ownership marker
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          marker="mcp-name: io.github.chipzen-ai/chipzen-mcp"
+          url="https://pypi.org/pypi/chipzen-mcp/${VERSION}/json"
+          for i in $(seq 1 20); do
+            desc=$(curl -fsSL "$url" | python -c "import sys,json; print(json.load(sys.stdin)['info'].get('description') or '')" || true)
+            if printf '%s' "$desc" | grep -Fq "$marker"; then
+              echo "Ownership marker visible on PyPI for ${VERSION}."
+              exit 0
+            fi
+            echo "Marker not visible yet (attempt $i); sleeping 15s..."
+            sleep 15
+          done
+          echo "::error::Ownership marker for ${VERSION} not visible on PyPI after retries."
+          exit 1
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+      - name: Publish to the official MCP registry
+        working-directory: packages/mcp
+        run: |
+          set -euo pipefail
+          mcp-publisher login github-oidc
+          mcp-publisher publish
