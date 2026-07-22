@@ -109,6 +109,9 @@ jobs:
         with:
           packages-dir: dist/
           repository-url: ${{ inputs.target_index == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+          # A re-run after a downstream (registry) failure must not die on
+          # the version already being on PyPI.
+          skip-existing: true
           # Defaults from gh-action-pypi-publish v1.14.0+:
           #   verbose: true, print-hash: true
 
