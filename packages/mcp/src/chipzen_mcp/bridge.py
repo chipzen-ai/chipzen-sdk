@@ -54,6 +54,17 @@ DEFAULT_TURN_TIMEOUT_MS = 30_000
 #: comfortably inside the real deadline.
 DEFAULT_SAFETY_MARGIN_MS = 1_500
 
+#: How many FINISHED matches the registry retains before evicting the oldest
+#: (by result recency). This bounds ``TurnRegistry._matches`` over a long-lived
+#: multi-match session so ``list_matches`` / memory don't grow monotonically
+#: with lifetime match count (chipzen-ai/Chipzen#3939). Active matches are
+#: NEVER counted against this cap nor evicted (the platform separately caps
+#: concurrent active matches at 5 per token); the cap only sweeps terminal
+#: records that were never explicitly consumed via ``get_last_result``. The
+#: N most-recently-resulted finished matches are kept, so ``last_result()``'s
+#: "most recent across all matches" answer is always retained.
+MAX_FINISHED_MATCHES = 50
+
 
 def state_payload(state: GameState) -> dict[str, Any]:
     """Serialize an SDK :class:`chipzen.GameState` into a JSON-safe dict.
@@ -248,7 +259,29 @@ class TurnRegistry:
             record = self._matches.setdefault(match_id, _MatchRecord(match_id=match_id))
             record.match_end = end
             record.pending = None
+            # A finished match never serves another pending turn, so its last
+            # in-flight turn snapshot (with full action_history) is dead weight
+            # -- drop it to shrink the retained per-record footprint (#3939).
+            record.last_turn = None
             record.result_seq = self._next_result_seq()
+            self._evict_finished_over_cap()
+
+    def _evict_finished_over_cap(self) -> None:
+        """Evict oldest FINISHED matches beyond ``MAX_FINISHED_MATCHES``.
+
+        Caller MUST hold ``self._lock``. Keeps the most-recently-resulted
+        finished matches (by :attr:`_MatchRecord.result_seq`) so
+        :meth:`last_result`'s "most recent across all matches" answer is never
+        the one evicted; active matches (``match_end is None``) are never
+        counted against the cap nor removed (chipzen-ai/Chipzen#3939).
+        """
+        finished = [r for r in self._matches.values() if r.match_end is not None]
+        excess = len(finished) - MAX_FINISHED_MATCHES
+        if excess <= 0:
+            return
+        finished.sort(key=lambda r: r.result_seq)  # oldest result first
+        for record in finished[:excess]:
+            del self._matches[record.match_id]
 
     # -- read/answered by MCP tools ----------------------------------------
 
@@ -320,6 +353,14 @@ class TurnRegistry:
         returns ``None`` (surfaced as ``no_results_yet``) rather than silently
         falling back to some other match's result -- a typo'd id must never be
         answered with a different match's data.
+
+        Consumption eviction (chipzen-ai/Chipzen#3939): an EXPLICIT read of a
+        FINISHED match collects its terminal outcome, so the record is dropped
+        right after it is returned -- a long-lived multi-tabling agent releases
+        each finished match as soon as it has read the result, instead of
+        waiting for the :data:`MAX_FINISHED_MATCHES` cap sweep. The no-``match_id``
+        "most recent" peek NEVER evicts: repeated peeks stay stable and keep
+        answering the latest result (the #3884 recency contract).
         """
         with self._lock:
             if match_id is not None:
@@ -337,11 +378,15 @@ class TurnRegistry:
                     best = record
             if best is None:
                 return None
-            return {
+            result = {
                 "match_id": best.match_id,
                 "match_end": best.match_end,
                 "last_round_result": best.last_round_result,
             }
+            if match_id is not None and best.match_end is not None:
+                # Terminal outcome consumed via an explicit read -> evict now.
+                self._matches.pop(best.match_id, None)
+            return result
 
     def status(self) -> dict[str, Any]:
         with self._lock:

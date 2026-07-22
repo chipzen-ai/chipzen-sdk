@@ -20,6 +20,7 @@ from chipzen_mcp.bridge import (
     MATCH_CONN_CONNECTED,
     MATCH_CONN_PENDING,
     MATCH_CONN_RECONNECTING,
+    MAX_FINISHED_MATCHES,
     SDK_LOGGER_NAME,
     BridgeBot,
     ExternalSession,
@@ -123,11 +124,15 @@ class TestTurnRegistry:
         registry.record_match_end(MATCH, {"reason": "completed"})
         view = registry.get_match(MATCH)
         assert view is not None and view["finished"] is True and view["my_turn"] is False
+        assert registry.status()["finished_matches"] == 1
 
         last = registry.last_result(MATCH)
         assert last is not None and last["match_end"] == {"reason": "completed"}
         assert registry.get_match("unknown") is None
-        assert registry.status()["finished_matches"] == 1
+        # #3939: an explicit read of a FINISHED match consumes it -- the record
+        # is evicted right after the outcome is returned.
+        assert registry.get_match(MATCH) is None
+        assert registry.status()["finished_matches"] == 0
 
     def test_last_result_no_arg_returns_most_recent_across_matches(self) -> None:
         # chipzen-ai/Chipzen#3884: with no match_id, the result that landed
@@ -196,6 +201,99 @@ class TestTurnRegistry:
         summary = registry.list_matches()[0]
         assert summary["connection"] == MATCH_CONN_ABANDONED
         assert summary["reconnect_attempt"] is None
+
+
+class TestTurnRegistryEviction:
+    """chipzen-ai/Chipzen#3939: TurnRegistry._matches must be bounded.
+
+    Two complementary mechanisms keep a long-lived multi-tabling session from
+    accumulating finished-match records forever: consumption eviction (an
+    explicit get_last_result read drops the finished record) and a cap sweep
+    (never-consumed terminals beyond MAX_FINISHED_MATCHES are evicted, oldest
+    result first). Active matches are never touched by either.
+    """
+
+    def test_explicit_read_of_finished_match_evicts_it(self) -> None:
+        registry = TurnRegistry()
+        registry.match_started("m")
+        registry.record_match_end("m", {"reason": "done"})
+        # First explicit read collects the outcome...
+        first = registry.last_result("m")
+        assert first is not None and first["match_end"] == {"reason": "done"}
+        # ...and consumes it: the record is gone.
+        assert registry.get_match("m") is None
+        assert registry.last_result("m") is None
+        assert registry.status()["finished_matches"] == 0
+
+    def test_explicit_read_of_active_match_does_not_evict(self) -> None:
+        # A match with only a round result is still in flight -- reading it must
+        # NOT evict (the match keeps playing and will produce more turns).
+        registry = TurnRegistry()
+        registry.match_started("m")
+        registry.record_round_result("m", {"hand_number": 1})
+        assert registry.last_result("m") is not None
+        # Still present, still active.
+        assert registry.get_match("m") is not None
+        assert registry.status()["active_matches"] == 1
+
+    def test_no_arg_peek_never_evicts_and_stays_stable(self) -> None:
+        # The most-recent "peek" is idempotent: repeated no-arg reads keep
+        # answering the latest result and never drop records (#3884 recency).
+        registry = TurnRegistry()
+        registry.match_started("a")
+        registry.match_started("b")
+        registry.record_match_end("a", {"reason": "a-end"})
+        registry.record_match_end("b", {"reason": "b-end"})
+        for _ in range(3):
+            latest = registry.last_result()
+            assert latest is not None and latest["match_id"] == "b"
+        # Both finished records survive the repeated peeks.
+        assert registry.status()["finished_matches"] == 2
+
+    def test_cap_sweep_keeps_most_recent_finished_and_drops_oldest(self) -> None:
+        registry = TurnRegistry()
+        total = MAX_FINISHED_MATCHES + 10
+        for i in range(total):
+            mid = f"m-{i}"
+            registry.match_started(mid)
+            registry.record_match_end(mid, {"idx": i})
+        # Bounded at the cap...
+        assert registry.status()["finished_matches"] == MAX_FINISHED_MATCHES
+        # ...retaining the newest by result recency, evicting the oldest.
+        assert registry.get_match(f"m-{total - 1}") is not None  # newest kept
+        assert registry.get_match("m-0") is None  # oldest evicted
+        # The most-recent answer survives the sweep (recency preserved).
+        latest = registry.last_result()
+        assert latest is not None and latest["match_id"] == f"m-{total - 1}"
+
+    def test_cap_sweep_never_evicts_active_matches(self) -> None:
+        registry = TurnRegistry()
+        # A pile of live matches that never finish...
+        active_ids = [f"live-{i}" for i in range(5)]
+        for mid in active_ids:
+            registry.match_started(mid)
+            registry.record_round_result(mid, {"hand": 1})
+        # ...plus enough finished matches to trigger sweeps repeatedly.
+        for i in range(MAX_FINISHED_MATCHES + 20):
+            mid = f"fin-{i}"
+            registry.match_started(mid)
+            registry.record_match_end(mid, {"idx": i})
+        # Every active match is untouched; finished are capped.
+        for mid in active_ids:
+            assert registry.get_match(mid) is not None
+        status = registry.status()
+        assert status["active_matches"] == len(active_ids)
+        assert status["finished_matches"] == MAX_FINISHED_MATCHES
+
+    def test_match_end_drops_last_turn_footprint(self) -> None:
+        # A finished match sheds its last in-flight TurnSnapshot (with full
+        # action_history) -- it can never serve another turn.
+        registry = TurnRegistry()
+        registry.match_started("m")
+        registry.publish_turn(_snapshot("m"))
+        registry.record_match_end("m", {"reason": "done"})
+        with registry._lock:  # white-box: the retained record sheds last_turn
+            assert registry._matches["m"].last_turn is None
 
 
 class TestBridgeBot:
