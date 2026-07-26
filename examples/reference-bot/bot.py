@@ -38,7 +38,7 @@ import logging
 import os
 import sys
 from collections import Counter
-from typing import Iterable
+from collections.abc import Iterable
 
 from chipzen import Action, Bot, GameState
 from chipzen.client import run_bot

@@ -27,6 +27,7 @@ with a no-op `decide()`. Replace it with your strategy:
 ```python
 from chipzen import Bot, Action, GameState
 
+
 class MyBot(Bot):
     def decide(self, state: GameState) -> Action:
         # Your strategy. The SDK has already handed you a fully-parsed
