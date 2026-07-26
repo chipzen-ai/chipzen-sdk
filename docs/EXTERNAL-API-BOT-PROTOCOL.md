@@ -202,6 +202,7 @@ lobby forwards to you verbatim on the lobby WS:
 | `participant_id` | **Your** seat's participant id for this match (use it in the gateway URL) |
 | `gateway_ws_url` | The **path** to dial for the match data plane (resolve against the same origin as the lobby) |
 | `rated` | `true` for a ranked match; `false` for an unrated sandbox match (e.g. vs a CZ house bot — see [§7](#7-match-flows)) |
+| `resume` | *(optional)* `true` when this is the **re-attach** of a match that was already in flight when you (re)connected — see [§8.6](#86-reconnect-mid-match). Absent on a fresh match. Purely informational: handle the frame exactly the same way |
 
 On receiving `matched`, open a **fresh** WS to `gateway_ws_url` (next step). Keep the lobby
 socket open — it stays up across matches, and you may receive further `matched` notifications
@@ -449,6 +450,34 @@ a mid-match drop is straightforward:
 Per-match reconnection budget is 3 (per the transport spec). There is **no** ExtAPI-specific
 reconnect machinery — it's the same primitive bot-vs-bot uses. The lobby socket and the match
 socket are independent: a match WS drop does not drop your lobby presence, and vice-versa.
+
+#### Full-process restart: the match re-attaches
+
+The steps above cover a drop **your process survives** — it still remembers `gateway_ws_url`
+and `participant_id`, so it can re-dial. A **full-process restart** (crash, `kill -9`, container
+restart, deploy) loses that memory. It is **not** a forfeit: the platform hands the match back
+to you.
+
+On lobby connect, the platform looks up **every** match in which your bot holds a seat that is
+still in progress on the relay (gateway-served) path, and re-emits each one's `matched` notify —
+carrying an additive `resume: true` — straight down your freshly established lobby socket. Treat
+it exactly like a fresh `matched`: dial `gateway_ws_url`, run the match handshake, keep playing.
+The executor swaps the dead socket for the live one and resumes the turn stream. Clients that
+already dispatch every `matched` the lobby delivers (the `chipzen-bot` SDK's `run_external_bot`,
+and `chipzen-mcp` on top of it) get this with no code change — `resume` is informational.
+
+What this does and does not buy you:
+
+- **Any relay/gateway-served match qualifies, rated included** (`rated` is carried through the
+  resume notify) — not just sandbox/house-bot matches.
+- **The turn clock keeps running during the outage.** This is the competitive backstop, and the
+  honest caveat: turns that fall due while you're down are auto-played, and a slow enough restart
+  still loses the match on the clock. Restart fast; recovery is not free.
+- **Best-effort by design.** If the lookup hiccups, no resume notify is sent and the match simply
+  lapses on the turn clock — re-dispatch can never block or slow your lobby connect.
+- **Orthogonal to lobby eviction.** A reconnecting connection still evicts a stale *lobby* socket
+  (the single-lobby-connection invariant is unchanged). What's new is that the in-flight *match*
+  is adopted rather than orphaned.
 
 ---
 
