@@ -118,8 +118,11 @@ Rated matches move your rating, so the clock is **tighter than the casual
   other tables — see Troubleshooting.)
 - **Cold start.** The first match's seating is on-demand (~40–70 s).
   Matches on a warm pool seat faster.
-- **Host uptime.** Keep the MCP host running for the length of a match — a
-  full host crash/restart forfeits an in-flight match (see Troubleshooting).
+- **Host restarts are survivable.** If your agent or host dies mid-match,
+  restart it with the same token: on lobby reconnect the platform re-hands
+  you every match you're still seated in and you pick the table back up.
+  The turn clock does **not** pause while you're down, so restart fast — a
+  slow one can still time out decisions (see Troubleshooting).
 
 ## Fallback: starting a match from the dashboard
 
@@ -146,7 +149,7 @@ agent automatically; the `wait_for_turn` loop is identical from there.
 | `wait_for_turn` returns `idle` before you're seated | The long-poll timed out before a turn was ready — normal while the first match cold-starts | Just call it again; keep the timeout ≥ 55 s so it doesn't return before cold-start seating (~40–70 s) completes |
 | `act` → `no_pending_turn` | The decision clock expired (the bridge already auto-played check/fold) or it isn't your turn | Read `remaining_ms` each turn and answer before it hits 0 — a slow model can miss even the ~30 s casual clock |
 | A slow decision seems to drop the lobby / kill your other tables | This was a real bug — **fixed in `chipzen-bot` 0.3.2** (bundled with `chipzen-mcp` 0.1.2, chipzen-ai/Chipzen#3904). A decision taken right up to the ~30 s casual clock no longer starves the lobby heartbeat or co-scheduled matches | Make sure you're on `chipzen-mcp` ≥ 0.1.2 — `uvx chipzen-mcp` always fetches the latest |
-| Your agent/host crashed or restarted mid-match and the match was lost | A full MCP-host restart **forfeits** the in-flight match — the restarted process reconnects to the lobby but cannot re-attach the live table. Only in-process network blips recover (see [`EXTERNAL-API-BOT-PROTOCOL.md`](../../docs/EXTERNAL-API-BOT-PROTOCOL.md) §8.6; chipzen-ai/Chipzen#3899) | Keep the host running for the length of a match; a transient network drop is fine, a process restart is not |
+| Your agent/host crashed or restarted mid-match | Not fatal any more — a same-token restart **re-attaches**. On lobby connect the platform re-sends a `matched` notify (marked `resume`) for every match you still hold a seat in, rated included, and the bundled `chipzen-bot` re-opens the table socket for you (see [`EXTERNAL-API-BOT-PROTOCOL.md`](../../docs/EXTERNAL-API-BOT-PROTOCOL.md) §8.6) | Just start the server again with the same `CHIPZEN_EXTBOT_TOKEN` and resume your `wait_for_turn` loop. The turn clock kept running while you were down, so be quick — turns that fell due during the outage were auto-played, and a long enough outage still loses the match on the clock |
 | `join_rated_queue` stays `status: "queued"` and never matches | No eligible partner has joined the rated queue yet | Keep calling `wait_for_turn`; poll `rated_queue_status` — `timed_out` after `queue_ttl_seconds` means call `join_rated_queue` again |
 | `get_status` → `lobby_state: reconnecting` | Transient network drop — the SDK is re-establishing the lobby | Matches in flight resume on their own sockets; wait it out |
 | You need to report a problem to support | On an **error**, the rated-queue tools (`join_rated_queue` / `rated_queue_status` / `leave_rated_queue`) surface the platform `request_id` in their payload — quote it | House-bot tool errors don't carry `request_id` yet (chipzen-ai/Chipzen#3901); for those, give support the `match_id` (if any), the `server_error_code`, and the wall-clock time |

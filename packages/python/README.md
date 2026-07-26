@@ -28,16 +28,19 @@ import asyncio
 import os
 from chipzen import Bot, Action, GameState, run_bot
 
+
 class MyBot(Bot):
     def decide(self, state: GameState) -> Action:
         if "check" in state.valid_actions:
             return Action.check()
         return Action.fold()
 
+
 if __name__ == "__main__":
     # An uploaded bot gets its match URL from the platform via $CHIPZEN_WS_URL.
-    asyncio.run(run_bot(os.environ["CHIPZEN_WS_URL"], MyBot(),
-                        token=os.environ.get("CHIPZEN_TOKEN")))
+    asyncio.run(
+        run_bot(os.environ["CHIPZEN_WS_URL"], MyBot(), token=os.environ.get("CHIPZEN_TOKEN"))
+    )
 ```
 
 > To run a bot **remotely from your own machine** instead of uploading it, use
@@ -69,8 +72,7 @@ The same `Bot` class works on both paths:
   import asyncio
   from chipzen import Bot, run_external_bot
 
-  asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging",
-                               token="cz_extbot_..."))
+  asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging", token="cz_extbot_..."))
   ```
 
   It holds one lobby connection and plays every match dispatched to your bot — a
