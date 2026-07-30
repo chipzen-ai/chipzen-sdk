@@ -78,7 +78,7 @@ A card string always matches the regex `^[2-9TJQKA][cdhs]$`.
 
 ## 2. Action Vocabulary
 
-Poker defines five **player action** strings. These populate Layer 1's `valid_actions` array and are used in `turn_action.action`.
+Poker defines four **player action** strings. These populate Layer 1's `valid_actions` array and are used in `turn_action.action`.
 
 | Action    | Meaning                              | Requires `params`? |
 |-----------|--------------------------------------|---------------------|
@@ -86,9 +86,13 @@ Poker defines five **player action** strings. These populate Layer 1's `valid_ac
 | `check`   | Pass when no bet to call             | No                  |
 | `call`    | Match the current bet                | No                  |
 | `raise`   | Increase the bet                     | Yes (`amount`)      |
-| `all_in`  | Bet all remaining chips              | No                  |
 
-`all_in` is a distinct action rather than a `raise` at max. This simplifies bot logic and removes ambiguity when a player's remaining stack is less than the minimum raise.
+**There is no `all_in` action.** Going all-in is not a distinct move on the wire — it is the *outcome* of a `call` or `raise` that consumes your whole stack:
+
+- **Shoving** is `raise` with `amount` equal to `max_raise`, which the server computes as your `bet_this_round + stack` — i.e. every chip you have.
+- **Calling for less than the full amount** needs nothing special: the server caps a `call` at `min(to_call, stack)`.
+
+Submitting `{"action": "all_in"}` is rejected with `action_rejected`. It passes the inbound message-shape filter (`VALID_WS_ACTIONS`) but is not produced by `get_valid_actions`, and the authoritative validator rejects any action absent from that list.
 
 ### Synthetic Actions (Server-Generated)
 
@@ -126,7 +130,6 @@ Sent once at the start of a match. Defines the rules for all hands in the match.
   "small_blind": 5,
   "big_blind": 10,
   "ante": 0,
-  "total_hands": 0,
   "num_players": 2
 }
 ```
@@ -138,8 +141,7 @@ Sent once at the start of a match. Defines the rules for all hands in the match.
 | `small_blind`    | integer | Yes      | Small blind amount. Must be > 0.                               |
 | `big_blind`      | integer | Yes      | Big blind amount. Must be >= `small_blind`.                    |
 | `ante`           | integer | No       | Per-player ante posted each hand. Default `0`.                 |
-| `total_hands`    | integer | Yes      | Number of hands to play. `0` = elimination (play until bust).  |
-| `num_players`    | integer | Yes      | Seat count N for the table (`2` for heads-up, up to `6`). Added for multi-player tables; see Section 5.9 for using it to derive table position. |
+| `num_players`    | integer | Yes      | Seat count N for the table (`2` for heads-up, up to `6`). Added in the multiplayer work (#3527); see Section 5.9 for using it to derive table position. |
 
 ### 3.2 Round Start State (`round_start.state`)
 
@@ -150,18 +152,22 @@ Sent at the beginning of each hand, before any actions.
   "hand_number": 1,
   "dealer_seat": 0,
   "your_hole_cards": ["Ah", "Kd"],
-  "stacks": [1000, 990],
+  "pot": 15,
+  "post_blind_stacks": [995, 990],
+  "stacks": [1000, 1000],
   "deck_commitment": ""
 }
 ```
 
-| Field              | Type            | Required | Description                                             |
-|--------------------|-----------------|----------|---------------------------------------------------------|
-| `hand_number`      | integer         | Yes      | 1-indexed hand number within the match.                 |
-| `dealer_seat`      | integer         | Yes      | Seat index of the dealer (button). 0-indexed.           |
-| `your_hole_cards`  | array of string | Yes      | Exactly 2 card strings dealt to the receiving player.   |
-| `stacks`           | array of integer| Yes      | Chip stacks indexed by seat, before blinds are posted.  |
-| `deck_commitment`  | string          | Yes      | `SHA-256(deck_seed \|\| deck_order)` where `deck_order` is the full 52-card sequence as a joined string. Empty string `""` if RNG verification is not enabled for this competition. See Section 6. |
+| Field               | Type            | Required | Description                                             |
+|---------------------|-----------------|----------|---------------------------------------------------------|
+| `hand_number`       | integer         | Yes      | 1-indexed hand number within the match.                 |
+| `dealer_seat`       | integer         | Yes      | Seat index of the dealer (button). 0-indexed.           |
+| `your_hole_cards`   | array of string | Yes      | Exactly 2 card strings dealt to the receiving player.   |
+| `pot`               | integer         | No       | Chips already in the pot at hand start — the posted blinds (possibly all-in-capped). Added in #3835; older streams omit it. |
+| `post_blind_stacks` | array of integer| No       | Chip stacks indexed by seat AFTER blinds are posted. `stacks[i] - post_blind_stacks[i]` is seat i's posted blind. Added in #3835; older streams omit it. |
+| `stacks`            | array of integer| Yes      | Chip stacks indexed by seat, before blinds are posted.  |
+| `deck_commitment`   | string          | Yes      | `SHA-256(deck_seed \|\| deck_order)` where `deck_order` is the full 52-card sequence as a joined string. Empty string `""` if RNG verification is not enabled for this competition. See Section 6. |
 
 ### 3.3 Turn Request State (`turn_request.state`)
 
@@ -236,7 +242,6 @@ Parameters accompanying the chosen action in `turn_action.action`.
 | `check`   | `{}` or omitted                        | None.                                              |
 | `call`    | `{}` or omitted                        | None.                                              |
 | `raise`   | `{"amount": <integer>}`                | `min_raise <= amount <= max_raise`                 |
-| `all_in`  | `{}` or omitted                        | None. Server uses the player's full remaining stack.|
 
 **Example — raise to 60:**
 ```json
@@ -261,16 +266,32 @@ Broadcast to all participants after each action. Reveals what a player did (but 
 ```json
 {
   "seat": 1,
-  "action": "call",
-  "amount": 20
+  "action": "raise",
+  "amount": 1200,
+  "pot": 2000,
+  "stacks": [9600, 8000],
+  "is_timeout": false
 }
 ```
 
-| Field   | Type    | Required | Description                                              |
-|---------|---------|----------|----------------------------------------------------------|
-| `seat`  | integer | Yes      | Seat of the player who acted.                            |
-| `action`| string  | Yes      | The action taken.                                        |
-| `amount`| integer | Yes      | Chips committed. `0` for `fold` and `check`.             |
+| Field        | Type             | Required | Description                                                                                              |
+|--------------|------------------|----------|--------------------------------------------------------------------------------------------------------|
+| `seat`       | integer          | Yes      | Seat of the player who acted.                                                                           |
+| `action`     | string           | Yes      | The action taken.                                                                                       |
+| `amount`     | integer          | Yes      | For `raise`, the raise-"to" total; for `call` the call amount. `0` for `fold` and `check`.              |
+| `pot`        | integer          | Yes      | **POST-action** pot — the total pot AFTER the acting seat's chips for this action are committed (#3102). |
+| `stacks`     | array of integer | Yes      | **POST-action** per-seat chip stacks, indexed by seat (`stacks[seat]`). Only the acting seat's stack changes; others carry their current live stack (#3102). |
+| `is_timeout` | boolean          | Yes      | `true` if the action was a server-substituted default after a timeout/disconnect.                       |
+
+**`pot` is the post-action pot, not the pre-action pot (#3102).** It equals the
+pot *entering* the action plus the acting seat's incremental contribution for
+this action (the chips it just committed — for a `raise` this is `amount` minus
+that seat's prior street contribution, capped at its stack; for a `call` it is
+the call amount; for `fold`/`check` it is `0`, so `pot` is unchanged). Worked
+example: preflop both seats put in 400 → pot 800 carried to the flop; the actor
+then raises-to 1200 on the flop with no prior flop contribution → `pot` is
+`800 + 1200 = 2000`. `stacks` are likewise the post-action stacks so a single
+`turn_result` line reads coherently (e.g. "raises to $1200 | Pot: 2000").
 
 ### 3.7 Phase Change State (`phase_change.state`)
 
@@ -468,7 +489,7 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
       {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false}
     ]
   },
-  "valid_actions": ["fold", "call", "raise", "all_in"]
+  "valid_actions": ["fold", "call", "raise"]
 }
 ```
 
@@ -527,7 +548,7 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
       {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false}
     ]
   },
-  "valid_actions": ["fold", "call", "raise", "all_in"]
+  "valid_actions": ["fold", "call", "raise"]
 }
 ```
 
@@ -602,7 +623,7 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
       {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false}
     ]
   },
-  "valid_actions": ["check", "raise", "all_in"]
+  "valid_actions": ["check", "raise"]
 }
 ```
 
@@ -663,7 +684,7 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
       {"seat": 1, "action": "check", "amount": 0, "phase": "flop", "is_timeout": false}
     ]
   },
-  "valid_actions": ["check", "raise", "all_in"]
+  "valid_actions": ["check", "raise"]
 }
 ```
 
@@ -725,7 +746,7 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
       {"seat": 0, "action": "raise", "amount": 40, "phase": "flop", "is_timeout": false}
     ]
   },
-  "valid_actions": ["fold", "call", "raise", "all_in"]
+  "valid_actions": ["fold", "call", "raise"]
 }
 ```
 
@@ -814,14 +835,17 @@ In heads-up (2-player) play:
 
 - `min_raise` is the minimum legal **total bet**. In standard NLHE, the minimum raise is the previous raise increment plus the current bet to match.
 - `max_raise` is the acting player's effective stack (the most they can put in).
-- If a player's stack is less than `min_raise`, `raise` is not in `valid_actions`. The player may still go `all_in`.
+- If a player's stack is less than `min_raise`, `raise` is **still** offered — the server clamps the minimum down to `max_raise` rather than dropping the action, so the short stack can shove.
 - The `amount` in raise params is the **total bet size**, not the increment.
 
 ### 5.5 All-In
 
-- `all_in` commits the player's entire remaining stack.
-- It appears in `valid_actions` whenever the player has chips and is not already all-in.
-- When a player goes all-in for less than a full raise, this does **not** reopen betting for a player who has already acted in this round.
+All-in is a **state**, not an action. There is no `all_in` on the wire, and the state is not surfaced as its own wire field — you infer it from a seat's `stack` reaching 0 with the hand still live.
+
+- A player is all-in once a `call` or `raise` has taken their stack to zero. Shoving deliberately means `raise` with `amount = max_raise`.
+- `valid_actions` is empty for a player who is already all-in: they have no decision left, so the server does not prompt them.
+- `raise` is offered only while at least one opponent is still able to act. Against opponents who are all folded or all-in, there is nobody left to raise, so only `fold`/`check`/`call` appear.
+- When a player goes all-in for **less than a full raise**, this does **not** reopen betting for a player who has already acted in this round.
 
 ### 5.6 Split Pots
 
@@ -856,7 +880,7 @@ seats_after_button = (your_seat - dealer_seat) mod num_players
 - `0` is the button. In heads-up the button posts the small blind and acts first preflop (Section 5.3), so seat-after-button `0` is the small blind and `1` is the big blind.
 - For three or more players, `1` is the small blind, `2` is the big blind, and the remaining offsets are the seats between the big blind and the button, counted clockwise. The offset `num_players - 1`, immediately to the button's right, is the cutoff and acts last postflop.
 
-**Silent-failure risk.** Because `opponent_stacks` is a list, a heads-up bot that hardcodes `opponent_stacks[0]` keeps running at a 3-6 seat table but reads only one neighbor's stack instead of aggregating across opponents. This is a behavioral bug, not a crash, so it will not surface as an error or a rejected action. Iterate the list (for example `sum`, `min`, `max`, or index by the specific seat you care about) rather than assuming a single opponent. The reference starters in `packages/<lang>/starters/` show the seat-count-aware pattern, and `docs/DEV-MANUAL.md` carries the bot-author guidance.
+**Silent-failure risk.** Because `opponent_stacks` is a list, a heads-up bot that hardcodes `opponent_stacks[0]` keeps running at a 3-6 seat table but reads only one neighbor's stack instead of aggregating across opponents. This is a behavioral bug, not a crash, so it will not surface as an error or a rejected action. Iterate the list (for example `sum`, `min`, `max`, or index by the specific seat you care about) rather than assuming a single opponent. The reference starters in `sdk/starters/` show the seat-count-aware pattern, and `docs/DEV-MANUAL.md` carries the bot-author guidance.
 
 ---
 
