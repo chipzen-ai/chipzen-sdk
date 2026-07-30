@@ -38,12 +38,12 @@ EXPECTED_TOOLS = {
 }
 
 
-def _publish(registry: TurnRegistry, match_id: str = MATCH) -> None:
+def _publish(registry: TurnRegistry, match_id: str = MATCH, request_id: str = "req-1") -> None:
     now = time.time()
     registry.publish_turn(
         TurnSnapshot(
             match_id=match_id,
-            request_id="req-1",
+            request_id=request_id,
             published_at=now,
             deadline_at=now + 30.0,
             state={"hand_number": 1, "valid_actions": ["check", "raise"], "min_raise": 10},
@@ -92,6 +92,18 @@ def test_wait_for_turn_idle_and_your_turn() -> None:
     assert turn["match_id"] == MATCH
     assert turn["remaining_ms"] > 0
     assert turn["state"]["valid_actions"] == ["check", "raise"]
+    # chipzen-ai/Chipzen#3906: the turn carries its id AND the nudge to quote
+    # it back to act, so an LLM agent actually uses the guard.
+    assert turn["request_id"] == "req-1"
+    assert "request_id" in turn["note"] and "stale_turn" in turn["note"]
+
+
+def test_get_match_state_turn_carries_the_request_id_hint() -> None:
+    registry = TurnRegistry()
+    _publish(registry)
+    view = get_match_state_impl(registry, MATCH)
+    assert view["turn"]["request_id"] == "req-1"
+    assert "request_id" in view["turn"]["note"]
 
 
 def test_get_match_state_unknown_match() -> None:
@@ -130,6 +142,70 @@ class TestAct:
         registry = TurnRegistry()
         _publish(registry)
         assert act_impl(registry, MATCH, action)["accepted"] is True
+
+
+class TestActRequestId:
+    """chipzen-ai/Chipzen#3906: the optional per-turn optimistic-concurrency token."""
+
+    def test_matching_request_id_accepted_and_echoed(self) -> None:
+        registry = TurnRegistry()
+        _publish(registry, request_id="A")
+        result = act_impl(registry, MATCH, "check", request_id="A")
+        assert result["accepted"] is True and result["request_id"] == "A"
+
+    def test_stale_request_id_is_refused_with_actionable_note(self) -> None:
+        # The issue's repro, through the tool surface: turn A observed, bridge
+        # fell back, turn B published, the agent's late act for A arrives.
+        registry = TurnRegistry()
+        _publish(registry, request_id="A")
+        registry.clear_pending(MATCH)
+        _publish(registry, request_id="B")
+
+        result = act_impl(registry, MATCH, "raise", amount=60, request_id="A")
+        assert result["accepted"] is False
+        assert result["error"] == "stale_turn"
+        assert result["request_id"] == "A"
+        assert result["pending_request_id"] == "B"
+        assert "wait_for_turn" in result["note"]
+        # Turn B was NOT answered by the stale act -- it is still pending.
+        assert registry.pending_request_id(MATCH) == "B"
+        # ...and answering B properly still works.
+        assert act_impl(registry, MATCH, "check", request_id="B")["accepted"] is True
+
+    def test_omitted_request_id_is_backward_compatible(self) -> None:
+        # Agents built against 0.1.x call act without request_id; that must keep
+        # working (documented as the old, unsafe behaviour).
+        registry = TurnRegistry()
+        _publish(registry, request_id="A")
+        assert act_impl(registry, MATCH, "check")["accepted"] is True
+
+    def test_stale_id_with_nothing_pending_reports_no_pending_turn(self) -> None:
+        registry = TurnRegistry()
+        _publish(registry, request_id="A")
+        registry.clear_pending(MATCH)
+        result = act_impl(registry, MATCH, "check", request_id="A")
+        assert result["accepted"] is False and result["error"] == "no_pending_turn"
+
+
+async def test_act_tool_schema_exposes_request_id() -> None:
+    """An LLM agent can only quote the token if the tool schema advertises it."""
+    server = build_server(TurnRegistry())
+    act_tool = next(tool for tool in await server.list_tools() if tool.name == "act")
+    assert "request_id" in act_tool.inputSchema["properties"]
+    # Optional: only match_id/action are required.
+    assert set(act_tool.inputSchema.get("required", [])) == {"match_id", "action"}
+    assert "request_id" in (act_tool.description or "")
+
+
+async def test_act_tool_rejects_a_stale_turn_end_to_end() -> None:
+    registry = TurnRegistry()
+    server = build_server(registry)
+    _publish(registry, request_id="A")
+    registry.clear_pending(MATCH)
+    _publish(registry, request_id="B")
+    result = await server.call_tool("act", {"match_id": MATCH, "action": "fold", "request_id": "A"})
+    assert "stale_turn" in str(result)
+    assert registry.pending_request_id(MATCH) == "B"  # B untouched
 
 
 def test_list_matches_and_last_result() -> None:

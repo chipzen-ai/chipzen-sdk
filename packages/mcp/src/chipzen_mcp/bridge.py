@@ -65,6 +65,18 @@ DEFAULT_SAFETY_MARGIN_MS = 1_500
 #: "most recent across all matches" answer is always retained.
 MAX_FINISHED_MATCHES = 50
 
+#: Outcomes of :meth:`TurnRegistry.submit_action` (mapped 1:1 onto ``act``'s
+#: response by :func:`chipzen_mcp.server.act_impl`).
+#:
+#: ``SUBMIT_STALE_TURN`` is the optimistic-concurrency verdict added for
+#: chipzen-ai/Chipzen#3906: the caller quoted a ``request_id`` that is NOT the
+#: turn currently pending on that match, so the action was computed against a
+#: state the table has already moved past. Answering it would silently apply a
+#: decision to the WRONG turn, so it is refused instead.
+SUBMIT_ACCEPTED = "accepted"
+SUBMIT_NO_PENDING_TURN = "no_pending_turn"
+SUBMIT_STALE_TURN = "stale_turn"
+
 
 def state_payload(state: GameState) -> dict[str, Any]:
     """Serialize an SDK :class:`chipzen.GameState` into a JSON-safe dict.
@@ -124,11 +136,21 @@ class TurnSnapshot:
 
 @dataclass
 class _PendingTurn:
-    """Internal rendezvous between ``BridgeBot.decide`` and ``act``."""
+    """Internal rendezvous between ``BridgeBot.decide`` and ``act``.
+
+    ``cancelled`` is the shutdown sentinel (chipzen-ai/Chipzen#3900): the
+    registry sets it (and the event) when the session is closing, so
+    ``decide()`` stops waiting immediately instead of holding the SDK session
+    thread for the rest of its decision budget. It is a FLAG, never a fake
+    :class:`chipzen.Action` -- nothing that could be mistaken for a real
+    decision is ever handed to the SDK; ``decide()`` plays its normal
+    check/fold fallback on this path.
+    """
 
     snapshot: TurnSnapshot
     event: threading.Event = field(default_factory=threading.Event)
     action: Action | None = None
+    cancelled: bool = False
 
 
 #: Per-match gateway connection states surfaced in match summaries.
@@ -190,6 +212,10 @@ class TurnRegistry:
         #: ``last_result()`` can pick the most-recently-produced result
         #: across matches instead of the first in insertion order.
         self._result_counter = 0
+        #: Set by :meth:`close` when the session is shutting down: no turn can
+        #: be pending any more, so waiters return at once and any turn the SDK
+        #: publishes mid-teardown is born cancelled (chipzen-ai/Chipzen#3900).
+        self._closed = False
 
     def _next_result_seq(self) -> int:
         """Next monotonic result rank. Caller MUST hold ``self._lock``."""
@@ -229,9 +255,19 @@ class TurnRegistry:
             record.reconnect_attempt = attempt
 
     def publish_turn(self, snapshot: TurnSnapshot) -> _PendingTurn:
-        """Expose a pending decision and return the rendezvous to block on."""
+        """Expose a pending decision and return the rendezvous to block on.
+
+        After :meth:`close` the returned rendezvous is already cancelled and is
+        NOT registered as pending: a ``turn_request`` that lands mid-teardown
+        must not park the session thread on an event nobody will ever set
+        (chipzen-ai/Chipzen#3900).
+        """
         pending = _PendingTurn(snapshot=snapshot)
         with self._turn_available:
+            if self._closed:
+                pending.cancelled = True
+                pending.event.set()
+                return pending
             record = self._matches.setdefault(
                 snapshot.match_id, _MatchRecord(match_id=snapshot.match_id)
             )
@@ -247,6 +283,46 @@ class TurnRegistry:
             record = self._matches.get(match_id)
             if record is not None:
                 record.pending = None
+
+    def close(self) -> int:
+        """Cancel every pending turn and refuse new ones (shutdown).
+
+        Called by :meth:`ExternalSession.stop` so a session that dies with a
+        turn in flight unwinds promptly (chipzen-ai/Chipzen#3900). Without
+        this, ``BridgeBot.decide`` sits on its per-turn event for the rest of
+        the ~28.5s decision budget while blocking the SDK session thread, so
+        ``stop()``'s ``thread.join(timeout)`` times out and the process lingers
+        to the stop cap (~10s) before abandoning the thread.
+
+        Resolving each :class:`_PendingTurn` with the ``cancelled`` flag makes
+        ``decide()`` return its normal check/fold fallback immediately -- no
+        synthetic action is invented, and the turn is no longer answerable via
+        ``act`` (it is dropped from its match record here).
+
+        Returns:
+            How many pending turns were cancelled.
+
+        Terminal for the session; :meth:`reopen` (called by
+        :meth:`ExternalSession.start`) puts the registry back in service.
+        """
+        with self._turn_available:
+            self._closed = True
+            cancelled = []
+            for record in self._matches.values():
+                if record.pending is not None:
+                    cancelled.append(record.pending)
+                    record.pending = None
+            # Wake any wait_for_any_turn sleeper so it sees the closed registry.
+            self._turn_available.notify_all()
+        for pending in cancelled:
+            pending.cancelled = True
+            pending.event.set()
+        return len(cancelled)
+
+    def reopen(self) -> None:
+        """Undo :meth:`close` so a restarted session can serve turns again."""
+        with self._lock:
+            self._closed = False
 
     def record_round_result(self, match_id: str, result: dict[str, Any]) -> None:
         with self._lock:
@@ -291,11 +367,14 @@ class TurnRegistry:
         Returns the pending turn with the EARLIEST local deadline when
         several matches are waiting, so a multi-tabling agent naturally
         serves the most urgent seat first. Safe to call repeatedly: an
-        unanswered turn is returned again on the next call.
+        unanswered turn is returned again on the next call. Returns ``None``
+        at once on a :meth:`close`\\ d registry -- no further turn can arrive.
         """
         deadline = time.monotonic() + max(0.0, timeout_s)
         with self._turn_available:
             while True:
+                if self._closed:
+                    return None
                 pending = [r.pending for r in self._matches.values() if r.pending is not None]
                 if pending:
                     return min(pending, key=lambda p: p.snapshot.deadline_at).snapshot
@@ -304,21 +383,51 @@ class TurnRegistry:
                     return None
                 self._turn_available.wait(timeout=remaining)
 
-    def submit_action(self, match_id: str, action: Action) -> bool:
+    def submit_action(self, match_id: str, action: Action, *, request_id: str | None = None) -> str:
         """Answer the pending turn for ``match_id``.
 
-        Returns ``False`` when there is nothing pending (not your turn, the
-        match ended, or the bridge already fell back on timeout).
+        ``request_id`` is the optimistic-concurrency token from the turn the
+        caller actually observed (``wait_for_turn`` / ``get_match_state``
+        surface it as ``request_id``). When supplied it MUST match the turn
+        currently pending on that match; otherwise the submission is refused
+        as :data:`SUBMIT_STALE_TURN` and the pending turn is left untouched.
+
+        That guard closes chipzen-ai/Chipzen#3906: keyed on ``match_id`` alone,
+        an ``act`` that arrives after the bridge's local fallback already
+        cleared turn A lands on the NEXT turn B of the same match -- applying a
+        decision computed against A's state, and reporting success. The token
+        makes that detectable instead of silent.
+
+        ``request_id=None`` preserves the pre-#3906 behaviour (answer whatever
+        is pending) so existing agents keep working; passing it is strongly
+        recommended.
+
+        Returns:
+            :data:`SUBMIT_ACCEPTED` when the pending turn was answered,
+            :data:`SUBMIT_NO_PENDING_TURN` when nothing is pending (not your
+            turn, match ended, or the bridge already fell back on timeout), or
+            :data:`SUBMIT_STALE_TURN` when ``request_id`` names a turn that is
+            no longer the pending one.
         """
         with self._lock:
             record = self._matches.get(match_id)
             if record is None or record.pending is None:
-                return False
+                return SUBMIT_NO_PENDING_TURN
             pending = record.pending
+            if request_id is not None and pending.snapshot.request_id != request_id:
+                return SUBMIT_STALE_TURN
             record.pending = None
         pending.action = action
         pending.event.set()
-        return True
+        return SUBMIT_ACCEPTED
+
+    def pending_request_id(self, match_id: str) -> str | None:
+        """``request_id`` of the turn currently pending on ``match_id``, if any."""
+        with self._lock:
+            record = self._matches.get(match_id)
+            if record is None or record.pending is None:
+                return None
+            return record.pending.snapshot.request_id
 
     def get_match(self, match_id: str) -> dict[str, Any] | None:
         """Full JSON view of one match (or ``None`` if unknown)."""
@@ -441,6 +550,11 @@ class BridgeBot(Bot):
 
     # -- the decision itself ------------------------------------------------
 
+    @staticmethod
+    def _fallback(state: GameState) -> Action:
+        """The action the server would auto-apply for us: check if legal, else fold."""
+        return Action.check() if "check" in state.valid_actions else Action.fold()
+
     def decide(self, state: GameState) -> Action:
         """Publish the turn, then block until ``act`` answers or time runs out.
 
@@ -448,6 +562,13 @@ class BridgeBot(Bot):
         would auto-apply anyway (``check`` if legal, else ``fold``) -- but
         does it EARLY enough to stay inside the clock, and logs loudly so a
         consistently-slow agent is visible rather than silently folding.
+
+        Shutdown is a third exit (chipzen-ai/Chipzen#3900): when
+        :meth:`TurnRegistry.close` cancels the pending turn this returns the
+        same fallback IMMEDIATELY rather than parking the SDK session thread
+        for the rest of the budget -- which is what used to make process exit
+        linger to ``ExternalSession.stop``'s ~10s cap. Logged at INFO, not
+        WARNING: a host that went away is not a slow agent.
         """
         budget_ms = max(0, self._turn_timeout_ms - self._safety_margin_ms)
         now = time.time()
@@ -460,11 +581,20 @@ class BridgeBot(Bot):
         )
         pending = self._registry.publish_turn(snapshot)
 
-        if pending.event.wait(timeout=budget_ms / 1000.0) and pending.action is not None:
-            return pending.action
+        if pending.event.wait(timeout=budget_ms / 1000.0):
+            if pending.cancelled:
+                fallback = self._fallback(state)
+                logger.info(
+                    "match %s: session shutting down mid-turn; playing %s and returning now",
+                    self._match_id,
+                    fallback.action,
+                )
+                return fallback
+            if pending.action is not None:
+                return pending.action
 
         self._registry.clear_pending(self._match_id)
-        fallback = Action.check() if "check" in state.valid_actions else Action.fold()
+        fallback = self._fallback(state)
         logger.warning(
             "match %s: no act() within %dms budget; falling back to %s",
             self._match_id,
@@ -695,6 +825,8 @@ class ExternalSession:
         self._stop_requested.clear()
         self._loop_ready.clear()
         self._error = None
+        # A previous stop() closed the registry; put it back in service.
+        self._registry.reopen()
         self._presence.transition(LOBBY_STARTING, "session thread starting")
         sdk_logger = logging.getLogger(SDK_LOGGER_NAME)
         # The tap feeds on INFO-level SDK events; an embedding app that never
@@ -715,6 +847,14 @@ class ExternalSession:
         for up to ``drain_grace_s`` before cancelling them. Idempotent; safe
         to call when the session never started or already finished.
 
+        First, though, it :meth:`TurnRegistry.close`\\ s the registry
+        (chipzen-ai/Chipzen#3900). A ``decide()`` that is blocking the session
+        thread on a pending turn cannot be interrupted by cancelling the
+        asyncio task -- so cancelling the turn is what lets that thread reach
+        the loop's cancellation and join promptly, instead of the join timing
+        out at ``timeout`` and the daemon thread being abandoned (the ~10s
+        linger + "still winding down at exit" warning).
+
         Returns:
             ``True`` when the thread has exited within ``timeout`` seconds
             (or was never running); ``False`` if it is still winding down --
@@ -725,6 +865,12 @@ class ExternalSession:
         thread = self._thread
         stopped = True
         if thread is not None and thread.is_alive():
+            # Unblock a decide() that is parked on a pending turn BEFORE
+            # joining -- otherwise the session thread cannot notice the
+            # cancellation until its decision budget expires (#3900).
+            cancelled = self._registry.close()
+            if cancelled:
+                logger.info("stop: cancelled %d pending turn(s) mid-shutdown", cancelled)
             # Wait for the loop to exist (start() may have just been called),
             # then set the stop event ON the session loop.
             if self._loop_ready.wait(timeout=min(timeout, 5.0)):

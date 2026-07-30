@@ -22,6 +22,9 @@ from chipzen_mcp.bridge import (
     MATCH_CONN_RECONNECTING,
     MAX_FINISHED_MATCHES,
     SDK_LOGGER_NAME,
+    SUBMIT_ACCEPTED,
+    SUBMIT_NO_PENDING_TURN,
+    SUBMIT_STALE_TURN,
     BridgeBot,
     ExternalSession,
     SdkLogTap,
@@ -47,11 +50,13 @@ def _wait_until(predicate, timeout_s: float = 5.0) -> bool:
     return predicate()
 
 
-def _snapshot(match_id: str = MATCH, deadline_offset: float = 30.0) -> TurnSnapshot:
+def _snapshot(
+    match_id: str = MATCH, deadline_offset: float = 30.0, request_id: str = "req-1"
+) -> TurnSnapshot:
     now = time.time()
     return TurnSnapshot(
         match_id=match_id,
-        request_id="req-1",
+        request_id=request_id,
         published_at=now,
         deadline_at=now + deadline_offset,
         state={"hand_number": 1, "valid_actions": ["check", "raise"]},
@@ -102,15 +107,15 @@ class TestTurnRegistry:
     def test_submit_action_resolves_pending(self) -> None:
         registry = TurnRegistry()
         pending = registry.publish_turn(_snapshot())
-        assert registry.submit_action(MATCH, Action.check()) is True
+        assert registry.submit_action(MATCH, Action.check()) == SUBMIT_ACCEPTED
         assert pending.event.is_set()
         assert pending.action is not None and pending.action.action == "check"
         # Consumed: nothing pending any more.
         assert registry.wait_for_any_turn(0.0) is None
-        assert registry.submit_action(MATCH, Action.check()) is False
+        assert registry.submit_action(MATCH, Action.check()) == SUBMIT_NO_PENDING_TURN
 
     def test_submit_action_unknown_match(self) -> None:
-        assert TurnRegistry().submit_action("nope", Action.fold()) is False
+        assert TurnRegistry().submit_action("nope", Action.fold()) == SUBMIT_NO_PENDING_TURN
 
     def test_match_views_and_results(self) -> None:
         registry = TurnRegistry()
@@ -201,6 +206,117 @@ class TestTurnRegistry:
         summary = registry.list_matches()[0]
         assert summary["connection"] == MATCH_CONN_ABANDONED
         assert summary["reconnect_attempt"] is None
+
+
+class TestStaleTurnGuard:
+    """chipzen-ai/Chipzen#3906: an act must not land on a turn it never saw.
+
+    ``submit_action`` used to be keyed on ``match_id`` alone, so an action that
+    arrived after the bridge's local fallback cleared turn A was applied to the
+    NEXT turn B of the same match -- and reported success. Quoting the turn's
+    ``request_id`` makes that a refusal instead.
+    """
+
+    def test_late_act_for_cleared_turn_cannot_land_on_the_next_turn(self) -> None:
+        # The issue's deterministic 4-step repro.
+        registry = TurnRegistry()
+        # 1. publish turn A; the agent observes request_id "A"
+        pending_a = registry.publish_turn(_snapshot(request_id="A"))
+        observed = registry.wait_for_any_turn(0.0)
+        assert observed is not None and observed.request_id == "A"
+        # 2. the bridge's decision budget elapses -> local fallback
+        registry.clear_pending(MATCH)
+        # 3. the hand advances -> turn B is published on the same match
+        pending_b = registry.publish_turn(_snapshot(request_id="B"))
+        # 4. the agent's late act for A must be REFUSED...
+        assert (
+            registry.submit_action(MATCH, Action.raise_to(60), request_id="A") == SUBMIT_STALE_TURN
+        )
+        # ...and turn B must not have received it (this is the actual defect).
+        assert pending_b.event.is_set() is False
+        assert pending_b.action is None
+        assert pending_a.event.is_set() is False
+        # B is still pending and still answerable by quoting ITS id.
+        assert registry.submit_action(MATCH, Action.check(), request_id="B") == SUBMIT_ACCEPTED
+        assert pending_b.action is not None and pending_b.action.action == "check"
+
+    def test_matching_request_id_is_accepted(self) -> None:
+        registry = TurnRegistry()
+        pending = registry.publish_turn(_snapshot(request_id="r-7"))
+        assert registry.submit_action(MATCH, Action.call(), request_id="r-7") == SUBMIT_ACCEPTED
+        assert pending.action is not None and pending.action.action == "call"
+
+    def test_stale_id_on_a_match_with_nothing_pending_is_no_pending_turn(self) -> None:
+        # No turn to be stale against -- the existing no_pending_turn verdict
+        # already says "nothing is awaiting you".
+        registry = TurnRegistry()
+        registry.match_started(MATCH)
+        assert (
+            registry.submit_action(MATCH, Action.fold(), request_id="A") == SUBMIT_NO_PENDING_TURN
+        )
+
+    def test_omitting_request_id_keeps_legacy_behaviour(self) -> None:
+        # Backward compatibility contract: agents that never pass request_id
+        # still answer whatever is pending (the pre-#3906, unsafe path).
+        registry = TurnRegistry()
+        registry.publish_turn(_snapshot(request_id="A"))
+        registry.clear_pending(MATCH)
+        pending_b = registry.publish_turn(_snapshot(request_id="B"))
+        assert registry.submit_action(MATCH, Action.check()) == SUBMIT_ACCEPTED
+        assert pending_b.action is not None
+
+    def test_pending_request_id_reports_the_live_turn(self) -> None:
+        registry = TurnRegistry()
+        assert registry.pending_request_id(MATCH) is None  # unknown match
+        registry.publish_turn(_snapshot(request_id="live-1"))
+        assert registry.pending_request_id(MATCH) == "live-1"
+        registry.clear_pending(MATCH)
+        assert registry.pending_request_id(MATCH) is None
+
+
+class TestRegistryClose:
+    """chipzen-ai/Chipzen#3900: shutdown must resolve pending turns."""
+
+    def test_close_cancels_pending_and_unblocks_decide(self) -> None:
+        registry = TurnRegistry()
+        pending = registry.publish_turn(_snapshot())
+        assert registry.close() == 1
+        assert pending.cancelled is True and pending.event.is_set()
+        # A cancelled turn is NOT answerable and carries no action -- nothing
+        # that could be mistaken for a real decision reaches the SDK.
+        assert pending.action is None
+        assert registry.submit_action(MATCH, Action.check()) == SUBMIT_NO_PENDING_TURN
+        assert registry.status()["pending_turns"] == 0
+
+    def test_close_is_idempotent(self) -> None:
+        registry = TurnRegistry()
+        registry.publish_turn(_snapshot())
+        assert registry.close() == 1
+        assert registry.close() == 0
+
+    def test_turn_published_after_close_is_born_cancelled(self) -> None:
+        # A turn_request landing mid-teardown must not park the session thread
+        # on an event nobody will set.
+        registry = TurnRegistry()
+        registry.close()
+        pending = registry.publish_turn(_snapshot())
+        assert pending.cancelled is True and pending.event.is_set()
+        assert registry.status()["pending_turns"] == 0
+
+    def test_waiters_return_immediately_when_closed(self) -> None:
+        registry = TurnRegistry()
+        registry.close()
+        started = time.monotonic()
+        assert registry.wait_for_any_turn(5.0) is None
+        assert time.monotonic() - started < 1.0
+
+    def test_reopen_puts_the_registry_back_in_service(self) -> None:
+        registry = TurnRegistry()
+        registry.close()
+        registry.reopen()
+        pending = registry.publish_turn(_snapshot())
+        assert pending.cancelled is False
+        assert registry.wait_for_any_turn(0.0) is not None
 
 
 class TestTurnRegistryEviction:
@@ -330,6 +446,42 @@ class TestBridgeBot:
         bot = self._started_bot(registry, timeout_ms=50, margin_ms=0)
         action = bot.decide(_turn_state(valid_actions=["fold", "call"], to_call=40))
         assert action.action == "fold"
+
+    def test_decide_returns_immediately_when_the_turn_is_cancelled(self) -> None:
+        """chipzen-ai/Chipzen#3900: a close() mid-decision unblocks decide() now.
+
+        With a 30s budget the pre-fix decide() sat on its event until the budget
+        expired -- blocking the SDK session thread and forcing stop()'s join to
+        time out. The cancelled turn resolves it at once, with a REAL legal
+        action (never a sentinel Action) so the SDK can send it safely.
+        """
+        registry = TurnRegistry()
+        bot = self._started_bot(registry, timeout_ms=30_000, margin_ms=0)
+        threading.Timer(0.05, registry.close).start()
+        started = time.monotonic()
+        action = bot.decide(_turn_state(valid_actions=["check", "raise"]))
+        elapsed = time.monotonic() - started
+        assert action.action == "check"
+        assert action == Action.check()  # the SDK's own fallback, not a sentinel
+        assert elapsed < 2.0, f"decide() lingered {elapsed:.2f}s after cancel"
+
+    def test_decide_prefers_a_submitted_action_over_cancellation(self) -> None:
+        # An act that already landed is honoured; cancellation only wins when
+        # nothing was submitted.
+        registry = TurnRegistry()
+        bot = self._started_bot(registry, timeout_ms=5000, margin_ms=0)
+
+        def answer_then_close() -> None:
+            got = registry.wait_for_any_turn(2.0)
+            assert got is not None
+            registry.submit_action(got.match_id, Action.raise_to(60), request_id=got.request_id)
+            registry.close()
+
+        answerer = threading.Thread(target=answer_then_close)
+        answerer.start()
+        action = bot.decide(_turn_state())
+        answerer.join()
+        assert action.action == "raise" and action.amount == 60
 
     def test_lifecycle_hooks_record_results(self) -> None:
         registry = TurnRegistry()
@@ -525,6 +677,45 @@ class TestExternalSession:
         assert started.wait(timeout=5.0)  # the session (and straggler) is live
         assert session.stop(timeout=5.0) is True
         assert finished.is_set()  # the straggler got its grace window
+
+    def test_stop_with_a_pending_turn_joins_fast(self) -> None:
+        """chipzen-ai/Chipzen#3900: host death mid-turn must not linger ~10s.
+
+        Faithful reproduction of the mechanism: ``decide()`` runs synchronously
+        ON the session thread, so while it waits for an ``act`` the session's
+        event loop cannot even process ``stop()``'s cancellation. Pre-fix,
+        ``stop()`` therefore burned its whole ``timeout`` (10.08s measured on
+        the published wheel), returned ``False``, abandoned the daemon thread
+        and logged "session still winding down at exit". With the pending turn
+        cancelled on ``stop()``, ``decide()`` returns at once and the thread
+        joins in well under a second.
+        """
+        registry = TurnRegistry()
+        bot = BridgeBot(registry, safety_margin_ms=0)
+        bot.on_match_start({"match_id": MATCH, "turn_timeout_ms": 30_000})
+        in_decide = threading.Event()
+        decided: dict[str, object] = {}
+
+        async def blocks_in_decide() -> None:
+            in_decide.set()
+            # Synchronous decide() on the session thread: the loop is blocked
+            # here, exactly as in the real SDK session.
+            decided["action"] = bot.decide(_turn_state(valid_actions=["check", "raise"]))
+            await asyncio.Event().wait()
+
+        session = ExternalSession(CONFIG, registry, runner=blocks_in_decide)
+        session.start()
+        assert in_decide.wait(timeout=5.0)
+        assert _wait_until(lambda: registry.status()["pending_turns"] == 1)
+
+        started = time.monotonic()
+        assert session.stop(timeout=10.0) is True  # pre-fix: False at the cap
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 3.0, f"stop() lingered {elapsed:.2f}s with a turn pending"
+        assert registry.status()["pending_turns"] == 0
+        action = decided.get("action")
+        assert action is not None and action.action == "check"  # type: ignore[attr-defined]
 
     def test_session_completing_normally(self) -> None:
         async def quick() -> list:

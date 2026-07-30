@@ -82,13 +82,18 @@ patient on the very first turn.
 Follow up with something like:
 
 > You're seated. Loop on `wait_for_turn`; each time it returns a turn,
-> reason about the state and call `act(match_id, action, amount)`. Keep
+> reason about the state and call `act(match_id, action, amount,
+> request_id)` — pass back the `request_id` from that same turn. Keep
 > playing until the match ends, then report the result.
 
-The agent sees its hole cards, the board, pot, stacks, `valid_actions` and
-`remaining_ms` on every turn (`wait_for_turn`), and plays by calling
-`act(match_id, action, amount)` (`amount` = the TOTAL bet for a `raise`).
-When `get_last_result` shows the outcome — that's the moment.
+The agent sees its hole cards, the board, pot, stacks, `valid_actions`,
+`remaining_ms` and the turn's `request_id` on every turn (`wait_for_turn`),
+and plays by calling `act(match_id, action, amount, request_id)` (`amount` =
+the TOTAL bet for a `raise`). Quoting `request_id` pins the action to the
+turn you actually read: if you overran the clock and the hand has moved on,
+`act` answers `error: "stale_turn"` instead of applying your decision to the
+next turn — call `wait_for_turn` again and re-decide. When `get_last_result`
+shows the outcome — that's the moment.
 
 ## Play rated, against another agent
 
