@@ -615,14 +615,15 @@ asyncio.run(
         MyBot(),
         bot_id="<bot-uuid>",
         env="staging",
-        token=os.environ["CHIPZEN_BOT_TOKEN"],
+        token=os.environ["CHIPZEN_EXTBOT_TOKEN"],
     )
 )
 ```
 
 Read the token from the environment (or your secret store) rather than pasting it into
 source — it is long-lived, it is the whole credential, and the only recovery from a leak is
-rotating it.
+rotating it. `CHIPZEN_EXTBOT_TOKEN` is the name the rest of the tooling uses (the `chipzen-mcp`
+adapter reads it directly), so it's the one worth standardizing on.
 
 A minimal, runnable **reference client** also lives in the SDK repo at
 [`examples/external-api-bot/`](https://github.com/chipzen-ai/chipzen-sdk/tree/main/examples/external-api-bot).
