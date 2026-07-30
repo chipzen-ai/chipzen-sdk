@@ -418,7 +418,7 @@ This section shows a complete hand played through the protocol, demonstrating ho
     "small_blind": 5,
     "big_blind": 10,
     "ante": 0,
-    "total_hands": 0
+    "num_players": 2
   }
 }
 ```
