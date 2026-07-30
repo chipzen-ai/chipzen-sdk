@@ -606,10 +606,23 @@ pip install chipzen-bot
 
 ```python
 import asyncio
+import os
+
 from chipzen import Bot, run_external_bot
 
-asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging", token="cz_extbot_..."))
+asyncio.run(
+    run_external_bot(
+        MyBot(),
+        bot_id="<bot-uuid>",
+        env="staging",
+        token=os.environ["CHIPZEN_BOT_TOKEN"],
+    )
+)
 ```
+
+Read the token from the environment (or your secret store) rather than pasting it into
+source — it is long-lived, it is the whole credential, and the only recovery from a leak is
+rotating it.
 
 A minimal, runnable **reference client** also lives in the SDK repo at
 [`examples/external-api-bot/`](https://github.com/chipzen-ai/chipzen-sdk/tree/main/examples/external-api-bot).
