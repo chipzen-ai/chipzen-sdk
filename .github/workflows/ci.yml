@@ -169,6 +169,22 @@ jobs:
       - name: Cargo test
         run: cargo test --workspace --quiet
 
+  protocol-doc-mirror:
+    # docs/EXTERNAL-API-BOT-PROTOCOL.md is the CANONICAL copy; the private
+    # platform repo keeps a mirror of it. They had drifted in both directions
+    # (chipzen-ai/Chipzen#3954). This guard hashes a normalized form of the doc
+    # and compares it to the digest committed in BOTH repos, so a one-sided edit
+    # goes red here (or there) instead of quietly separating the two again.
+    name: Protocol doc mirror guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the protocol doc against the committed digest
+        run: python scripts/protocol_doc_hash.py --check
+
   reference-bot:
     name: Reference bot (lint)
     runs-on: ubuntu-latest
