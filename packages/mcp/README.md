@@ -48,9 +48,9 @@ MCP is *pull*. The bridge in between:
 | Tool | What it does |
 |---|---|
 | `get_status` | Truthful lobby presence (`connected` / `reconnecting` / `evicted`), active matches vs the 5-per-token cap |
-| `wait_for_turn` | **The main loop.** Blocks until a match needs your action |
+| `wait_for_turn` | **The main loop.** Blocks until a match needs your action; carries that turn's `request_id` |
 | `get_match_state` | Re-read one match's pending turn / results |
-| `act` | `fold` / `check` / `call` / `raise` (amount = TOTAL bet) / `all_in` |
+| `act` | `fold` / `check` / `call` / `raise` (amount = TOTAL bet) / `all_in`, plus the turn's `request_id` — quote it and a late decision is refused (`stale_turn`) instead of landing on the hand's next turn |
 | `list_matches` | All in-flight and recent matches, incl. per-match gateway connection state |
 | `get_last_result` | Winners, payouts, showdown for the latest hand/match |
 | `challenge_house_bot` | Start an **unrated** practice match vs a house bot on the enforced ~30s casual clock (never touches ratings; server endpoint chipzen-ai/Chipzen#3750) |

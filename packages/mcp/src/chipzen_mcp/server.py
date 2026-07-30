@@ -10,7 +10,8 @@ chipzen-ai/Chipzen#3748):
                         time).
 ``get_match_state``     Explicit re-read of one match's pending turn.
 ``act``                 Submit fold/check/call/raise/all_in for a pending
-                        turn.
+                        turn -- quoting that turn's ``request_id`` so a late
+                        decision can never land on a newer turn.
 ``list_matches``        All in-flight/recent matches at a glance.
 ``get_last_result``     Round/match outcome (winners, payouts, showdown).
 ``challenge_house_bot`` START an unrated ~30s-clock practice match vs a house
@@ -40,7 +41,12 @@ from typing import Any
 from chipzen import Action
 from mcp.server.fastmcp import FastMCP
 
-from chipzen_mcp.bridge import ExternalSession, TurnRegistry
+from chipzen_mcp.bridge import (
+    SUBMIT_ACCEPTED,
+    SUBMIT_STALE_TURN,
+    ExternalSession,
+    TurnRegistry,
+)
 from chipzen_mcp.config import McpConfig, McpConfigError, load_config
 from chipzen_mcp.housebot import HttpPost, request_house_bot_challenge
 from chipzen_mcp.matchmaking import (
@@ -75,6 +81,16 @@ WAIT_POLL_SLICE_S = 0.25
 
 _VALID_ACTIONS = ("fold", "check", "call", "raise", "all_in")
 
+#: Nudge attached to every turn payload so an LLM agent carries the turn's
+#: ``request_id`` into its ``act`` call (chipzen-ai/Chipzen#3906). Mirrors the
+#: "quote the request_id" hint #3901 added to the house-bot/queue tools -- but
+#: that one is a support correlator, this one is answer correctness.
+TURN_REQUEST_ID_HINT = (
+    "Pass this turn's request_id back to act(...) -- it pins your action to "
+    "THIS turn, so a decision that arrives too late is rejected (stale_turn) "
+    "instead of being applied to whatever turn is pending by then."
+)
+
 _INSTRUCTIONS = """\
 You are connected to Chipzen (chipzen.ai), an AI poker arena, as an
 External-API bot. You can start a match yourself two ways -- practice with
@@ -83,7 +99,8 @@ External-API bot. You can start a match yourself two ways -- practice with
 queues until a partner joins) -- or just wait for a match started from the
 dashboard. Either way, once seated the loop is:
 
-    wait_for_turn -> read the state -> act(match_id, action[, amount])
+    wait_for_turn -> read the state -> act(match_id, action[, amount],
+                                          request_id=<this turn's request_id>)
 
 Rules of the road:
 - Check `get_status` first: `lobby_connected` must be true before a match
@@ -96,6 +113,11 @@ Rules of the road:
   loop; `{"status": "idle"}` just means nothing needs you yet.
 - Decide within `remaining_ms`. If you don't act in time the bridge (and
   the server) auto-plays check/fold and you are just donating chips.
+- Always quote the turn's `request_id` in `act`. It is your protection
+  against answering a turn that has already passed: a late action is
+  refused with `error=stale_turn` instead of being applied to the hand's
+  NEXT turn. On `stale_turn`, call `wait_for_turn` again and re-decide on
+  the live state -- never resubmit the same action.
 - `raise` amount is the TOTAL bet size, bounded by state.min_raise /
   state.max_raise (it is clamped server-side, never rejected for range).
 - Card notation: rank+suit, e.g. "Ah" = ace of hearts, "Td" = ten of
@@ -138,6 +160,7 @@ def _idle_response() -> dict[str, Any]:
 def _turn_response(snapshot: Any) -> dict[str, Any]:
     payload = snapshot.to_payload()
     payload["status"] = "your_turn"
+    payload["note"] = TURN_REQUEST_ID_HINT
     return payload
 
 
@@ -178,6 +201,8 @@ def get_match_state_impl(registry: TurnRegistry, match_id: str) -> dict[str, Any
     view = registry.get_match(match_id)
     if view is None:
         return {"error": "unknown_match", "match_id": match_id}
+    if view.get("turn"):
+        view["turn"]["note"] = TURN_REQUEST_ID_HINT
     return view
 
 
@@ -186,7 +211,18 @@ def act_impl(
     match_id: str,
     action: str,
     amount: int | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
+    """Answer a pending turn.
+
+    ``request_id`` is the optional optimistic-concurrency token from the turn
+    the agent actually observed (chipzen-ai/Chipzen#3906). Supplied, it is
+    validated against the turn currently pending on that match and a mismatch
+    is refused as ``stale_turn`` instead of silently answering a DIFFERENT
+    turn. Omitted, behaviour is unchanged from earlier versions -- the action
+    is applied to whatever is pending, which is exactly the unsafe path -- so
+    agents should always quote it.
+    """
     if action not in _VALID_ACTIONS:
         return {
             "accepted": False,
@@ -205,14 +241,27 @@ def act_impl(
     else:
         chosen = getattr(Action, action)()
 
-    if not registry.submit_action(match_id, chosen):
+    outcome = registry.submit_action(match_id, chosen, request_id=request_id)
+    if outcome == SUBMIT_STALE_TURN:
+        return {
+            "accepted": False,
+            "error": "stale_turn",
+            "request_id": request_id,
+            "pending_request_id": registry.pending_request_id(match_id),
+            "note": "The turn you answered (request_id above) is gone -- this "
+            "match has since moved on to a different turn, so your action was "
+            "NOT applied to it. Do not retry blindly: call wait_for_turn (or "
+            "get_match_state) to read the current turn and decide again on "
+            "the state that is actually live.",
+        }
+    if outcome != SUBMIT_ACCEPTED:
         return {
             "accepted": False,
             "error": "no_pending_turn",
             "note": "Nothing is awaiting your action in this match (not your "
             "turn, the match ended, or the decision clock already expired).",
         }
-    return {"accepted": True, "action": action, "amount": amount}
+    return {"accepted": True, "action": action, "amount": amount, "request_id": request_id}
 
 
 def list_matches_impl(registry: TurnRegistry) -> list[dict[str, Any]]:
@@ -358,22 +407,37 @@ def build_server(
     async def wait_for_turn(timeout_ms: int = DEFAULT_WAIT_TIMEOUT_MS) -> dict[str, Any]:
         """Block until it's your turn in ANY match, then return that match's
         full decision state (hole cards, board, pot, valid_actions,
-        remaining_ms). Returns {"status": "idle"} on timeout -- just call it
-        again. This is your primary loop; think, then call act()."""
+        remaining_ms) plus this turn's request_id. Returns {"status": "idle"}
+        on timeout -- just call it again. This is your primary loop; think,
+        then call act(match_id, action, ..., request_id=<the request_id you
+        just got>) so your decision can only be applied to THIS turn."""
         return await wait_for_turn_async(registry, timeout_ms)
 
     @mcp.tool()
     def get_match_state(match_id: str) -> dict[str, Any]:
-        """Re-read one match: pending turn (if it's your move), last hand
-        result, and final result when the match is over."""
+        """Re-read one match: pending turn (if it's your move, including its
+        request_id to quote back to act), last hand result, and final result
+        when the match is over."""
         return get_match_state_impl(registry, match_id)
 
     @mcp.tool()
-    def act(match_id: str, action: str, amount: int | None = None) -> dict[str, Any]:
+    def act(
+        match_id: str,
+        action: str,
+        amount: int | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
         """Play your pending turn. action is one of fold/check/call/raise/
         all_in; `raise` needs amount = the TOTAL bet size (min_raise <=
-        amount <= max_raise; clamped server-side)."""
-        return act_impl(registry, match_id, action, amount)
+        amount <= max_raise; clamped server-side). request_id: pass the
+        request_id of the turn you are answering (from wait_for_turn /
+        get_match_state) -- STRONGLY RECOMMENDED. It pins the action to that
+        exact turn: if the turn is gone (you thought past the clock and the
+        hand moved on) you get error=stale_turn instead of your action being
+        applied to whatever turn is pending by then. Omitting it keeps the
+        old, unsafe behaviour: the action lands on the match's current pending
+        turn, whichever turn that now is."""
+        return act_impl(registry, match_id, action, amount, request_id)
 
     @mcp.tool()
     def list_matches() -> list[dict[str, Any]]:
