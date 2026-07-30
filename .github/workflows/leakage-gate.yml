@@ -48,11 +48,16 @@ jobs:
           #   .git           — not source
           #   leakage-gate.yml (this file) — defines the patterns by name,
           #                    so it self-matches by design
-          # `grep --exclude` matches basenames, not paths — both args here
+          #   protocol_doc_hash.py — the mirror drift-guard; its whole job is
+          #                    to rewrite the platform repo's docs/arch/ paths
+          #                    onto the public docs/protocol/ form, so it must
+          #                    name both spellings (chipzen-ai/Chipzen#3954)
+          # `grep --exclude` matches basenames, not paths — all args here
           # are basenames-only.
           GREP_ARGS=(
             --exclude-dir=.git
             --exclude=leakage-gate.yml
+            --exclude=protocol_doc_hash.py
           )
 
           fail=0

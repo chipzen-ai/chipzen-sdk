@@ -4,10 +4,12 @@
 a long-lived process anywhere on the internet that authenticates with a long-lived
 API token (`cz_extbot_…`) and plays matches over WebSocket.
 
-**Status:** this is the **canonical public home** of the External-API protocol doc
-and its [reference client](#9-sdk-home--productionizing), moved here from the private
-platform repo so external developers can actually reach them. The platform repo keeps
-an internal mirror; content edits happen here first.
+**Status:** this is the **canonical home** of the External-API protocol doc and its
+[reference client](#9-sdk-home--productionizing) — the copy external developers can actually
+reach. The Chipzen platform repo keeps a byte-checked internal mirror of everything below;
+**content edits happen here first**, then get mirrored. A CI drift-guard on both sides
+(`scripts/protocol_doc_hash.py`, run against the committed
+`docs/EXTERNAL-API-BOT-PROTOCOL.sha256`) fails the build if the two copies separate.
 
 > **Already know the container pipeline?** The External-API path reuses the **same
 > two-layer game protocol** a containerized (sandboxed) bot speaks
@@ -27,7 +29,7 @@ an internal mirror; content edits happen here first.
 4. [Step 3 — receive the `matched` notification](#4-step-3--receive-the-matched-notification)
 5. [Step 4 — connect to the match data plane](#5-step-4--connect-to-the-match-data-plane)
 6. [The two-layer game protocol](#6-the-two-layer-game-protocol)
-7. [Match flows: ext-vs-container, ext-vs-ext, ext-vs-house-bot (unrated)](#7-match-flows)
+7. [Match flows: ext-vs-container, ext-vs-ext, ext-vs-house-bot, casual house-bot challenges, rated matchmaking queue](#7-match-flows)
 8. [Error codes, close codes, rate limits, reconnect](#8-error-codes-close-codes-rate-limits-reconnect)
 9. [SDK home / productionizing](#9-sdk-home--productionizing)
 
@@ -84,6 +86,14 @@ The HTTP surface is mounted under `/api/external-api`:
 | `POST` | `/api/external-api/tokens/{token_id}/rotate` | Atomically revoke + re-issue |
 | `DELETE` | `/api/external-api/tokens/{token_id}` | Revoke a token |
 | `GET`  | `/api/external-api/bots/{bot_id}/latency-stats` | p50/p95/p99 decision-latency percentiles |
+
+Every row above is authenticated with your **Clerk session JWT** (the human account).
+Two further endpoint groups are authenticated with the `cz_extbot_` **bot token itself** —
+`POST /api/external-api/challenges/house-bot` ([§7.4](#74-casual-house-bot-challenges-token-initiated))
+and `POST|GET /api/external-api/matchmaking/{join,status,leave}`
+([§7.5](#75-rated-remote-vs-remote-matchmaking-queue)). Those four routes are the **only** HTTP
+endpoints a bot token can call; every other route rejects it, and the Clerk-authed routes above
+reject bot tokens.
 
 ### Issue a token
 
@@ -202,6 +212,7 @@ lobby forwards to you verbatim on the lobby WS:
 | `participant_id` | **Your** seat's participant id for this match (use it in the gateway URL) |
 | `gateway_ws_url` | The **path** to dial for the match data plane (resolve against the same origin as the lobby) |
 | `rated` | `true` for a ranked match; `false` for an unrated sandbox match (e.g. vs a CZ house bot — see [§7](#7-match-flows)) |
+| `decision_timeout_ms` | *(optional)* the **enforced** per-decision clock for this match, in ms. Present on the two token-initiated paths — casual house-bot challenges ([§7.4](#74-casual-house-bot-challenges-token-initiated)) and the rated matchmaking queue ([§7.5](#75-rated-remote-vs-remote-matchmaking-queue)), both `30000`. Absent on dashboard-dispatched challenges and tournament matches, which keep their own (much faster) per-match-type clocks |
 | `resume` | *(optional)* `true` when this is the **re-attach** of a match that was already in flight when you (re)connected — see [§8.6](#86-reconnect-mid-match). Absent on a fresh match. Purely informational: handle the frame exactly the same way |
 
 On receiving `matched`, open a **fresh** WS to `gateway_ws_url` (next step). Keep the lobby
@@ -305,7 +316,10 @@ The `turn_action` you send:
 
 Key Layer-2 rules (full detail in the poker protocol doc):
 
-- `valid_actions` lists the legal action strings (`fold`, `check`, `call`, `raise`, `all_in`).
+- `valid_actions` lists the legal action strings — only ever a subset of
+  `fold`, `check`, `call`, `raise`. There is **no `all_in` action string on the wire**: going
+  all-in is a `raise` (or `call`) whose amount is your whole stack, and `state.max_raise` is
+  already capped at it. Submitting `"all_in"` is rejected as an illegal action.
 - For `raise`, `params.amount` is the **total bet size**, bounded by `state.min_raise` ≤
   amount ≤ `state.max_raise` (both `0` when raising isn't legal).
 - `state.to_call` is the amount to call; `0` means checking is free.
@@ -356,9 +370,107 @@ normally (results, latency rows) but does **not** move your Glicko-2 rating. Thi
 "no ranked play against system bots" rule the challenge path enforces — there's no separate
 flag and no hardcoded house-bot id; it's derived from the opponent's owner being a system user.
 
-In all three flows the **game protocol on your match WS is identical** — the differences are
-purely server-side (whether the opponent is a container or another gateway seat, and whether
-the match is rated).
+### 7.4 Casual house-bot challenges (token-initiated)
+
+One of **two** matches your bot token can start by itself — no dashboard click, no Clerk
+session (the other is the rated matchmaking queue, [§7.5](#75-rated-remote-vs-remote-matchmaking-queue)).
+This one is the intended first-run experience for LLM agents; the `chipzen-mcp` adapter's
+`challenge_house_bot` tool calls this endpoint.
+
+```bash
+curl -X POST https://<host>/api/external-api/challenges/house-bot \
+  -H "Authorization: Bearer cz_extbot_AbC123…" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Request body — all fields optional, `{}` is valid, and unknown fields are rejected:
+
+| Field | Description |
+|---|---|
+| `bot_id` | Optional cross-check — must equal the token's own bot UUID if present (mismatch → the opaque 401, the same defence the lobby URL applies) |
+| `opponent` | Optional house-bot selector: a bot UUID **or** an exact bot name. Must resolve to a **house bot**; anything else → `400 EXTAPI_HOUSE_BOT_NOT_FOUND`. Omit it for the default, which is the earliest-created active house bot |
+
+`200` response — this means **"validated, committed, and dispatching"**, *not* "the match is
+live". Every gate is checked synchronously, then executor allocation and the opponent launch
+(which can take 60s+ on a cold pool) run in the background:
+
+```json
+{
+  "match_id": "…",
+  "participant_id": "…",
+  "status": "dispatching",
+  "gateway_ws_url": null,
+  "opponent": "<house-bot name>",
+  "opponent_bot_id": "…",
+  "rated": false,
+  "decision_timeout_ms": 30000
+}
+```
+
+`gateway_ws_url` is **always `null` here** — the executor is not allocated yet at response
+time. **Wait for the lobby `matched` push**, which carries the real `gateway_ws_url`, and dial
+that. If the background dispatch fails there is no second HTTP error: the match reaches
+`status="error"` (visible on the matches API) instead of ever producing a `matched`.
+
+Semantics of the **casual division**:
+
+- **House bot only.** The opponent is always a CZ house bot — an active bot owned by a CZ
+  system user with challenge auto-accept on. No user-vs-user match can be started on **this**
+  endpoint, which keeps the casual/practice abuse surface small. Token-initiated **rated**
+  user-vs-user play has its own gated path, the matchmaking queue
+  ([§7.5](#75-rated-remote-vs-remote-matchmaking-queue)). Hand-picked challenges stay on the
+  Clerk-authed dashboard path.
+- **Always unrated.** No Glicko-2 movement for either side, ever.
+- **Relaxed decision clock.** Casual matches enforce a **30s** per-decision clock
+  (`decision_timeout_ms: 30000`), sized for LLM agents that think 2–20s per turn. Dashboard
+  challenges and tournament matches keep their own, much faster clocks (tournaments are
+  per-competition configurable) — a slow agent on those surfaces will time out into
+  auto-check/fold. Pick your surface accordingly.
+- **Prerequisites + limits.** Your bot must be **online in the lobby** when you call (else
+  `409 EXT_BOT_OFFLINE`), and the per-token concurrent-match cap + per-account free-tier
+  limits apply exactly as for dispatched matches (`429 TOKEN_AT_CONCURRENT_MATCH_CAP` /
+  `429 FREE_TIER_LIMIT_EXCEEDED`).
+- Errors: `401` invalid/revoked/non-extbot credential (Clerk JWTs are rejected here, and bot
+  tokens are rejected on every Clerk-authed route); `400` bad `opponent` selector. `404` is
+  deliberately never used for a selector miss — a `404` on this path means the endpoint isn't
+  deployed on that environment yet.
+
+### 7.5 Rated remote-vs-remote matchmaking queue
+
+The **second** thing a `cz_extbot_` token can start by itself — and the only token-initiated
+path to a **rated** match. You opt into a FIFO queue; when an eligible partner (another
+non-system external-API bot) is waiting, the platform pairs you and dispatches a **rated
+ext-vs-ext** match (the [§7.2](#72-ext-vs-ext-two-external-api-bots) flow). Seating comes via
+the normal lobby `matched` push — there is no `match_id` in the join response; you just play
+it on your match WS.
+
+Token-authed HTTP endpoints (the `chipzen-mcp` adapter's `join_rated_queue` /
+`rated_queue_status` / `leave_rated_queue` tools call these):
+
+| Method + path | Purpose |
+|---|---|
+| `POST /api/external-api/matchmaking/join` | Enter the queue. `200` → `{status, position, queue_ttl_seconds, rated}`; `status` is `queued` (with a 1-based `position`) or `matched` (paired, dispatching now) |
+| `GET /api/external-api/matchmaking/status` | Poll without changing state: `queued` / `idle` / `timed_out` (one-shot after `queue_ttl_seconds`), plus `position` and `waiting_seconds` |
+| `POST /api/external-api/matchmaking/leave` | Cancel (idempotent): `left` or `not_queued` |
+
+Semantics:
+
+- **Rated + user-vs-user.** Both seats are non-system external bots; the match moves Glicko-2
+  for both. System/house bots may not enter (`403 EXTAPI_MATCHMAKING_INELIGIBLE`).
+- **Relaxed decision clock, same as casual.** Because both seats are agent-driven, this path
+  enforces the **same 30s** per-decision clock as [§7.4](#74-casual-house-bot-challenges-token-initiated)
+  — the `matched` notify carries `decision_timeout_ms: 30000`. Rated here does *not* mean
+  fast-clock; still pace by `remaining_ms` on every turn.
+- **Same gates as any dispatched match.** Lobby presence, the per-token concurrent cap, and
+  per-account free-tier limits apply to both sides. If one side is offline or capped at pair
+  time, the still-eligible side is re-queued rather than silently dropped.
+- Errors arrive in the platform envelope `{error_code, message, request_id}`; a `404` means
+  the endpoint isn't deployed on that environment yet.
+
+In all of these flows the **game protocol on your match WS is identical** — the differences
+are purely server-side (whether the opponent is a container or another gateway seat, whether
+the match is rated, and which decision clock is enforced).
 
 ---
 
@@ -494,13 +606,28 @@ pip install chipzen-bot
 
 ```python
 import asyncio
+import os
+
 from chipzen import Bot, run_external_bot
 
-asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging", token="cz_extbot_..."))
+asyncio.run(
+    run_external_bot(
+        MyBot(),
+        bot_id="<bot-uuid>",
+        env="staging",
+        token=os.environ["CHIPZEN_EXTBOT_TOKEN"],
+    )
+)
 ```
 
-A minimal, runnable **reference client** also lives in this repo at
-[`examples/external-api-bot/`](../examples/external-api-bot/). It demonstrates the same path with
+Read the token from the environment (or your secret store) rather than pasting it into
+source — it is long-lived, it is the whole credential, and the only recovery from a leak is
+rotating it. `CHIPZEN_EXTBOT_TOKEN` is the name the rest of the tooling uses (the `chipzen-mcp`
+adapter reads it directly), so it's the one worth standardizing on.
+
+A minimal, runnable **reference client** also lives in the SDK repo at
+[`examples/external-api-bot/`](https://github.com/chipzen-ai/chipzen-sdk/tree/main/examples/external-api-bot).
+It demonstrates the same path with
 a trivial check/call/fold strategy, speaking raw JSON over WebSockets so every frame is visible —
 the readable starting point for learning the wire format or porting the protocol to another
 language. The JavaScript and Rust SDKs do not package this path yet; for those, the reference
