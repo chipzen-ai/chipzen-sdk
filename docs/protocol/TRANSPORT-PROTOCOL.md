@@ -337,7 +337,7 @@ Announces the beginning of a match. Sent to all participants after all have conn
 | `game_config` | object | yes | Game-specific configuration (opaque to Layer 1) |
 | `turn_timeout_ms` | integer | yes | Default action timeout in milliseconds |
 
-> **Note:** Round/hand count is game-specific and defined in the `game_config` payload (e.g., `total_hands` for poker). Layer 1 does not impose a fixed round count.
+> **Note:** Layer 1 does not impose a round count — how a match ends is game-specific. For poker it is elimination: the match runs until a seat busts, and the per-match hand cap is deliberately **not** exposed in `game_config` so bots cannot condition strategy on a remaining-hands count (chipzen-ai/Chipzen#1588).
 
 ### 8.4 `round_start`
 
@@ -1035,7 +1035,7 @@ S→B  {"type":"match_start","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","
         {"seat":0,"participant_id":"p_abc123","display_name":"OpponentBot","is_self":false},
         {"seat":1,"participant_id":"p_def456","display_name":"ExampleBot","is_self":true}
       ],
-      "game_config":{"variant":"nlhe","max_players":6,"starting_stack":1000},
+      "game_config":{"variant":"nlhe","num_players":6,"starting_stack":1000},
       "turn_timeout_ms":5000}
 
 S→B  {"type":"round_start","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":3,
