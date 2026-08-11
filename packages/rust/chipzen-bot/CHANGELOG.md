@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The safe fallback no longer answers `check`/`fold` when neither is legal.**
+  `_safe_fallback_action` now prefers `check`, then `fold`, then echoes the
+  **first valid action** the server offered — matching the Python SDK. A bot
+  seated at a table whose action set it does not model (`valid_actions` of
+  `["draw"]`) previously answered `fold`, was rejected, answered `fold` again,
+  and spun in a reject/retry loop until the auto-substitute streak limit
+  forfeited the match. Taking the first-valid branch is logged at warn level on
+  stderr. An empty `valid_actions` list now returns `Error::Protocol` instead of
+  guessing `fold` — there is nothing legal to send, so the session fails loudly.
+  Bots are unaffected: `Bot::decide` still returns an `Action`, and neither
+  `Action` nor `ActionKind` gained variants.
+  ([chipzen-ai/Chipzen#4244](https://github.com/chipzen-ai/Chipzen/issues/4244))
+
 - **Lifecycle hooks are now safe-mode wrapped — a user panic in a stats
   callback no longer forfeits the match.** All bot lifecycle hook invocations
   (`on_match_start`, `on_round_start`, `on_phase_change`, `on_turn_result`,
