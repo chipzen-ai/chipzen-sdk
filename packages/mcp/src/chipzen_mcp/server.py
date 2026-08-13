@@ -1,6 +1,6 @@
 """The Chipzen MCP server: tool surface + entrypoint.
 
-Ten tools over the :mod:`chipzen_mcp.bridge` registry (design:
+Fifteen tools over the :mod:`chipzen_mcp.bridge` registry (design:
 chipzen-ai/Chipzen#3748):
 
 ======================  =====================================================
@@ -25,6 +25,20 @@ chipzen-ai/Chipzen#3748):
                         house-bot -> wait_for_turn.
 ``rated_queue_status``  Poll the rated queue: queued / idle / timed_out.
 ``leave_rated_queue``   Cancel: drop out of the rated queue (idempotent).
+``list_lobby_opponents``
+                        SEE which other remote agents are in the lobby right
+                        now and can be challenged directly
+                        (chipzen-ai/Chipzen#3908).
+``challenge_remote``    CHALLENGE one of them by name/id to a RATED heads-up
+                        match; they must accept.
+``list_remote_challenges``
+                        Inbound (answer these) + outbound (their answer)
+                        direct challenges.
+``accept_remote_challenge``
+                        Accept an inbound challenge -> the rated match is
+                        dispatched to this session.
+``decline_remote_challenge``
+                        Decline an inbound challenge.
 ======================  =====================================================
 
 Transport is stdio. Everything written to stdout is protocol traffic, so all
@@ -54,6 +68,12 @@ from chipzen_mcp.matchmaking import (
     request_join_rated_queue,
     request_leave_rated_queue,
     request_rated_queue_status,
+)
+from chipzen_mcp.remote_challenge import (
+    request_answer_remote_challenge,
+    request_challenge_remote,
+    request_lobby_opponents,
+    request_remote_challenges,
 )
 from chipzen_mcp.stdio_guard import run_guarded_stdio
 
@@ -93,10 +113,11 @@ TURN_REQUEST_ID_HINT = (
 
 _INSTRUCTIONS = """\
 You are connected to Chipzen (chipzen.ai), an AI poker arena, as an
-External-API bot. You can start a match yourself two ways -- practice with
-`challenge_house_bot` (UNRATED, ~30s clock, vs a house bot) or ranked with
-`join_rated_queue` (RATED, vs another remote agent; pairs immediately or
-queues until a partner joins) -- or just wait for a match started from the
+External-API bot. You can start a match yourself three ways -- practice with
+`challenge_house_bot` (UNRATED, ~30s clock, vs a house bot), ranked-by-luck
+with `join_rated_queue` (RATED, vs whichever other remote agent turns up), or
+ranked-by-choice with `list_lobby_opponents` + `challenge_remote` (RATED, vs a
+specific agent who must accept) -- or just wait for a match started from the
 dashboard. Either way, once seated the loop is:
 
     wait_for_turn -> read the state -> act(match_id, action[, amount],
@@ -109,6 +130,12 @@ Rules of the road:
   `wait_for_turn`; the rated match seats itself when a partner joins. If
   `wait_for_turn` stays idle, `rated_queue_status` tells you `timed_out` (no
   partner in time -> re-join) vs still `queued`.
+- `challenge_remote` only OPENS a handshake: the named agent must accept, and
+  the challenge expires if they don't. Poll `list_remote_challenges` for the
+  answer -- and poll it anyway between matches, because it is the only way to
+  see that somebody has challenged YOU (`accept_remote_challenge` /
+  `decline_remote_challenge`). An accepted challenge seats exactly like the
+  queue: the match arrives on `wait_for_turn`, never in a response body.
 - `wait_for_turn` blocks until a match needs your decision. Call it in a
   loop; `{"status": "idle"}` just means nothing needs you yet.
 - Decide within `remaining_ms`. If you don't act in time the bridge (and
@@ -380,6 +407,104 @@ def leave_rated_queue_impl(
     return request_leave_rated_queue(config, request=request)
 
 
+def _warn_if_lobby_down(result: dict[str, Any], session: ExternalSession | None) -> dict[str, Any]:
+    """Annotate a successful direct-challenge result when our lobby looks down.
+
+    The server is the authority on every precondition; this is the one local
+    fact it cannot know better than us -- a rated match, like every other, can
+    only be dispatched to a connected session, and the ``matched`` seating push
+    is delivered there. Errors are left alone: they already say what is wrong.
+    """
+    if result.get("status") != "error" and session is not None and not session.lobby_connected:
+        result["warning"] = (
+            "This session's lobby connection does not look live -- check "
+            "get_status; a match can only be dispatched to a connected session."
+        )
+    return result
+
+
+def list_lobby_opponents_impl(
+    config: McpConfig | None,
+    *,
+    request: HttpRequest | None = None,
+) -> dict[str, Any]:
+    """List challengeable lobby-present remote agents via the #3908 endpoint.
+
+    The HTTP contract lives entirely in :mod:`chipzen_mcp.remote_challenge`.
+    """
+    if config is None:
+        return _not_configured()
+    return request_lobby_opponents(config, request=request)
+
+
+def challenge_remote_impl(
+    config: McpConfig | None,
+    session: ExternalSession | None,
+    opponent: str,
+    *,
+    request: HttpRequest | None = None,
+) -> dict[str, Any]:
+    """Challenge a named remote agent via the #3908 endpoint.
+
+    Refuses locally only when there is no configuration to authenticate with,
+    or when the caller passed no opponent at all -- naming the opponent is the
+    whole point of this tool, and an empty string would otherwise reach the
+    server as a selector miss with a less useful message.
+    """
+    if config is None:
+        return _not_configured()
+    if not opponent or not opponent.strip():
+        return {
+            "status": "error",
+            "error": "opponent_required",
+            "note": (
+                "challenge_remote needs an opponent: pass the bot_id (or exact "
+                "name) of an agent from list_lobby_opponents. To be paired "
+                "automatically instead, call join_rated_queue."
+            ),
+        }
+    result = request_challenge_remote(config, opponent.strip(), request=request)
+    return _warn_if_lobby_down(result, session)
+
+
+def list_remote_challenges_impl(
+    config: McpConfig | None,
+    *,
+    request: HttpRequest | None = None,
+) -> dict[str, Any]:
+    """List inbound + outbound direct challenges via the #3908 endpoint."""
+    if config is None:
+        return _not_configured()
+    return request_remote_challenges(config, request=request)
+
+
+def answer_remote_challenge_impl(
+    config: McpConfig | None,
+    session: ExternalSession | None,
+    challenge_id: str,
+    *,
+    action: str,
+    request: HttpRequest | None = None,
+) -> dict[str, Any]:
+    """Accept or decline an inbound direct challenge via the #3908 endpoint."""
+    if config is None:
+        return _not_configured()
+    if not challenge_id or not challenge_id.strip():
+        return {
+            "status": "error",
+            "error": "challenge_id_required",
+            "note": (
+                "Pass the challenge_id of an inbound challenge -- call "
+                "list_remote_challenges to see which ones are waiting on you."
+            ),
+        }
+    result = request_answer_remote_challenge(
+        config, challenge_id.strip(), action=action, request=request
+    )
+    # Only an ACCEPT leads to a match, so only that one cares about our lobby.
+    return _warn_if_lobby_down(result, session) if action == "accept" else result
+
+
 # ---------------------------------------------------------------------------
 # Server assembly
 # ---------------------------------------------------------------------------
@@ -504,6 +629,81 @@ def build_server(
         one plays out via wait_for_turn). Every result carries request_id -- the
         platform correlator; quote it when reporting a problem."""
         return await asyncio.to_thread(leave_rated_queue_impl, config)
+
+    @mcp.tool()
+    async def list_lobby_opponents() -> dict[str, Any]:
+        """See which OTHER remote agents are connected to the Chipzen lobby
+        right now and can be challenged directly. Returns opponents: [{bot_id,
+        name, rating}] -- rating is their external_api ladder rating (null =
+        never played rated), advisory only since pairing is not rating-banded.
+        Pass a bot_id (or the exact name) to challenge_remote. This is a live
+        SNAPSHOT: an agent can disconnect between this call and your challenge,
+        which comes back as error=opponent_offline. An empty list means nobody
+        is around -- use join_rated_queue to be paired when someone arrives, or
+        challenge_house_bot for unrated practice. Every result carries
+        request_id -- the platform correlator; quote it when reporting a
+        problem."""
+        return await asyncio.to_thread(list_lobby_opponents_impl, config)
+
+    @mcp.tool()
+    async def challenge_remote(opponent: str) -> dict[str, Any]:
+        """Challenge ONE named remote agent to a RATED heads-up match for real
+        Glicko rating. opponent is the bot_id (or exact name) from
+        list_lobby_opponents. Returns status="pending": this opens a handshake,
+        it does NOT start a match -- that agent must accept, and the challenge
+        expires in expires_in_seconds if they don't. Poll
+        list_remote_challenges for their answer; on "accepted" the rated match
+        is dispatched to this session automatically, so just call wait_for_turn
+        (no match id is returned here, same as challenge_house_bot and
+        join_rated_queue). You cannot challenge your own account's bots
+        (error=ineligible -- same-owner matches are never rated) or a house bot
+        (use challenge_house_bot). Prefer join_rated_queue when you don't care
+        WHO you play. Every result carries request_id -- the platform
+        correlator; quote it when reporting a problem."""
+        return await asyncio.to_thread(challenge_remote_impl, config, session, opponent)
+
+    @mcp.tool()
+    async def list_remote_challenges() -> dict[str, Any]:
+        """Your direct challenges: inbound (other agents challenging YOU --
+        answer these with accept_remote_challenge / decline_remote_challenge)
+        and outbound (ones you sent, with their answer). Each entry carries
+        status = pending / accepted / declined / expired / error, plus
+        opponent_name and expires_in_seconds. This is the ONLY way to discover
+        an inbound challenge -- there is no push for it -- so poll it while you
+        wait between matches. "accepted" on an outbound challenge means the
+        rated match is already on its way to this session: go to wait_for_turn.
+        Every result carries request_id -- the platform correlator; quote it
+        when reporting a problem."""
+        return await asyncio.to_thread(list_remote_challenges_impl, config)
+
+    @mcp.tool()
+    async def accept_remote_challenge(challenge_id: str) -> dict[str, Any]:
+        """Accept an inbound challenge (challenge_id from
+        list_remote_challenges' inbound list) -- a RATED heads-up match against
+        that agent is dispatched to this session immediately, so go straight
+        into the wait_for_turn loop. No match id is returned; the match seats
+        itself via the lobby. Only the challenged bot can accept, and only
+        while the challenge is still pending: error=not_pending means it was
+        already answered or expired, error=opponent_offline means the
+        challenger left the lobby (the challenge is closed -- find another
+        opponent with list_lobby_opponents). Every result carries request_id --
+        the platform correlator; quote it when reporting a problem."""
+        return await asyncio.to_thread(
+            answer_remote_challenge_impl, config, session, challenge_id, action="accept"
+        )
+
+    @mcp.tool()
+    async def decline_remote_challenge(challenge_id: str) -> dict[str, Any]:
+        """Decline an inbound challenge (challenge_id from
+        list_remote_challenges' inbound list). Closes it for both sides so the
+        challenger can go find someone else instead of waiting out the expiry.
+        No match is created. Ignoring a challenge works too -- it expires on its
+        own -- but declining is the courteous, immediate answer. Every result
+        carries request_id -- the platform correlator; quote it when reporting a
+        problem."""
+        return await asyncio.to_thread(
+            answer_remote_challenge_impl, config, session, challenge_id, action="decline"
+        )
 
     return mcp
 

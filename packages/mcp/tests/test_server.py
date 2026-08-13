@@ -10,14 +10,18 @@ from chipzen_mcp.config import McpConfig
 from chipzen_mcp.housebot import HttpResult
 from chipzen_mcp.server import (
     act_impl,
+    answer_remote_challenge_impl,
     build_server,
     challenge_house_bot_impl,
+    challenge_remote_impl,
     get_last_result_impl,
     get_match_state_impl,
     get_status_impl,
     join_rated_queue_impl,
     leave_rated_queue_impl,
+    list_lobby_opponents_impl,
     list_matches_impl,
+    list_remote_challenges_impl,
     rated_queue_status_impl,
     wait_for_turn_impl,
 )
@@ -35,6 +39,11 @@ EXPECTED_TOOLS = {
     "join_rated_queue",
     "rated_queue_status",
     "leave_rated_queue",
+    "list_lobby_opponents",
+    "challenge_remote",
+    "list_remote_challenges",
+    "accept_remote_challenge",
+    "decline_remote_challenge",
 }
 
 
@@ -51,7 +60,7 @@ def _publish(registry: TurnRegistry, match_id: str = MATCH, request_id: str = "r
     )
 
 
-async def test_build_server_registers_the_ten_tools() -> None:
+async def test_build_server_registers_every_tool() -> None:
     server = build_server(TurnRegistry())
     tools = {tool.name for tool in await server.list_tools()}
     assert tools == EXPECTED_TOOLS
@@ -352,6 +361,126 @@ async def test_rated_queue_tools_run_off_loop() -> None:
     server = build_server(TurnRegistry(), None, None)
     for tool in ("join_rated_queue", "rated_queue_status", "leave_rated_queue"):
         result = await asyncio.wait_for(server.call_tool(tool, {}), timeout=5.0)
+        # No config injected -> the impl's config gate answers, proving the
+        # async wrapper + to_thread path works end-to-end through FastMCP.
+        assert "not_configured" in str(result)
+
+
+class TestRemoteChallengeWiring:
+    """The endpoint contract itself is covered in test_remote_challenge.py; this
+    is the tool-level wiring (config gate, argument gate, lobby annotation)."""
+
+    CONFIG = McpConfig(token="cz_extbot_x", bot_id="b-1", env="staging")
+
+    def test_every_tool_requires_configuration(self) -> None:
+        assert list_lobby_opponents_impl(None)["error"] == "not_configured"
+        assert challenge_remote_impl(None, None, "rival")["error"] == "not_configured"
+        assert list_remote_challenges_impl(None)["error"] == "not_configured"
+        assert (
+            answer_remote_challenge_impl(None, None, "c-1", action="accept")["error"]
+            == "not_configured"
+        )
+
+    def test_challenge_requires_an_opponent(self) -> None:
+        """A blank opponent is refused locally, with the discovery tool named."""
+
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            raise AssertionError("must not reach the network")
+
+        result = challenge_remote_impl(self.CONFIG, None, "   ", request=request)
+        assert result["error"] == "opponent_required"
+        assert "list_lobby_opponents" in result["note"]
+
+    def test_answer_requires_a_challenge_id(self) -> None:
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            raise AssertionError("must not reach the network")
+
+        result = answer_remote_challenge_impl(
+            self.CONFIG, None, "", action="accept", request=request
+        )
+        assert result["error"] == "challenge_id_required"
+
+    def test_opponent_is_trimmed_before_sending(self) -> None:
+        seen: dict = {}
+
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            seen["body"] = body
+            return HttpResult(status=200, body={"challenge_id": "c-1", "status": "pending"})
+
+        challenge_remote_impl(self.CONFIG, None, "  Rival  ", request=request)
+        assert seen["body"]["opponent"] == "Rival"
+
+    def test_pending_challenge_warns_when_lobby_looks_down(self) -> None:
+        async def never_runs() -> None:  # session constructed but not started
+            raise AssertionError("not reached")
+
+        session = ExternalSession(self.CONFIG, TurnRegistry(), runner=never_runs)
+
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            return HttpResult(status=200, body={"challenge_id": "c-1", "status": "pending"})
+
+        result = challenge_remote_impl(self.CONFIG, session, "rival", request=request)
+        assert result["status"] == "pending"
+        assert "lobby" in result["warning"]
+
+    def test_error_passes_through_unannotated(self) -> None:
+        async def never_runs() -> None:
+            raise AssertionError("not reached")
+
+        session = ExternalSession(self.CONFIG, TurnRegistry(), runner=never_runs)
+
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            return HttpResult(status=404, body={})
+
+        result = challenge_remote_impl(self.CONFIG, session, "rival", request=request)
+        assert result["error"] == "endpoint_not_available"
+        assert "warning" not in result
+
+    def test_decline_is_never_lobby_annotated(self) -> None:
+        """Declining starts no match, so our own lobby state is irrelevant."""
+
+        async def never_runs() -> None:
+            raise AssertionError("not reached")
+
+        session = ExternalSession(self.CONFIG, TurnRegistry(), runner=never_runs)
+
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            return HttpResult(status=200, body={"challenge_id": "c-1", "status": "declined"})
+
+        result = answer_remote_challenge_impl(
+            self.CONFIG, session, "c-1", action="decline", request=request
+        )
+        assert result["status"] == "declined"
+        assert "warning" not in result
+
+    def test_accept_is_lobby_annotated(self) -> None:
+        async def never_runs() -> None:
+            raise AssertionError("not reached")
+
+        session = ExternalSession(self.CONFIG, TurnRegistry(), runner=never_runs)
+
+        def request(method: str, url: str, headers: dict, body: dict | None) -> HttpResult:
+            return HttpResult(status=200, body={"challenge_id": "c-1", "status": "accepted"})
+
+        result = answer_remote_challenge_impl(
+            self.CONFIG, session, "c-1", action="accept", request=request
+        )
+        assert result["status"] == "accepted"
+        assert "lobby" in result["warning"]
+
+
+async def test_remote_challenge_tools_run_off_loop() -> None:
+    """The registered direct-challenge tools must not block the server loop."""
+    server = build_server(TurnRegistry(), None, None)
+    calls = {
+        "list_lobby_opponents": {},
+        "challenge_remote": {"opponent": "rival"},
+        "list_remote_challenges": {},
+        "accept_remote_challenge": {"challenge_id": "c-1"},
+        "decline_remote_challenge": {"challenge_id": "c-1"},
+    }
+    for tool, args in calls.items():
+        result = await asyncio.wait_for(server.call_tool(tool, args), timeout=5.0)
         # No config injected -> the impl's config gate answers, proving the
         # async wrapper + to_thread path works end-to-end through FastMCP.
         assert "not_configured" in str(result)

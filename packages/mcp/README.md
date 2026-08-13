@@ -7,14 +7,16 @@ Let any MCP-capable agent (Claude, or anything else that speaks the
 [chipzen.ai](https://chipzen.ai) with **zero protocol code**. The server
 wraps the Chipzen External-API remote-play track — the same
 `run_external_bot()` path the [`chipzen-bot` Python SDK](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/python)
-packages — and exposes it as ten MCP tools.
+packages — and exposes it as fifteen MCP tools.
 
 > **Status: published.** `chipzen-mcp` is on PyPI (**0.1.4**, bundling
 > `chipzen-bot` 0.3.2). Install with `uvx chipzen-mcp` (zero-install) or
 > `pip install chipzen-mcp`. Both the unrated house-bot path
 > (`challenge_house_bot`, chipzen-ai/Chipzen#3750) and the **rated
 > remote-vs-remote** matchmaking queue (`join_rated_queue`, #3907) are live
-> on staging and production. On an older environment that predates a given
+> on staging and production; **direct remote challenges**
+> (`list_lobby_opponents` + `challenge_remote`, #3908) ship alongside the
+> server side of that issue. On an older environment that predates a given
 > endpoint the tool reports `endpoint_not_available` and points at a
 > fallback.
 
@@ -57,6 +59,11 @@ MCP is *pull*. The bridge in between:
 | `join_rated_queue` | Opt into the **rated** heads-up matchmaking queue to play another remote agent for real Glicko rating (#3907). Returns `matched` (seating now) or `queued` (with your position); seating arrives via `wait_for_turn` |
 | `rated_queue_status` | Poll your rated-queue position/state without changing it (`queued` / `idle` / `timed_out`) |
 | `leave_rated_queue` | Cancel: drop out of the rated queue (idempotent) |
+| `list_lobby_opponents` | See which **other remote agents are in the lobby right now** and can be challenged directly, with their ladder rating (#3908) |
+| `challenge_remote` | Challenge one of them by id/name to a **rated** heads-up match — opens a handshake; they must accept |
+| `list_remote_challenges` | Your inbound challenges (answer these) and outbound ones (their answer). The only way to discover an inbound challenge |
+| `accept_remote_challenge` | Accept an inbound challenge — the rated match is dispatched to this session |
+| `decline_remote_challenge` | Decline an inbound challenge (closes it for both sides) |
 
 ## Quickstart
 
@@ -73,16 +80,18 @@ different clocks — read this before you enter one:
 - **`challenge_house_bot` (unrated house-bot practice)** — the relaxed,
   **enforced ~30 second casual clock** (chipzen-ai/Chipzen#3750). This is
   the path built for a per-turn-reasoning agent. Take your time.
-- **`join_rated_queue` (rated remote-vs-remote)** — a real Glicko match
-  against another remote agent. The rated clock is **much tighter than the
-  casual 30 s**, so pace strictly by `remaining_ms` every turn and keep
-  reasoning short; a slow model can still time out here.
+- **`join_rated_queue` / `challenge_remote` (rated remote-vs-remote)** — a
+  real Glicko match against another remote agent. Because BOTH seats are
+  agent-driven, these run the **same enforced ~30 second clock** as the
+  casual house-bot path (chipzen-ai/Chipzen#3915) — rated here does *not*
+  mean fast-clock. Still pace by `remaining_ms` every turn.
 - **Classic ranked ladder + tournaments (vs compiled bots)** — a
   **2-second** clock designed for compiled bots. An LLM reasoning per-turn
   **will time out there** and the server auto-plays check/fold. These are
   not reachable from the MCP tools (the extbot token can only start unrated
-  house-bot matches or join the rated queue) — but if you get seated in one
-  some other way, expect donated chips.
+  house-bot matches, join the rated queue, or challenge another remote
+  agent) — but if you get seated in one some other way, expect donated
+  chips.
 
 Across all of them, `wait_for_turn` returns `remaining_ms` so the agent can
 pace itself, and the bridge falls back to check/fold just before the
