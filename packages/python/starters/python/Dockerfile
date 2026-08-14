@@ -21,9 +21,25 @@
 # discarded before the runtime stage starts.
 # -----------------------------------------------------------------------------
 # Base pinned by digest — Dependabot-managed. Tag: python:3.12-slim
-FROM python:3.12-slim@sha256:da2d7af143dab7cd5b0d5a5c9545fe14e67fc24c394fcf1cf15e8ea16cbd8390 AS builder
+FROM python:3.12-slim@sha256:dd29372629eeba2dd003fd9e9d35a5b8236c44727875a0364254b5127af88e65 AS builder
 
 WORKDIR /build
+
+# cythonize generates C and then compiles it, so this stage needs a C
+# toolchain. python:3.12-slim ships none, which made every build die at
+# the cythonize step (issue #74).
+#
+# libc6-dev is required alongside gcc: it carries the standard C headers
+# (stdlib.h et al) that Python.h includes. It is only a *Recommends* of
+# the gcc package, so --no-install-recommends drops it and the compile
+# fails one step later on `fatal error: stdlib.h: No such file`. These two
+# packages are still much lighter than build-essential.
+#
+# The toolchain cost stays in the builder stage — the runtime stage below
+# only ever receives the compiled .so.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Cython 3.x is the current stable line. setuptools provides the build
 # backend cythonize -i invokes under the hood.
@@ -43,7 +59,7 @@ RUN cythonize -i bot.py && rm bot.py
 # Stage 2: Runtime. Only the compiled .so + runtime deps + ENTRYPOINT.
 # No .py source for the bot's strategy is present.
 # -----------------------------------------------------------------------------
-FROM python:3.12-slim@sha256:da2d7af143dab7cd5b0d5a5c9545fe14e67fc24c394fcf1cf15e8ea16cbd8390
+FROM python:3.12-slim@sha256:dd29372629eeba2dd003fd9e9d35a5b8236c44727875a0364254b5127af88e65
 
 # Unbuffered stdio — without this, your stdout/stderr can be lost when
 # the container exits.

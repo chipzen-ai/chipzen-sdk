@@ -1,10 +1,26 @@
 """Chipzen Poker Bot SDK -- build, test, and deploy poker bots for the Chipzen platform."""
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
+
 # Defined BEFORE the submodule imports below: ``chipzen.client`` and
 # ``chipzen.external`` read ``chipzen.__version__`` at import time (for the
 # default handshake ``client_version``), so it must exist on the partially
 # initialized package object when those imports run.
-__version__ = "0.3.0"
+#
+# The explicit annotation matters: without it mypy cannot infer a single type
+# for a name assigned in both branches of a try/except, and every module that
+# uses ``__version__`` as a default argument fails with `has-type`.
+__version__: str
+try:
+    # Single source of truth: the installed distribution's version, which
+    # hatchling reads straight from pyproject's ``version``. Deriving it here
+    # means the runtime constant and the published wheel cannot drift -- the
+    # exact failure this replaces (#89: a hand-maintained "0.3.0" was still
+    # advertised in the WS User-Agent of the published 0.3.1 wheel).
+    __version__ = _dist_version("chipzen-bot")
+except PackageNotFoundError:  # pragma: no cover - running from an uninstalled source tree
+    __version__ = "0.0.0+unknown"
 
 from chipzen.bot import ChipzenBot
 from chipzen.client import BotDecisionError, run_bot

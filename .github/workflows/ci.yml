@@ -185,6 +185,48 @@ jobs:
       - name: Check the protocol doc against the committed digest
         run: python scripts/protocol_doc_hash.py --check
 
+  python-starter-image:
+    # `docker build -t my-bot .` is the canonical packaging step QUICKSTART.md
+    # tells every Python bot author to run, and nothing in CI ever ran it. Both
+    # halves of issue #74 were therefore invisible here: the pinned base digest
+    # had been garbage-collected off Docker Hub (404 before the first layer),
+    # and the Cython stage had no C toolchain to compile the generated C with.
+    #
+    # This job builds the shipped starter exactly as a user would and then
+    # imports the compiled module out of the runtime image, which proves the
+    # .so is loadable and that `from bot import main` — the image ENTRYPOINT —
+    # resolves. A stale digest or a missing build dep now reds a PR instead of
+    # reaching a developer's first five minutes with the SDK.
+    name: Python starter image (docker build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/python/starters/python
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the starter image
+        run: docker build -t chipzen-starter:ci .
+      - name: The runtime image runs the COMPILED bot, with no .py source
+        run: |
+          set -euo pipefail
+          cat > /tmp/check.py <<'PY'
+          import os
+
+          import bot
+
+          assert bot.__file__.endswith(".so"), bot.__file__
+          assert callable(bot.main), "the image ENTRYPOINT calls bot.main()"
+          leaked = [f for f in os.listdir("/bot") if f.endswith(".py")]
+          assert not leaked, f"strategy source leaked into the runtime image: {leaked}"
+          print("compiled module OK:", bot.__file__)
+          PY
+          # PYTHONPATH=/bot because the script is mounted outside the bot's
+          # WORKDIR, so sys.path[0] would otherwise be /tmp.
+          docker run --rm \
+            -v /tmp/check.py:/tmp/check.py \
+            -e PYTHONPATH=/bot \
+            --entrypoint python chipzen-starter:ci /tmp/check.py
+
   reference-bot:
     name: Reference bot (lint)
     runs-on: ubuntu-latest

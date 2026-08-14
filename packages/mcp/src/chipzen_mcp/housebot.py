@@ -15,17 +15,23 @@ whole contract stays isolated in this module:
   when configured; a mismatch comes back as the opaque 401) and optional
   ``opponent`` names a house bot by UUID or exact name (omitted -> the
   server's default first opponent). The request model forbids extra fields.
-* ``200``: ``{match_id, participant_id, gateway_ws_url, opponent,
-  opponent_bot_id, rated: false, decision_timeout_ms: 30000}``. The tool
-  surfaces ``match_id`` / ``opponent`` / ``opponent_bot_id`` / ``rated`` /
-  ``decision_timeout_ms`` and tolerates unknown extras. ``gateway_ws_url``
-  is deliberately NOT surfaced: the match reaches this session through the
-  normal lobby dispatch; the agent never dials sockets. The accepted
-  challenge's ``request_id`` -- read from the ``X-Request-ID`` response
-  header (the success body carries no ``request_id``) -- IS surfaced: it
-  threads the whole dispatch fan-out in the platform logs, so it is the
-  correlator a developer quotes when reporting a problem with the match
-  (chipzen-ai/Chipzen#3901).
+* ``200``: ``{match_id, participant_id, status: "dispatching",
+  gateway_ws_url: null, opponent, opponent_bot_id, rated: false,
+  decision_timeout_ms: 30000}``. The ``200`` means "validated, committed and
+  dispatching", NOT "the match is live": every gate is checked synchronously,
+  then executor allocation and the opponent launch run in a background seam
+  after the response has been sent (chipzen-ai/Chipzen#3832), which on a cold
+  pool can take 60s+. Hence ``status`` is always ``"dispatching"`` and
+  ``gateway_ws_url`` is always ``null`` -- there is no executor to point at
+  yet. The tool surfaces ``match_id`` / ``opponent`` / ``opponent_bot_id`` /
+  ``rated`` / ``decision_timeout_ms`` and tolerates unknown extras.
+  ``gateway_ws_url`` is deliberately NOT surfaced -- it carries nothing, and
+  the match reaches this session through the normal lobby dispatch; the agent
+  never dials sockets. The accepted challenge's ``request_id`` -- read from
+  the ``X-Request-ID`` response header (the success body carries no
+  ``request_id``) -- IS surfaced: it threads the whole dispatch fan-out in
+  the platform logs, so it is the correlator a developer quotes when
+  reporting a problem with the match (chipzen-ai/Chipzen#3901).
 * Errors arrive in the platform envelope ``{error_code, message,
   request_id}`` and map 1:1 onto tool ``error`` values (the tool re-surfaces
   ``request_id`` from the envelope body, falling back to ``X-Request-ID``):
@@ -34,7 +40,17 @@ whole contract stays isolated in this module:
   ``400 EXTAPI_HOUSE_BOT_NOT_FOUND`` (opponent selector miss; the server
   deliberately does NOT 404 for this), ``409 EXT_BOT_OFFLINE``,
   ``429 TOKEN_AT_CONCURRENT_MATCH_CAP`` / ``429 FREE_TIER_LIMIT_EXCEEDED``
-  (distinguished by ``error_code``), ``502 EXTAPI_DISPATCH_FAILED``.
+  (distinguished by ``error_code``).
+* ``502 EXTAPI_DISPATCH_FAILED`` is the pre-#3832 synchronous failure and can
+  no longer fire on this path: dispatch now runs after the response, so a
+  failure there marks the match ``status="error"`` (visible on the matches
+  API) rather than producing a second HTTP error. The 502 branch in
+  :func:`_map_response` is kept as defence for an older server, but the
+  honest failure mode today is SILENT: the agent receives
+  ``challenge_created`` and then is simply never seated -- ``wait_for_turn``
+  returns ``idle`` until the caller gives up. A challenge that never yields a
+  turn should be read as a failed dispatch and retried; the ``request_id`` on
+  the accepted challenge is what support needs to trace it.
 * A plain ``404`` on this path still means "endpoint not deployed on this
   environment" (older server) -> the dashboard-fallback message.
 """
@@ -238,9 +254,13 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
     if result.status in (200, 201):
         request_id = response_request_id(result)
         note = (
-            "Unrated house-bot challenge accepted. The match is dispatched "
-            "to this session's lobby connection -- call wait_for_turn now; "
-            "your first decision arrives there."
+            "Unrated house-bot challenge accepted (validated and committed; "
+            "the executor is still being allocated in the background, which "
+            "can take 60s+ on a cold pool). The match is dispatched to this "
+            "session's lobby connection -- call wait_for_turn now; your first "
+            "decision arrives there. If several long waits pass with no turn, "
+            "the background dispatch failed: there is no second error to read, "
+            "so just challenge again."
         )
         if request_id:
             note = (
