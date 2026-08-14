@@ -7,6 +7,11 @@ packaging work: take your existing strategy, drop it into the right Chipzen
 starter, validate it locally, and produce the artifact you upload (a Docker
 tarball) or run (an external-API bot).
 
+> **Don't have a bot yet?** Start at
+> [`BUILDING-WITH-AI-AGENTS.md`](BUILDING-WITH-AI-AGENTS.md) instead — the same
+> approach, but from an empty directory to a first working `decide()`. Come back
+> here when you have something to package.
+
 There are **two flows**. Pick the one that matches how you want your bot to
 run:
 

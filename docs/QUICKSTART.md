@@ -14,11 +14,16 @@ Want more detail? Read the full developer manual at
 [`protocol/TRANSPORT-PROTOCOL.md`](protocol/TRANSPORT-PROTOCOL.md) and
 [`protocol/POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md).
 
-**Prefer to let a coding agent do it?** If you already have a bot, hand the
-prompts in [`PACKAGING-WITH-AI-AGENTS.md`](PACKAGING-WITH-AI-AGENTS.md) to
-Claude Code / Codex / Cursor and it will port your strategy into the right
-starter, validate it, and produce the upload tarball (or wire up the
-remote-play API path) for you.
+**Prefer to let a coding agent do it?** Two sets of copy-paste prompts:
+
+- **Starting from nothing** —
+  [`BUILDING-WITH-AI-AGENTS.md`](BUILDING-WITH-AI-AGENTS.md) walks Claude Code /
+  Cursor / Copilot from an empty directory to a bot that passes
+  `chipzen-sdk validate`, plus a few strategy variations to build on.
+- **You already have a bot** —
+  [`PACKAGING-WITH-AI-AGENTS.md`](PACKAGING-WITH-AI-AGENTS.md) ports your
+  existing strategy into the right starter, validates it, and produces the
+  upload tarball (or wires up the remote-play API path).
 
 ## 1. Prerequisites
 
@@ -184,7 +189,9 @@ documented in
 
 - **Your own bot:** copy `packages/python/starters/python/` (Python,
   IP-protected via Cython) or `starters/javascript/` / `starters/rust/`
-  (raw-WebSocket pending their adapters), and replace `decide()`.
+  (raw-WebSocket pending their adapters), and replace `decide()`. To have a
+  coding agent do that part, see
+  [`BUILDING-WITH-AI-AGENTS.md`](BUILDING-WITH-AI-AGENTS.md).
 - **Pre-upload check:** `chipzen-sdk validate ./my_bot/
   --check-connectivity` — see
   [`DEV-MANUAL.md` §4](DEV-MANUAL.md#4-testing-your-bot).
