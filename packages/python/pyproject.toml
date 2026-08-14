@@ -35,7 +35,15 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=4.0",
-    "ruff>=0.5.0",
+    # Pinned exactly, not floored. ruff ships formatter changes in minor
+    # releases -- 0.16 began formatting Python code blocks inside Markdown --
+    # so an unpinned install silently reformats the repo out from under
+    # `ruff format --check` and reds every open PR regardless of content
+    # (issue #104). Bump this deliberately, in its own PR, together with
+    # whatever reformatting the new version wants.
+    # Keep in lockstep with packages/mcp/pyproject.toml and the RUFF_VERSION
+    # env in .github/workflows/ci.yml.
+    "ruff==0.16.3",
     "hypothesis>=6.100.0",
     "mypy>=1.0",
     # 3.10 has no stdlib tomllib, so the chipzen.toml parser falls back to

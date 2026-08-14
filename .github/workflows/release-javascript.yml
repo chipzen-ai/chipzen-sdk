@@ -107,8 +107,19 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # 22, not the 20 the build job uses: npm Trusted Publishing needs
+          # Node >= 22.14.0 as well as npm >= 11.5.1. The build job stays on
+          # 20 deliberately — that is the runtime floor the package is tested
+          # against, and this job only unpacks an already-built tarball.
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Upgrade npm to a Trusted-Publishing-capable version
+        # Node 22 bundles npm 10.x, which predates OIDC trusted publishing
+        # (npm >= 11.5.1). Without this the publish falls back to looking for
+        # a token and fails with ENEEDAUTH.
+        run: |
+          npm install -g npm@latest
+          npm --version
       - name: Download tarball
         uses: actions/download-artifact@v4
         with:
@@ -129,15 +140,13 @@ jobs:
         # shorthand `<user>/<repo>` and runs `git ls-remote` instead of
         # publishing the local file. `./` forces filesystem resolution.
         #
-        # TEMPORARY: NODE_AUTH_TOKEN bootstraps the FIRST publish with a
-        # granular token, because npm only lets you attach an OIDC Trusted
-        # Publisher to a package that already exists. Once @chipzen-ai/bot
-        # is published, configure the Trusted Publisher and REVERT this
-        # `env:` block so releases go token-free via OIDC (the `--provenance`
-        # OIDC signing already works regardless). The token is short-lived
-        # and should be revoked + the NPM_TOKEN secret deleted afterward.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # No NODE_AUTH_TOKEN: authentication is the job's OIDC identity, which
+        # npm exchanges for a short-lived credential against the Trusted
+        # Publisher configured for this (repo, workflow, environment) triple.
+        # The bootstrap token this replaces was only ever needed because npm
+        # cannot attach a Trusted Publisher to a package that does not exist
+        # yet; @chipzen-ai/bot is published now — see
+        # packages/javascript/RELEASING.md.
         run: |
           npm publish ./npm-dist/*.tgz \
             --provenance \

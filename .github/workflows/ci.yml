@@ -9,6 +9,19 @@ on:
 permissions:
   contents: read
 
+env:
+  # Lint tooling is pinned exactly, because ruff changes formatter behaviour
+  # in minor releases: 0.16 started formatting Python code blocks inside
+  # Markdown, which reformatted files no PR had touched and turned
+  # `ruff format --check` red on every open PR at once (issue #104). `main`
+  # only looked green because its last run predated the release.
+  #
+  # The two Python packages pin the same version in their `dev` extras, so a
+  # contributor's local `ruff` matches CI's. All three must move together --
+  # in a deliberate PR that also carries whatever reformatting the new
+  # version wants, rather than by surprise on an unrelated change.
+  RUFF_VERSION: "0.16.3"
+
 jobs:
   python-sdk:
     # Renamed from `python-starter` (issue #17). The legacy
@@ -35,6 +48,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install package + dev deps
         run: pip install -e ".[dev]"
+      - name: Lint tooling is at the pinned version
+        # The pin lives in two places (this workflow's RUFF_VERSION and the
+        # package's `dev` extra) and they must agree, or CI and a
+        # contributor's local run disagree about what "formatted" means.
+        run: |
+          installed=$(ruff --version)
+          case "$installed" in
+            "ruff ${RUFF_VERSION}"*) echo "$installed" ;;
+            *) echo "::error::expected ruff ${RUFF_VERSION} (from pyproject dev extra), got: $installed"; exit 1 ;;
+          esac
       - name: Lint
         run: ruff check .
       - name: Format check
@@ -72,6 +95,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install package + dev deps
         run: pip install -e ".[dev]"
+      - name: Lint tooling is at the pinned version
+        run: |
+          installed=$(ruff --version)
+          case "$installed" in
+            "ruff ${RUFF_VERSION}"*) echo "$installed" ;;
+            *) echo "::error::expected ruff ${RUFF_VERSION} (from pyproject dev extra), got: $installed"; exit 1 ;;
+          esac
       - name: Lint
         run: ruff check .
       - name: Format check
@@ -239,7 +269,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install ruff
-        run: pip install ruff
+        # Pinned via the workflow-level RUFF_VERSION — this job has no
+        # pyproject to carry the pin, and an unpinned install here is what
+        # let ruff 0.16 red the repo (issue #104).
+        run: pip install "ruff==${RUFF_VERSION}"
       - name: Lint
         run: ruff check .
       - name: Format check

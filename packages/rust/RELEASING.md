@@ -15,29 +15,35 @@ The workspace publishes two crates per release:
 Both crates share the same `version` via `[workspace.package]`, so a
 release ships the matched pair.
 
-## One-time setup (before the first release)
+## One-time setup
 
-Done once per crate. Until both crates have a Trusted Publisher
-configured, the publish job will fail with `403 Forbidden` from
-crates.io.
+Both crates are published (`0.3.0`), so this is the steady-state setup:
+add a Trusted Publisher to each **existing** crate. Until both have one,
+the publish job fails its authentication step.
 
-### 1. Reserve the crate names
+### 1. Why the first publish did not use OIDC
 
-If `chipzen-bot` and `chipzen-sdk` are not already taken, you do not
-need to upload a placeholder — Trusted Publishing can mint them on
-first publish. If a name is taken, contact crates.io support; squatted
-names can sometimes be transferred.
+Recorded because the previous version of this page assumed otherwise, and
+the assumption cost a release.
+
+crates.io can only attach a Trusted Publisher to a crate that **already
+exists** — there is no pending-publisher form of the kind PyPI offers. So
+the very first publish of a new crate name is necessarily bootstrapped
+with a short-lived API token, which is what happened for `0.3.0`. Every
+release after that is token-free.
+
+If you ever add a *third* crate to this workspace, expect the same
+two-step dance: token-bootstrap the first publish, configure the Trusted
+Publisher, then drop back to OIDC.
 
 ### 2. Configure the Trusted Publisher
 
 Per crate (do this twice — once for `chipzen-bot`, once for `chipzen-sdk`):
 
 1. Open https://crates.io/me and sign in with the GitHub account that
-   should own the crate.
+   owns the crate.
 2. Navigate to https://crates.io/crates/chipzen-bot/settings (or the
-   `chipzen-sdk` equivalent). For crates that don't exist yet, the
-   Trusted Publisher form is available before the first publish — see
-   https://crates.io/me/pending-publishers.
+   `chipzen-sdk` equivalent) → **Trusted Publishing**.
 3. **Add a new GitHub Trusted Publisher**:
    - **Repository owner**: `chipzen-ai`
    - **Repository name**: `chipzen-sdk`
@@ -46,9 +52,22 @@ Per crate (do this twice — once for `chipzen-bot`, once for `chipzen-sdk`):
      in the workflow's `publish` job)
 
 crates.io will accept publishes from this exact `(repo, workflow,
-environment)` triple via OIDC. No secret is stored on either side.
+environment)` triple via OIDC. No secret is stored on either side: the
+workflow's `rust-lang/crates-io-auth-action` step swaps the job's OIDC
+token for a short-lived crates.io token and revokes it again in its post
+step.
 
-### 3. (Optional) Add reviewers / wait timers to the GitHub environment
+### 3. Retire the bootstrap token
+
+Once both Trusted Publishers above are configured — and **not before**,
+or the next release fails to authenticate:
+
+- Revoke the crates.io API token used for the `0.3.0` bootstrap
+  (https://crates.io/settings/tokens).
+- Delete the `CARGO_REGISTRY_TOKEN` repository secret. The workflow no
+  longer reads it.
+
+### 4. (Optional) Add reviewers / wait timers to the GitHub environment
 
 In the chipzen-sdk repo on GitHub:
 
@@ -83,7 +102,7 @@ In the chipzen-sdk repo on GitHub:
    ```
    Pushing the tag triggers the workflow, which builds + publishes
    both crates.
-4. **Approve** the publish (if reviewers were added in setup step 3).
+4. **Approve** the publish (if reviewers were added in setup step 4).
 5. **Verify**:
    ```bash
    cargo install chipzen-sdk --version 0.3.0
@@ -124,10 +143,22 @@ reproducibility.
 
 ## Notes on the two-crate workspace
 
-`chipzen-sdk` (the CLI) does not depend on `chipzen-bot` — it's a
-standalone crate that lives in the same workspace for shared
-metadata. Either crate can be republished independently if needed
-(skip the other in `cargo publish -p ...`).
+`chipzen-sdk` (the CLI) **depends on** `chipzen-bot`
+(`chipzen-bot = { version = "0.3", path = "../chipzen-bot" }`), which
+fixes the publish order: `chipzen-bot` must reach the crates.io index
+first or `cargo publish -p chipzen-sdk` cannot resolve it. The workflow
+publishes them in that order for exactly this reason, and `cargo publish`
+blocks until the crate it just uploaded is indexed.
+
+The same dependency is why the build job only runs
+`cargo package -p chipzen-bot`: packaging `chipzen-sdk` resolves its
+dependency from the registry, which is not possible for a version that
+has not been published yet. `chipzen-sdk` is verified at publish time by
+`cargo publish` itself.
+
+`chipzen-bot` can be republished on its own; `chipzen-sdk` cannot be
+published ahead of a `chipzen-bot` version that satisfies its `"0.3"`
+requirement.
 
 The IP-protected starter at [`starters/rust/`](starters/rust/) uses
 `chipzen-bot = "0.3"` from the registry and is intentionally NOT a
