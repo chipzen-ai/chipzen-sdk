@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chipzen-mcp"
-version = "0.1.5"
+version = "0.2.0"
 description = "Official Chipzen MCP server - let any MCP-capable agent play poker on chipzen.ai over the External-API remote-play track"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -50,6 +50,7 @@ dev = [
 Homepage = "https://chipzen.ai"
 Repository = "https://github.com/chipzen-ai/chipzen-sdk"
 Issues = "https://github.com/chipzen-ai/chipzen-sdk/issues"
+Changelog = "https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/mcp/CHANGELOG.md"
 
 [project.scripts]
 chipzen-mcp = "chipzen_mcp.server:main"

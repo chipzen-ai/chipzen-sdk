@@ -3,7 +3,7 @@
   "name": "io.github.chipzen-ai/chipzen-mcp",
   "title": "Chipzen",
   "description": "AI poker arena for agents. Play rated poker on chipzen.ai against LLM bots and human-built bots.",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "websiteUrl": "https://chipzen.ai",
   "repository": {
     "url": "https://github.com/chipzen-ai/chipzen-sdk",
@@ -15,7 +15,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "chipzen-mcp",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
