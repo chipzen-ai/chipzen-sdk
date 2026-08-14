@@ -79,6 +79,6 @@ pub use retry::{default_retry_policy, RetryPolicy};
 // of the supported public API; the underscore prefix is a convention copied
 // from the Python and JavaScript SDKs.
 #[doc(hidden)]
-pub use client::{_extract_match_id, _run_session, _safe_fallback_action};
+pub use client::{_extract_match_id, _run_session, _safe_fallback_action, FallbackAction};
 #[doc(hidden)]
 pub use external::{_set_lobby_recv_timeout_ms, run_external_with_transport, LobbyTransport};

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chipzen_bot::{
-    _extract_match_id, _run_session, _safe_fallback_action, Action, Bot, Error, GameState,
-    MessageReader, MessageWriter, SessionContext, SUPPORTED_PROTOCOL_VERSIONS,
+    _extract_match_id, _run_session, _safe_fallback_action, Action, Bot, Error, FallbackAction,
+    GameState, MessageReader, MessageWriter, SessionContext, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -20,16 +20,72 @@ fn extract_match_id_handles_uuid_and_namespaced_ids() {
     assert_eq!(_extract_match_id(""), "");
 }
 
+fn strings(actions: &[&str]) -> Vec<String> {
+    actions.iter().map(|s| (*s).to_string()).collect()
+}
+
 #[test]
 fn safe_fallback_prefers_check_then_fold() {
-    let with_check = vec!["fold".to_string(), "check".to_string()];
-    assert!(matches!(_safe_fallback_action(&with_check), Action::Check));
+    let with_check = strings(&["fold", "check"]);
+    assert_eq!(
+        _safe_fallback_action(&with_check).unwrap(),
+        FallbackAction::Typed(Action::Check)
+    );
 
-    let no_check = vec!["fold".to_string()];
-    assert!(matches!(_safe_fallback_action(&no_check), Action::Fold));
+    let no_check = strings(&["fold", "call"]);
+    assert_eq!(
+        _safe_fallback_action(&no_check).unwrap(),
+        FallbackAction::Typed(Action::Fold)
+    );
+}
 
-    // Empty (shouldn't happen in practice) — still returns fold.
-    assert!(matches!(_safe_fallback_action(&[]), Action::Fold));
+#[test]
+fn safe_fallback_degrades_to_first_valid_action() {
+    // A variant table offers an action set this SDK doesn't model.
+    // Answering check/fold here is rejected, retried, rejected again —
+    // the reject/retry loop of chipzen-ai/Chipzen#4244. Echo the first
+    // valid action instead (matches the Python SDK).
+    assert_eq!(
+        _safe_fallback_action(&strings(&["draw"])).unwrap(),
+        FallbackAction::Raw("draw".to_string())
+    );
+    assert_eq!(
+        _safe_fallback_action(&strings(&["place", "pass"])).unwrap(),
+        FallbackAction::Raw("place".to_string())
+    );
+    // Modelled kinds that need no params still come back typed.
+    assert_eq!(
+        _safe_fallback_action(&strings(&["call", "raise"])).unwrap(),
+        FallbackAction::Typed(Action::Call)
+    );
+    assert_eq!(
+        _safe_fallback_action(&strings(&["all_in"])).unwrap(),
+        FallbackAction::Typed(Action::AllIn)
+    );
+}
+
+#[test]
+fn safe_fallback_raw_action_serializes_verbatim_with_empty_params() {
+    let (action, params) = _safe_fallback_action(&strings(&["draw"]))
+        .unwrap()
+        .to_wire();
+    assert_eq!(action, "draw");
+    assert_eq!(params, json!({}));
+}
+
+#[test]
+fn safe_fallback_errors_on_empty_valid_actions() {
+    // Nothing legal was offered: an explicit error, never a panic and
+    // never a guessed `fold` that the server will just reject again.
+    let err = _safe_fallback_action(&[]).expect_err("empty valid_actions must be an error");
+    assert!(
+        matches!(err, Error::Protocol(_)),
+        "expected Error::Protocol, got: {err:?}"
+    );
+    assert!(
+        format!("{err}").contains("valid_actions"),
+        "error should name the offending field: {err}"
+    );
 }
 
 #[test]
@@ -283,6 +339,197 @@ async fn run_session_replies_to_action_rejected_with_safe_fallback() {
     assert_eq!(retry["request_id"], "req_99");
     // valid_actions only had "fold" so safe-fallback picks fold.
     assert_eq!(retry["action"], "fold");
+}
+
+// ---------------------------------------------------------------------------
+// Variant-table reject/retry loop (chipzen-ai/Chipzen#4244)
+// ---------------------------------------------------------------------------
+
+/// Shared state for a mock server that validates every `turn_action`
+/// against the table's `valid_actions` — the way the platform does.
+struct VariantTable {
+    /// Messages queued for the SDK to read.
+    inbox: std::collections::VecDeque<String>,
+    /// The only actions this table accepts.
+    valid_actions: Vec<String>,
+    /// Actions the table accepted.
+    accepted: Vec<String>,
+    /// How many `action_rejected` messages the table has sent.
+    rejections: usize,
+    /// Reject the first `turn_action` unconditionally, so the
+    /// `action_rejected` retry path is exercised too.
+    reject_first: bool,
+    next_seq: i64,
+}
+
+/// Hard stop so a looping SDK ends the test instead of hanging. The
+/// platform's equivalent is the auto-substitute streak limit, which
+/// forfeits the match.
+const REJECT_CAP: usize = 6;
+
+impl VariantTable {
+    fn new(valid_actions: &[&str]) -> Arc<Mutex<Self>> {
+        let valid_actions = strings(valid_actions);
+        let turn_request = json!({
+            "type": "turn_request",
+            "seq": 2,
+            "request_id": "req_v1",
+            "valid_actions": valid_actions,
+            "state": {"phase": "draw", "valid_actions": valid_actions},
+        });
+        Arc::new(Mutex::new(VariantTable {
+            inbox: [
+                json!({"type": "hello", "match_id": "m_test", "seq": 1}).to_string(),
+                turn_request.to_string(),
+            ]
+            .into_iter()
+            .collect(),
+            valid_actions,
+            accepted: Vec::new(),
+            rejections: 0,
+            reject_first: true,
+            next_seq: 3,
+        }))
+    }
+
+    fn seq(&mut self) -> i64 {
+        self.next_seq += 1;
+        self.next_seq
+    }
+
+    fn queue_match_end(&mut self, reason: &str) {
+        let seq = self.seq();
+        self.inbox
+            .push_back(json!({"type": "match_end", "seq": seq, "reason": reason}).to_string());
+    }
+
+    /// Rule the table applies to an incoming `turn_action`.
+    fn handle_turn_action(&mut self, action: &str, request_id: &str) {
+        let legal = self.valid_actions.iter().any(|a| a == action);
+        let reject = std::mem::take(&mut self.reject_first) || !legal;
+        if !reject {
+            self.accepted.push(action.to_string());
+            self.queue_match_end("complete");
+            return;
+        }
+        self.rejections += 1;
+        if self.rejections > REJECT_CAP {
+            // The SDK is stuck in a reject/retry loop — the streak limit
+            // would have forfeited the match by now.
+            self.queue_match_end("auto_substitute_forfeit");
+            return;
+        }
+        let seq = self.seq();
+        self.inbox.push_back(
+            json!({
+                "type": "action_rejected",
+                "seq": seq,
+                "request_id": request_id,
+                "reason": "invalid_action",
+                "message": "action not in valid_actions",
+                "remaining_ms": 4000,
+                "valid_actions": self.valid_actions,
+            })
+            .to_string(),
+        );
+    }
+}
+
+struct TableReader(Arc<Mutex<VariantTable>>);
+
+#[async_trait]
+impl MessageReader for TableReader {
+    async fn next(&mut self) -> Result<Option<String>, Error> {
+        Ok(self.0.lock().unwrap().inbox.pop_front())
+    }
+}
+
+struct TableWriter(Arc<Mutex<VariantTable>>);
+
+#[async_trait]
+impl MessageWriter for TableWriter {
+    async fn send(&mut self, payload: String) -> Result<(), Error> {
+        let msg: Value = serde_json::from_str(&payload).unwrap();
+        if msg["type"] != "turn_action" {
+            return Ok(());
+        }
+        let action = msg["action"].as_str().unwrap_or("").to_string();
+        let request_id = msg["request_id"].as_str().unwrap_or("").to_string();
+        self.0
+            .lock()
+            .unwrap()
+            .handle_turn_action(&action, &request_id);
+        Ok(())
+    }
+}
+
+/// A plain NLHE bot: it only knows check/fold/call/raise, so at a variant
+/// table every action it picks is illegal.
+struct NlheBot;
+impl Bot for NlheBot {
+    fn decide(&mut self, state: &GameState) -> Action {
+        if state.valid_actions.iter().any(|a| a == "check") {
+            Action::Check
+        } else {
+            Action::Fold
+        }
+    }
+}
+
+/// An NLHE bot mis-seated at a variant table (`valid_actions == ["draw"]`)
+/// used to answer `fold`, get rejected, answer `fold` again, and spin until
+/// the auto-substitute streak limit killed the match. The safe fallback now
+/// echoes the first valid action, so the exchange terminates after a single
+/// rejection (chipzen-ai/Chipzen#4244).
+#[tokio::test]
+async fn run_session_does_not_loop_at_a_variant_table() {
+    let table = VariantTable::new(&["draw"]);
+    let mut reader = TableReader(Arc::clone(&table));
+    let mut writer = TableWriter(Arc::clone(&table));
+    let mut bot = NlheBot;
+    let context = ctx();
+
+    let end = _run_session(&mut reader, &mut writer, &mut bot, &context)
+        .await
+        .expect("variant table session must complete");
+
+    let state = table.lock().unwrap();
+    assert_eq!(
+        state.rejections, 1,
+        "expected exactly one rejection (forced) then a legal retry; \
+         {} rejections means the SDK is looping on an illegal action",
+        state.rejections
+    );
+    assert_eq!(
+        state.accepted,
+        vec!["draw".to_string()],
+        "the safe fallback should echo the first valid action"
+    );
+    assert_eq!(
+        end.expect("match_end payload")["reason"],
+        "complete",
+        "match ended in an auto-substitute forfeit"
+    );
+}
+
+/// The same table, but the SDK is told nothing is legal. It must surface an
+/// explicit protocol error rather than guessing an action that gets rejected
+/// forever.
+#[tokio::test]
+async fn run_session_errors_when_no_action_is_valid() {
+    let table = VariantTable::new(&[]);
+    let mut reader = TableReader(Arc::clone(&table));
+    let mut writer = TableWriter(Arc::clone(&table));
+    let mut bot = NlheBot;
+    let context = ctx();
+
+    let err = _run_session(&mut reader, &mut writer, &mut bot, &context)
+        .await
+        .expect_err("an empty valid_actions list has no safe fallback");
+    assert!(
+        matches!(err, Error::Protocol(_)),
+        "expected Error::Protocol, got: {err:?}"
+    );
 }
 
 #[tokio::test]

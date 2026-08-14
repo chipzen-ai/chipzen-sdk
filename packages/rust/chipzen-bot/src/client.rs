@@ -364,7 +364,7 @@ where
                             .collect()
                     })
                     .unwrap_or_else(|| vec!["fold".to_string()]);
-                let fallback = _safe_fallback_action(&valid_actions);
+                let fallback = _safe_fallback_action(&valid_actions)?;
                 send_turn_action(writer, &ctx.match_id, &request_id, fallback).await?;
             }
             "reconnected" => {
@@ -411,7 +411,7 @@ async fn send_turn_action<W: MessageWriter>(
     writer: &mut W,
     match_id: &str,
     request_id: &str,
-    action: Action,
+    action: FallbackAction,
 ) -> Result<(), Error> {
     let (action_str, params) = action.to_wire();
     let payload = json!({
@@ -434,12 +434,15 @@ async fn send_turn_action<W: MessageWriter>(
 /// that isn't legal for the current `valid_actions`, the safe fallback is
 /// substituted regardless of `safe_mode` (mirrors the existing Rust + JS
 /// behavior).
+///
+/// Errors from [`_safe_fallback_action`] (an empty `valid_actions`)
+/// propagate: there is nothing legal left to send.
 fn decide_timed<B: Bot>(
     bot: &mut B,
     state: &crate::models::GameState,
     msg: &Value,
     safe_mode: bool,
-) -> Result<(Action, f64), Error> {
+) -> Result<(FallbackAction, f64), Error> {
     let start = std::time::Instant::now();
     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| bot.decide(state)));
     let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -452,13 +455,13 @@ fn decide_timed<B: Bot>(
                 return Err(Error::BotDecision(detail));
             }
             // safe_mode: fold the panic into a safe action so the match
-            // continues. valid_actions drives check-vs-fold.
-            _safe_fallback_action(&state.valid_actions)
+            // continues. valid_actions drives check-vs-fold-vs-first-valid.
+            return Ok((_safe_fallback_action(&state.valid_actions)?, latency_ms));
         }
     };
 
     if action_is_legal(&action, &state.valid_actions) {
-        Ok((action, latency_ms))
+        Ok((FallbackAction::Typed(action), latency_ms))
     } else {
         let valid = msg
             .get("valid_actions")
@@ -469,7 +472,7 @@ fn decide_timed<B: Bot>(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|| state.valid_actions.clone());
-        Ok((_safe_fallback_action(&valid), latency_ms))
+        Ok((_safe_fallback_action(&valid)?, latency_ms))
     }
 }
 
@@ -518,15 +521,92 @@ fn action_is_legal(action: &Action, valid: &[String]) -> bool {
     valid.iter().any(|v| v == needed)
 }
 
-/// Pick a safe action from the legal set: prefer `check`, fall back
-/// to `fold`. Public-but-hidden so the conformance harness can use
-/// the same logic when it doesn't have a real bot to drive.
-pub fn _safe_fallback_action(valid_actions: &[String]) -> Action {
-    if valid_actions.iter().any(|a| a == "check") {
-        Action::Check
-    } else {
-        Action::Fold
+/// A safe-fallback selection resolved from the server's `valid_actions`.
+///
+/// `Typed` carries one of the [`Action`]s this SDK models. `Raw` is the
+/// escape hatch for an action string it does *not* model — a variant
+/// table's `draw` / `place`, or a `raise` whose amount the fallback path
+/// cannot know. A `Raw` action is echoed verbatim on the wire with empty
+/// `params`, exactly mirroring the Python SDK's
+/// `Action(action=valid_actions[0])`.
+///
+/// Kept as a separate fallback-only type on purpose: widening
+/// [`Action`] / [`crate::ActionKind`] with variant action kinds would be
+/// a semver-breaking change to the supported API, and bots still only
+/// ever *return* an [`Action`].
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FallbackAction {
+    /// One of the action kinds this SDK models.
+    Typed(Action),
+    /// An action string echoed verbatim, with empty `params`.
+    Raw(String),
+}
+
+impl FallbackAction {
+    /// Serialize to the `(action, params)` pair of the `turn_action`
+    /// payload — the owned-string counterpart of [`Action::to_wire`].
+    pub fn to_wire(&self) -> (String, Value) {
+        match self {
+            FallbackAction::Typed(action) => {
+                let (name, params) = action.to_wire();
+                (name.to_string(), params)
+            }
+            FallbackAction::Raw(name) => (name.clone(), json!({})),
+        }
     }
+}
+
+/// Pick a safe action from the legal set: prefer `check`, else `fold`,
+/// else the **first valid action** the server offered. Public-but-hidden
+/// so the conformance harness can use the same logic when it doesn't have
+/// a real bot to drive.
+///
+/// This mirrors the Python SDK's `_safe_fallback_action`
+/// (`packages/python/src/chipzen/client.py`) so both SDKs degrade
+/// identically. The first-valid branch matters when the bot is seated at a
+/// table whose action set it does not model (a variant table offering only
+/// `["draw"]`): blindly answering `check`/`fold` there is rejected, retried,
+/// rejected again, and the bot spins until the auto-substitute streak limit
+/// kills the match (chipzen-ai/Chipzen#4244). Taking that branch is logged
+/// at warn level on stderr — degrading silently is worse than degrading
+/// loudly.
+///
+/// # Errors
+///
+/// [`Error::Protocol`] when `valid_actions` is empty: the server offered
+/// nothing legal, so there is no action to fall back to. An explicit error
+/// beats guessing `fold` and having it rejected forever.
+pub fn _safe_fallback_action(valid_actions: &[String]) -> Result<FallbackAction, Error> {
+    if valid_actions.iter().any(|a| a == "check") {
+        return Ok(FallbackAction::Typed(Action::Check));
+    }
+    if valid_actions.iter().any(|a| a == "fold") {
+        return Ok(FallbackAction::Typed(Action::Fold));
+    }
+
+    let Some(first) = valid_actions.first() else {
+        return Err(Error::Protocol(
+            "no safe fallback action available: the server offered an empty valid_actions list"
+                .to_string(),
+        ));
+    };
+
+    eprintln!(
+        "chipzen-sdk: neither `check` nor `fold` is legal here (valid_actions={valid_actions:?}); \
+         falling back to the first valid action {first:?}. This bot does not model the action set \
+         of the table it is seated at (chipzen-ai/Chipzen#4244)."
+    );
+
+    Ok(match first.as_str() {
+        // `check` / `fold` are handled above; the remaining modelled kinds
+        // that need no params map to a typed action.
+        "call" => FallbackAction::Typed(Action::Call),
+        "all_in" => FallbackAction::Typed(Action::AllIn),
+        // Everything else — an unmodelled variant action, or `raise` whose
+        // amount this path cannot know — is echoed verbatim, as Python does.
+        _ => FallbackAction::Raw(first.clone()),
+    })
 }
 
 /// Pull `match_id` out of a Chipzen WebSocket URL. Path shape is
