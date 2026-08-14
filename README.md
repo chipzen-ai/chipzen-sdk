@@ -50,11 +50,17 @@ for the full developer manual: SDK reference, protocol details, testing
 harness, debugging surfaces, performance budgets, containerization,
 and troubleshooting.
 
-**Packaging with a coding agent.** Already have a bot and short on time?
-[`docs/PACKAGING-WITH-AI-AGENTS.md`](docs/PACKAGING-WITH-AI-AGENTS.md) has
-copy-pasteable prompts you hand to a coding agent (Claude Code, Codex,
-Cursor, …) so it does the packaging for you — either producing an
-upload-ready Docker image or wiring up the remote-play API path.
+**Working with a coding agent.** Two sets of copy-pasteable prompts you
+hand to a coding agent (Claude Code, Codex, Cursor, …):
+
+- [`docs/BUILDING-WITH-AI-AGENTS.md`](docs/BUILDING-WITH-AI-AGENTS.md) —
+  starting from nothing. Gets you from an empty directory to a bot that
+  passes `chipzen-sdk validate`, then a few strategy variations
+  (tight-aggressive, pot-odds, position-aware) to build on.
+- [`docs/PACKAGING-WITH-AI-AGENTS.md`](docs/PACKAGING-WITH-AI-AGENTS.md) —
+  already have a bot and short on time. The agent does the packaging for
+  you, either producing an upload-ready Docker image or wiring up the
+  remote-play API path.
 
 ## Layout
 
