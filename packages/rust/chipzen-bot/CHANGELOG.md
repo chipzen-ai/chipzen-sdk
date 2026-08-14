@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-08-14
+
+Behaviour-only release. No public API changed: `Bot::decide` still returns an
+`Action`, and no type gained or lost a variant, field or signature.
+
 ### Fixed
 
 - **The safe fallback no longer answers `check`/`fold` when neither is legal.**
@@ -34,16 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Error::BotDecision`, mirroring `decide()`.
   ([#80](https://github.com/chipzen-ai/chipzen-sdk/issues/80))
 
-### Security
-
-- **External-API: refuse a cross-origin or `wss`→`ws` gateway URL.**
-  `run_external_bot` now rejects a server-supplied absolute `gateway_ws_url`
-  whose origin differs from the lobby's, or that downgrades to cleartext
-  `ws://` — so the bot token can never be sent to a different host or
-  unencrypted; the offending match is skipped. A relative URL is always
-  re-anchored to the lobby origin.
-  ([#58](https://github.com/chipzen-ai/chipzen-sdk/issues/58))
-
 ### Changed
 
 - **Starter is now seat-count-aware.** The Rust starter
@@ -53,11 +48,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   size as `opponent_stacks.len() + 1`. Heads-up behavior is unchanged. No
   protocol-version bump is needed for multi-player tables — `opponent_stacks`
   has always been a `Vec`; see
-  `docs/protocol/POKER-GAME-STATE-PROTOCOL.md` Section 5.9.
-- **Breaking:** `resolve_gateway_url` now returns `Result<String, Error>`
-  (was `String`) so it can refuse an untrusted gateway URL (new
-  `Error::UntrustedGateway`). The normal relative-path resolution is
-  unchanged; only the rare absolute-URL case can now error.
+  `docs/protocol/POKER-GAME-STATE-PROTOCOL.md` Section 5.9. (The starter is not
+  a workspace member and ships in the repo rather than the crate, but it is the
+  scaffold `chipzen-sdk init` emits, so it is noted here.)
+
+## [0.3.0] — 2026-06-13
+
+Published to crates.io on 2026-06-13 via `workflow_dispatch` (the first
+publish, before Trusted Publishing could be configured on a crate that did not
+yet exist). The notes below were written at the time but were never cut out of
+`[Unreleased]`, so they are recorded here retroactively rather than being
+attributed to 0.3.1.
+
+### Security
+
+- **External-API: refuse a cross-origin or `wss`→`ws` gateway URL.**
+  `run_external_bot` now rejects a server-supplied absolute `gateway_ws_url`
+  whose origin differs from the lobby's, or that downgrades to cleartext
+  `ws://` — so the bot token can never be sent to a different host or
+  unencrypted; the offending match is skipped. A relative URL is always
+  re-anchored to the lobby origin.
+  ([#58](https://github.com/chipzen-ai/chipzen-sdk/issues/58))
 
 ### Added
 
@@ -133,6 +144,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `resolve_gateway_url` now returns `Result<String, Error>`
+  (was `String`) so it can refuse an untrusted gateway URL (new
+  `Error::UntrustedGateway`). The normal relative-path resolution is
+  unchanged; only the rare absolute-URL case can now error.
 - **BREAKING:** `run_bot` now returns
   `Result<Option<serde_json::Value>, Error>` (the `match_end` payload, or
   `None` if the socket closed without a clean `match_end`) instead of
@@ -226,4 +241,6 @@ and
 
 Apache-2.0.
 
+[0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.1
+[0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.0
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.2.0

@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-08-14
+
+Released in lockstep with `chipzen-bot` 0.3.1, which is where the substantive
+change for this version lives (the safe-fallback fix). The CLI carries one
+correction of its own. No API item was added, removed or re-signatured.
+
+### Fixed
+
+- **`validate` no longer passes bots the upload endpoint will reject.**
+  `DEFAULT_MAX_UPLOAD_BYTES` was 500 MB while the platform enforces a single,
+  non-tiered **250 MB** compressed-archive cap (with the built image separately
+  capped at 200 MB). A bot between 250 and 500 MB validated locally and was then
+  refused at upload. The constant and the `--max-size-mb` help text now both say
+  250. The constant's type and name are unchanged; only its value moved, so
+  callers reading it keep compiling and simply get the correct threshold.
+
+## [0.3.0] — 2026-06-13
+
+Published to crates.io on 2026-06-13 via `workflow_dispatch` (the first
+publish, before Trusted Publishing could be configured on a crate that did not
+yet exist). The notes below were written at the time but were never cut out of
+`[Unreleased]`, so they are recorded here retroactively rather than being
+attributed to 0.3.1.
+
 ### Added
 
 - **`chipzen-sdk run-external`** subcommand — resolves the external-API
@@ -93,4 +117,6 @@ template.
 
 Apache-2.0.
 
+[0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.1
+[0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.0
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.2.0
