@@ -42,7 +42,10 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=4.0",
-    "ruff>=0.5.0",
+    # Exact pin -- see the rationale in packages/python/pyproject.toml.
+    # Keep in lockstep with that file and the RUFF_VERSION env in
+    # .github/workflows/ci.yml (issue #104).
+    "ruff==0.16.3",
     "mypy>=1.0",
 ]
 

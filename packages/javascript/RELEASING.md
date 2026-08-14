@@ -5,32 +5,27 @@ The release workflow lives at
 It uses **npm Trusted Publishing (OIDC)** so there is no long-lived
 `NPM_TOKEN` secret to manage.
 
-## One-time setup (before the first release)
+## One-time setup
 
-Done once. Until both of these exist, the publish job will fail with
-`OIDC trusted publisher not configured`.
+`@chipzen-ai/bot` is published (`0.3.0`), so this is the steady-state
+setup: add a Trusted Publisher to the **existing** package. Until it
+exists, the publish job fails with `ENEEDAUTH`.
 
-### 1. Reserve the npm package name
+### 1. Why the first publish did not use OIDC
 
-The scope `@chipzen-ai` must be created on npmjs.com first; the package
-name `@chipzen-ai/bot` will be minted on first publish.
+Recorded because the previous version of this page assumed otherwise, and
+the assumption cost a release.
 
-- Sign in at https://www.npmjs.com/ as the `chipzen-ai` org owner.
-- If the `chipzen-ai` org doesn't exist yet, create it (npmjs.com →
-  Add Organization → name `chipzen-ai`).
-- The org must be on the **Free** tier or higher; npm Trusted
-  Publishing works on Free.
-- You do not need to upload a placeholder version. Trusted Publishing
-  can mint the package on first publish, as long as the scope exists.
+npm can only attach a Trusted Publisher to a package that **already
+exists** — creating the scope is not enough. So the first publish of a new
+package name is necessarily bootstrapped with a short-lived granular
+token, which is what happened for `0.3.0`. Every release after that is
+token-free.
 
 ### 2. Configure the Trusted Publisher
 
-1. Open https://www.npmjs.com/package/@chipzen-ai/bot/access (the
-   page exists once the package has at least one publish, but the
-   trusted publisher form is also available at
-   https://www.npmjs.com/settings/chipzen-ai/packages → select package
-   → Trusted Publisher tab — even before the first publish for
-   reservations).
+1. Open https://www.npmjs.com/package/@chipzen-ai/bot/access →
+   **Trusted Publisher**.
 2. **Add a new GitHub trusted publisher**:
    - **Organization**: `chipzen-ai`
    - **Repository**: `chipzen-sdk`
@@ -41,7 +36,23 @@ name `@chipzen-ai/bot` will be minted on first publish.
 npm will accept publishes from this exact `(repo, workflow, environment)`
 triple via OIDC. No secret is stored on either side.
 
-### 3. (Optional) Add reviewers / wait timers to the GitHub environment
+Trusted Publishing has a **client** floor as well as a registry-side
+configuration: npm >= 11.5.1 on Node >= 22.14.0. The publish job therefore
+runs on Node 22 and upgrades npm before publishing, even though the build
+job stays on Node 20 (the runtime the package is tested against). An older
+npm ignores OIDC entirely and fails looking for a token.
+
+### 3. Retire the bootstrap token
+
+Once the Trusted Publisher above is configured — and **not before**, or
+the next release fails to authenticate:
+
+- Revoke the npm Automation token used for the `0.3.0` bootstrap
+  (https://www.npmjs.com/settings/~/tokens).
+- Delete the `NPM_TOKEN` repository secret. The workflow no longer reads
+  it.
+
+### 4. (Optional) Add reviewers / wait timers to the GitHub environment
 
 In the chipzen-sdk repo on GitHub:
 
@@ -73,7 +84,7 @@ In the chipzen-sdk repo on GitHub:
    git push origin javascript-v0.2.0
    ```
    Pushing the tag triggers the workflow, which builds + publishes.
-4. **Approve** the publish (if reviewers were added in setup step 3).
+4. **Approve** the publish (if reviewers were added in setup step 4).
 5. **Verify**: `npm install @chipzen-ai/bot@0.2.0` in a clean dir, run
    `npx chipzen-sdk validate <scaffolded bot>` to confirm.
 
