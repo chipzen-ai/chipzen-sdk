@@ -3,7 +3,8 @@
  *
  * Subclass and override `decide()`. Lifecycle hooks
  * (`onMatchStart` / `onRoundStart` / `onPhaseChange` / `onTurnResult` /
- * `onRoundResult` / `onMatchEnd`) are optional — defaults are no-ops.
+ * `onRoundResult` / `onMatchEnd` / `onReconnected`) are optional —
+ * defaults are no-ops.
  * Override the ones you need; the SDK's session loop will call them
  * at the right point.
  */
@@ -70,6 +71,21 @@ export abstract class Bot {
 
   /** Called once when the match ends. */
   onMatchEnd(_results: Record<string, unknown>): void {
+    /* default: no-op */
+  }
+
+  /**
+   * Called when the server resumes an in-flight match after a reconnect.
+   *
+   * On re-attach the server sends `reconnected` — NOT `match_start` — so
+   * `onMatchStart` does not fire for a session that (re)joined a match
+   * already in progress. Override this to (re)learn match context: the
+   * message carries `match_id`, `seats`, and `game_config` in the same
+   * shape as `match_start`, plus the current `round_number` and `state`
+   * snapshot (see `docs/protocol/TRANSPORT-PROTOCOL.md` §8.15).
+   * See chipzen-ai/chipzen-sdk#121.
+   */
+  onReconnected(_message: Record<string, unknown>): void {
     /* default: no-op */
   }
 

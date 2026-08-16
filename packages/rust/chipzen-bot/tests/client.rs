@@ -342,6 +342,105 @@ async fn run_session_replies_to_action_rejected_with_safe_fallback() {
 }
 
 // ---------------------------------------------------------------------------
+// Reconnected re-attach (chipzen-ai/chipzen-sdk#121)
+// ---------------------------------------------------------------------------
+
+/// Records the hook/decide order plus every `GameState` decided, so the
+/// test can assert the replayed pending turn used the re-learned seat.
+#[derive(Default)]
+struct ReconnectRecordingBot {
+    events: Vec<String>,
+    states: Vec<GameState>,
+    reconnected_msg: Option<Value>,
+}
+
+impl Bot for ReconnectRecordingBot {
+    fn decide(&mut self, state: &GameState) -> Action {
+        self.events.push("decide".to_string());
+        self.states.push(state.clone());
+        if state.valid_actions.iter().any(|a| a == "check") {
+            Action::Check
+        } else {
+            Action::Fold
+        }
+    }
+    fn on_match_end(&mut self, _results: &Value) {
+        self.events.push("match_end".to_string());
+    }
+    fn on_reconnected(&mut self, msg: &Value) {
+        self.events.push("reconnected".to_string());
+        self.reconnected_msg = Some(msg.clone());
+    }
+}
+
+/// chipzen-ai/chipzen-sdk#121 (Rust analog of #119): a session that
+/// (re)attaches to an in-flight match sees `reconnected` instead of
+/// `match_start` — it must still learn `your_seat` from the seats array
+/// and surface match context via the `on_reconnected` hook, and the
+/// replayed pending turn must be built with the re-learned seat (not
+/// the your_seat=0 default).
+#[tokio::test]
+async fn run_session_reconnected_relearns_seat_and_fires_hook() {
+    let server_hello = json!({"type": "hello", "match_id": "m_test", "seq": 1});
+    let reconnected = json!({
+        "type": "reconnected",
+        "match_id": "m_test",
+        "seq": 2,
+        "round_number": 3,
+        "match_state": "in_progress",
+        "seats": [
+            {"seat": 0, "participant_id": "p1", "display_name": "Opp", "is_self": false},
+            {"seat": 1, "participant_id": "p0", "display_name": "You", "is_self": true},
+        ],
+        "game_config": {"small_blind": 5, "big_blind": 10, "starting_stack": 1000},
+        "state": {},
+        "pending_request": {
+            "type": "turn_request",
+            "match_id": "m_test",
+            "request_id": "req_resume",
+            "valid_actions": ["fold", "check"],
+            // NOTE: no `your_seat` here — the turn state does not carry
+            // it; it only exists in the seats roster.
+            "state": {"hand_number": 7, "phase": "preflop"},
+        },
+    });
+    let match_end = json!({"type": "match_end", "seq": 3, "reason": "complete"});
+    let mut reader = ScriptedReader {
+        messages: vec![
+            server_hello.to_string(),
+            reconnected.to_string(),
+            match_end.to_string(),
+        ],
+        index: 0,
+    };
+    let mut writer = CapturingWriter::default();
+    let mut bot = ReconnectRecordingBot::default();
+    let context = ctx();
+
+    _run_session(&mut reader, &mut writer, &mut bot, &context)
+        .await
+        .unwrap();
+
+    // The hook fired with the full reconnected message, BEFORE the
+    // pending turn was decided — so a bot can (re)learn match identity
+    // in time.
+    assert_eq!(bot.events, vec!["reconnected", "decide", "match_end"]);
+    let msg = bot.reconnected_msg.as_ref().expect("hook message");
+    assert_eq!(msg["match_id"], "m_test");
+
+    // your_seat was re-learned from reconnected.seats (is_self at seat 1).
+    assert_eq!(bot.states.len(), 1);
+    assert_eq!(bot.states[0].your_seat, 1);
+
+    // The pending request was answered like a fresh turn_request.
+    let sent = writer.sent.lock().unwrap().clone();
+    let turn_action: Value = serde_json::from_str(&sent[2]).unwrap();
+    assert_eq!(turn_action["type"], "turn_action");
+    assert_eq!(turn_action["request_id"], "req_resume");
+    assert_eq!(turn_action["action"], "check");
+}
+
+// ---------------------------------------------------------------------------
 // Variant-table reject/retry loop (chipzen-ai/Chipzen#4244)
 // ---------------------------------------------------------------------------
 

@@ -77,6 +77,7 @@ fn bot_default_hooks_are_no_ops() {
     bot.on_turn_result(&msg); // no-op
     bot.on_round_result(&msg); // no-op
     bot.on_match_end(&msg); // no-op
+    bot.on_reconnected(&msg); // no-op
     assert!(matches!(bot.decide(&make_state()), Action::Check));
 }
 

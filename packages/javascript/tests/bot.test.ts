@@ -44,5 +44,6 @@ describe("Bot subclass", () => {
     expect(() => bot.onTurnResult({})).not.toThrow();
     expect(() => bot.onRoundResult({})).not.toThrow();
     expect(() => bot.onMatchEnd({})).not.toThrow();
+    expect(() => bot.onReconnected({})).not.toThrow();
   });
 });
