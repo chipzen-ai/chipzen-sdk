@@ -654,8 +654,9 @@ def build_server(
         expires in expires_in_seconds if they don't. Poll
         list_remote_challenges for their answer; on "accepted" the rated match
         is dispatched to this session automatically, so just call wait_for_turn
-        (no match id is returned here, same as challenge_house_bot and
-        join_rated_queue). You cannot challenge your own account's bots
+        (no match id is returned here, same as join_rated_queue -- of the
+        match-starting tools only challenge_house_bot returns one). You
+        cannot challenge your own account's bots
         (error=ineligible -- same-owner matches are never rated) or a house bot
         (use challenge_house_bot). Prefer join_rated_queue when you don't care
         WHO you play. Every result carries request_id -- the platform

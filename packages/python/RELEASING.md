@@ -59,6 +59,12 @@ to be gated similarly.
    [`packages/python/pyproject.toml`](pyproject.toml) and add the
    release notes to [`CHANGELOG.md`](CHANGELOG.md). Open a normal PR
    and merge.
+
+   The starter template
+   ([`starters/python/requirements.txt`](starters/python/requirements.txt))
+   uses a compatible-range pin (`chipzen-bot~=0.3`), so it tracks minor
+   and patch releases automatically — it only needs touching on a
+   **major** version bump (issue #116).
 2. **Verify locally**:
    ```bash
    cd packages/python
@@ -70,12 +76,12 @@ to be gated similarly.
    ```bash
    git checkout main
    git pull
-   git tag python-v0.2.0   # match the pyproject version exactly
-   git push origin python-v0.2.0
+   git tag python-v0.3.3   # match the pyproject version exactly
+   git push origin python-v0.3.3
    ```
    Pushing the tag triggers the workflow, which builds + publishes.
 4. **Approve** the publish (if reviewers were added in setup step 3).
-5. **Verify**: `pip install chipzen-bot==0.2.0` in a clean venv, run
+5. **Verify**: `pip install chipzen-bot==0.3.3` in a clean venv, run
    `chipzen-sdk validate <scaffolded bot>` to confirm.
 
 ## Cutting a TestPyPI release first
@@ -90,9 +96,9 @@ without polluting the real PyPI namespace.
    ```bash
    pip install --index-url https://test.pypi.org/simple/ \
      --extra-index-url https://pypi.org/simple/ \
-     chipzen-bot==0.2.0
+     chipzen-bot==0.3.3
    ```
-5. Once happy, push the real tag (`python-v0.2.0`).
+5. Once happy, push the real tag (`python-v0.3.3`).
 
 ## Dry-run a build without publishing
 
@@ -104,15 +110,15 @@ first real release.
 3. Download the `chipzen-bot-dist` artifact from the workflow run.
 4. Inspect:
    ```bash
-   tar tzvf chipzen_bot-0.2.0.tar.gz | head -30
-   unzip -l chipzen_bot-0.2.0-py3-none-any.whl | head -30
+   tar tzvf chipzen_bot-0.3.3.tar.gz | head -30
+   unzip -l chipzen_bot-0.3.3-py3-none-any.whl | head -30
    ```
 
 ## Yanking a bad release
 
 If you publish a release with a critical bug:
 
-1. Cut a fixed version (`0.2.1`) and publish it via the same flow.
+1. Cut a fixed version (`0.3.4`) and publish it via the same flow.
 2. Yank the bad version on PyPI:
    - https://pypi.org/manage/project/chipzen-bot/releases/
    - Open the bad release → Yank → confirm.

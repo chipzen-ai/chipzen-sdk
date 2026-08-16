@@ -25,10 +25,10 @@ prefix). The whole contract stays isolated in this module:
     The seating signal arrives later on the lobby ``matched`` push -- the
     agent waits via ``wait_for_turn`` (or polls ``status`` for ``timed_out``).
   - ``status == "matched"``: an eligible partner was found and a RATED match
-    is dispatching. Like ``challenge_house_bot``, this response carries NO
-    match id by design: the match reaches this session through the normal
-    lobby dispatch, and the agent never dials sockets. ``rated`` is always
-    ``true`` for this queue.
+    is dispatching. This response carries NO match id by design (unlike
+    ``challenge_house_bot``, whose ``200`` does return ``match_id``): the
+    match reaches this session through the normal lobby dispatch, and the
+    agent never dials sockets. ``rated`` is always ``true`` for this queue.
 
 * ``POST /api/external-api/matchmaking/leave`` -> ``{status}`` where status is
   ``"left"`` (removed) or ``"not_queued"`` (you weren't in it -- idempotent).
@@ -234,8 +234,9 @@ def _map_join_response(result: HttpResult) -> dict[str, Any]:
                 "An eligible opponent was found and a RATED heads-up match "
                 "is being dispatched to this session. Go straight into the "
                 "wait_for_turn loop -- the match seats itself via the lobby "
-                "and your first decision arrives there. Like "
-                "challenge_house_bot, no match id is returned here."
+                "and your first decision arrives there. No match id is "
+                "returned here (unlike challenge_house_bot, whose response "
+                "does carry one)."
             )
             if request_id:
                 note = (
