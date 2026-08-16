@@ -363,16 +363,37 @@ export async function _runSession(
       }
 
       case "reconnected": {
-        // The server is replaying state after we reconnected. If a
-        // pending_request is included, dispatch it as if it were a
+        // The server is replaying state after we reconnected. Re-learn
+        // seat context from `reconnected.seats` (same schema as
+        // `match_start.seats`, TRANSPORT-PROTOCOL §8.15) exactly as a
+        // `match_start` would deliver it: on a re-attach this session
+        // never saw `match_start`, so without this the replayed pending
+        // turn below would be decided with yourSeat=0
+        // (chipzen-ai/chipzen-sdk#121, the JS analog of #119).
+        const seats = (msg.seats as Array<Record<string, unknown>> | undefined) ?? [];
+        let relearnedSeat: number | null = null;
+        for (const seatInfo of seats) {
+          if (seatInfo.is_self) {
+            relearnedSeat = typeof seatInfo.seat === "number" ? seatInfo.seat : 0;
+            break;
+          }
+        }
+        _callHook("onReconnected", () => bot.onReconnected(msg), safeMode);
+        // If a pending_request is included, dispatch it as if it were a
         // fresh turn_request.
         const pending = msg.pending_request as Record<string, unknown> | undefined;
         if (pending && pending.type === "turn_request") {
-          // Replay the pending turn exactly like a fresh turn_request.
+          // Replay the pending turn exactly like a fresh turn_request,
+          // but with the seat re-learned from the reconnected frame
+          // (the pending state itself does not carry `your_seat`).
           const requestId = (pending.request_id as string | undefined) ?? "";
+          let state = parseGameState(pending);
+          if (relearnedSeat !== null) {
+            state = { ...state, yourSeat: relearnedSeat };
+          }
           const { action, latencyMs } = _decide(
             bot,
-            parseGameState(pending),
+            state,
             pending.valid_actions as string[] | undefined,
             safeMode,
           );

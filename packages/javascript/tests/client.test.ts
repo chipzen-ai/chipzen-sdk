@@ -84,8 +84,11 @@ class CapturingSocket implements SessionWebSocket {
 
 class RecordingBot extends Bot {
   events: string[] = [];
+  states: GameState[] = [];
+  reconnectedMessage: Record<string, unknown> | null = null;
   decide(state: GameState): Action {
     this.events.push("decide");
+    this.states.push(state);
     if (state.validActions.includes("check")) return Action.check();
     if (state.validActions.includes("call")) return Action.call();
     return Action.fold();
@@ -107,6 +110,10 @@ class RecordingBot extends Bot {
   }
   override onMatchEnd(_r: Record<string, unknown>): void {
     this.events.push("match_end");
+  }
+  override onReconnected(m: Record<string, unknown>): void {
+    this.events.push("reconnected");
+    this.reconnectedMessage = m;
   }
 }
 
@@ -298,6 +305,61 @@ describe("_runSession robustness", () => {
     const turnAction = ws.sentParsed.find((m) => m.type === "turn_action");
     expect(turnAction?.action).toBe("check");
     expect(turnAction?.request_id).toBe("req_y");
+  });
+
+  it("reconnected re-learns seat, fires onReconnected, then replays the pending turn (#121)", async () => {
+    // chipzen-ai/chipzen-sdk#121 (JS analog of #119): a session that
+    // (re)attaches to an in-flight match sees `reconnected` instead of
+    // `match_start` — it must still learn yourSeat from the seats array
+    // and surface match context via the onReconnected hook, and the
+    // replayed pending turn must be built with the re-learned seat (not
+    // the yourSeat=0 default).
+    const pending = {
+      type: "turn_request",
+      match_id: "m_test",
+      seq: 0,
+      request_id: "req_resume",
+      valid_actions: ["fold", "check"],
+      // NOTE: no `your_seat` here — TRANSPORT-PROTOCOL §3.3 does not put
+      // it in the turn state; it only exists in the seats roster.
+      state: { hand_number: 7, phase: "preflop" },
+    };
+    const reader = new ScriptedReader([
+      { type: "hello", match_id: "m_test", seq: 1 },
+      {
+        type: "reconnected",
+        match_id: "m_test",
+        seq: 2,
+        round_number: 3,
+        match_state: "in_progress",
+        seats: [
+          { seat: 0, participant_id: "p1", display_name: "Opp", is_self: false },
+          { seat: 1, participant_id: "p0", display_name: "You", is_self: true },
+        ],
+        game_config: { small_blind: 5, big_blind: 10, starting_stack: 1000 },
+        state: {},
+        pending_request: pending,
+      },
+      { type: "match_end", match_id: "m_test", seq: 3 },
+    ]);
+    const ws = new CapturingSocket();
+    const bot = new RecordingBot();
+
+    await _runSession(ws, bot, SESSION_CTX, reader);
+
+    // The hook fired with the full reconnected message, BEFORE the
+    // pending turn was decided — so a bot can (re)learn match identity
+    // in time.
+    expect(bot.events).toEqual(["reconnected", "decide", "match_end"]);
+    expect(bot.reconnectedMessage?.match_id).toBe("m_test");
+
+    // yourSeat was re-learned from reconnected.seats (is_self at seat 1).
+    expect(bot.states).toHaveLength(1);
+    expect(bot.states[0]?.yourSeat).toBe(1);
+
+    // The pending request was answered like a fresh turn_request.
+    const turnAction = ws.sentParsed.find((m) => m.type === "turn_action");
+    expect(turnAction?.request_id).toBe("req_resume");
   });
 
   it("ignores unknown message types (forward-compat)", async () => {

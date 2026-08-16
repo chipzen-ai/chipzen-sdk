@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Bot.onReconnected(message)` lifecycle hook.** Fired when the server
+  resumes an in-flight match with a `reconnected` frame (which is what a
+  re-attach delivers instead of `match_start`), so a bot can (re)learn its
+  match context — `match_id`, `seats`, `game_config` — before the replayed
+  pending turn is decided. Default is a no-op; existing bots are unaffected.
+  ([#121](https://github.com/chipzen-ai/chipzen-sdk/issues/121))
+
 ### Changed
 
 - **Starter is now seat-count-aware.** The JavaScript starter
@@ -20,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/protocol/POKER-GAME-STATE-PROTOCOL.md` Section 5.9.
 
 ### Fixed
+
+- **`yourSeat` is re-learned from `reconnected.seats` before the pending
+  turn is replayed.** The turn state in a replayed `pending_request` does
+  not carry `your_seat` (it is only delivered via the seats roster), so a
+  session that (re)attached to an in-flight match decided its resumed turn
+  with `yourSeat=0` regardless of the bot's actual seat. The `reconnected`
+  handler now reads the `is_self` seat from `reconnected.seats` — the same
+  schema as `match_start.seats` (TRANSPORT-PROTOCOL §8.15) — mirroring the
+  Python SDK fix for chipzen-ai/chipzen-sdk#119.
+  ([#121](https://github.com/chipzen-ai/chipzen-sdk/issues/121))
 
 - **Lifecycle hooks are now safe-mode wrapped — a user exception in a stats
   callback no longer forfeits the match.** All bot lifecycle hook invocations

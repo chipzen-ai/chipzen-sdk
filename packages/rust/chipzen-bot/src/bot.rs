@@ -52,6 +52,20 @@ pub trait Bot: Send + 'static {
     /// were persisting anything to disk.
     fn on_match_end(&mut self, _results: &Value) {}
 
+    /// Called when the server resumes an in-flight match after a
+    /// reconnect.
+    ///
+    /// On re-attach the server sends `reconnected` — NOT `match_start` —
+    /// so [`Bot::on_match_start`] does not fire for a session that
+    /// (re)joined a match already in progress. Override this to
+    /// (re)learn match context: the message carries `match_id`, `seats`,
+    /// and `game_config` in the same shape as `match_start`, plus the
+    /// current `round_number` and `state` snapshot (see
+    /// `docs/protocol/TRANSPORT-PROTOCOL.md` §8.15).
+    ///
+    /// Default impl is a no-op (chipzen-ai/chipzen-sdk#121).
+    fn on_reconnected(&mut self, _msg: &Value) {}
+
     /// Called after each `turn_action` is sent, with your decision time
     /// in milliseconds.
     ///

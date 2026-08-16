@@ -368,8 +368,27 @@ where
                 send_turn_action(writer, &ctx.match_id, &request_id, fallback).await?;
             }
             "reconnected" => {
-                // Mid-session after a reconnect: replay the pending request as
-                // if it were a fresh turn_request so the bot acts on it.
+                // Mid-session after a reconnect. Re-learn seat context from
+                // `reconnected.seats` (same schema as `match_start.seats`,
+                // TRANSPORT-PROTOCOL §8.15) exactly as a `match_start` would
+                // deliver it: on a re-attach this session never saw
+                // `match_start`, so without this the replayed pending turn
+                // below would be decided with your_seat=0
+                // (chipzen-ai/chipzen-sdk#121, the Rust analog of #119).
+                let relearned_seat = msg
+                    .get("seats")
+                    .and_then(|v| v.as_array())
+                    .and_then(|seats| {
+                        seats
+                            .iter()
+                            .find(|s| s.get("is_self").and_then(Value::as_bool).unwrap_or(false))
+                    })
+                    .map(|s| s.get("seat").and_then(Value::as_i64).unwrap_or(0));
+                call_hook("on_reconnected", ctx.safe_mode, || bot.on_reconnected(&msg))?;
+                // Replay the pending request as if it were a fresh
+                // turn_request so the bot acts on it, but with the seat
+                // re-learned from the reconnected frame (the pending state
+                // itself does not carry `your_seat`).
                 if let Some(pending) = msg.get("pending_request") {
                     if pending.get("type").and_then(|v| v.as_str()) == Some("turn_request") {
                         let request_id = pending
@@ -377,7 +396,10 @@ where
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let state = parse_game_state(pending);
+                        let mut state = parse_game_state(pending);
+                        if let Some(seat) = relearned_seat {
+                            state.your_seat = seat;
+                        }
                         let (action, latency_ms) =
                             decide_timed(bot, &state, pending, ctx.safe_mode)?;
                         send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
