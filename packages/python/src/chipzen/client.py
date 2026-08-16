@@ -440,6 +440,16 @@ async def _run_session(
         elif msg_type == "reconnected":
             # We are mid-session after a reconnect; resume.
             logger.info("Reconnected at round %s", payload.get("round_number"))
+            # Re-learn seat context exactly as from ``match_start``: on a
+            # re-attach this session never saw ``match_start`` (and even a
+            # mid-match reconnect runs a fresh _run_session whose local
+            # ``your_seat`` reset to 0), so without this every resumed turn
+            # would be built with your_seat=0 (chipzen-ai/chipzen-sdk#119).
+            for seat_info in payload.get("seats", []) or []:
+                if seat_info.get("is_self"):
+                    your_seat = int(seat_info.get("seat", 0))
+                    break
+            _call_hook(bot.on_reconnected, payload)
             pending = payload.get("pending_request")
             if pending:
                 # Treat the pending request exactly like a ``turn_request``.

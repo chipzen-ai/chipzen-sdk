@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Re-attached matches no longer publish turns under an empty `match_id`.**
+  On re-attach the server sends `reconnected`, not `match_start`, so
+  `BridgeBot` never learned which match it was playing: every post-restart
+  turn landed on a single `""` record, the real match records froze, and with
+  multiple concurrent matches turn routing was corrupted (`get_match_state`
+  returned `turn: null`, `get_last_result` said `no_results_yet` during live
+  play). `BridgeBot` now implements the SDK's new `on_reconnected` hook and
+  populates the match identity + registry record from the `reconnected`
+  payload exactly as it does from `match_start`. Requires the accompanying
+  `chipzen-bot` SDK fix, which also re-learns `your_seat` on re-attach.
+  ([#119](https://github.com/chipzen-ai/chipzen-sdk/issues/119))
+
 ## [0.2.0] — 2026-08-14
 
 Minor bump: the tool surface grew from 10 to 15. An agent that only knows the

@@ -32,6 +32,7 @@ class RecordingBot(ChipzenBot):
         self.hand_results: list[dict] = []
         self.phase_changes: list[dict] = []
         self.turn_results: list[dict] = []
+        self.reconnected_message: dict | None = None
 
     def decide(self, state: GameState) -> Action:
         self.events.append("decide")
@@ -74,6 +75,10 @@ class RecordingBot(ChipzenBot):
     def on_match_end(self, results: dict) -> None:
         self.events.append("match_end")
         self.match_end_results = results
+
+    def on_reconnected(self, message: dict) -> None:
+        self.events.append("reconnected")
+        self.reconnected_message = message
 
 
 class MockWebSocket:
@@ -247,6 +252,71 @@ def _match_end(seq: int = 8) -> dict:
             {"seat": 1, "participant_id": "p1", "rank": 2, "score": 980},
         ],
     }
+
+
+def _reconnected(seq: int = 2, pending: dict | None = None) -> dict:
+    return {
+        "type": "reconnected",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:15.000Z",
+        "round_number": 3,
+        "match_state": "in_progress",
+        "seats": [
+            {"seat": 0, "participant_id": "p1", "display_name": "Opp", "is_self": False},
+            {"seat": 1, "participant_id": "p0", "display_name": "You", "is_self": True},
+        ],
+        "game_config": {
+            "variant": "nlhe",
+            "starting_stack": 1000,
+            "small_blind": 5,
+            "big_blind": 10,
+        },
+        "state": {},
+        "pending_request": pending,
+    }
+
+
+@pytest.mark.asyncio
+async def test_reconnected_relearns_seat_and_fires_hook():
+    """chipzen-ai/chipzen-sdk#119: a session that (re)attaches to an in-flight
+    match sees ``reconnected`` instead of ``match_start`` -- it must still learn
+    ``your_seat`` from the seats array and surface match context via the
+    ``on_reconnected`` hook, and the replayed pending turn must be built with
+    the re-learned seat (not the your_seat=0 default)."""
+    pending = _turn_request(seq=0, request_id="req_resume")
+    messages = [
+        _server_hello(),
+        _reconnected(pending=pending),
+        _match_end(seq=3),
+    ]
+    mock_ws = MockWebSocket(messages)
+    bot = RecordingBot()
+
+    await _run_session(
+        mock_ws,
+        bot,
+        match_id=MATCH_ID,
+        token="test_token",
+        ticket=None,
+        client_name="chipzen-sdk-test",
+        client_version="0.2.0",
+    )
+
+    # The hook fired with the full reconnected message, BEFORE the pending
+    # turn was decided -- so a bot can (re)learn match identity in time.
+    assert bot.events == ["reconnected", "decide", "match_end"]
+    assert bot.reconnected_message is not None
+    assert bot.reconnected_message["match_id"] == MATCH_ID
+
+    # your_seat was re-learned from reconnected.seats (is_self at seat 1).
+    assert len(bot.states) == 1
+    assert bot.states[0].your_seat == 1
+
+    # The pending request was answered like a fresh turn_request.
+    sent = [json.loads(s) for s in mock_ws.sent]
+    assert sent[-1]["type"] == "turn_action"
+    assert sent[-1]["request_id"] == "req_resume"
 
 
 @pytest.mark.asyncio

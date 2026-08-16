@@ -541,6 +541,28 @@ class BridgeBot(Bot):
         # under (~30s for the casual agent division, 2s rated).
         self._registry.match_started(self._match_id, turn_timeout_ms=self._turn_timeout_ms)
 
+    def on_reconnected(self, message: dict) -> None:
+        """Re-learn match identity from a ``reconnected`` frame (chipzen-ai/chipzen-sdk#119).
+
+        On re-attach to an in-flight match the server sends ``reconnected``,
+        never ``match_start`` -- so a fresh BridgeBot would keep
+        ``_match_id == ""`` and publish every subsequent turn under an empty
+        match record, corrupting turn routing for any multi-match client.
+        Populate the same fields :meth:`on_match_start` does, from the same
+        envelope shape.
+        """
+        match_id = str(message.get("match_id", ""))
+        if match_id:
+            self._match_id = match_id
+        # ``reconnected`` is not documented to carry ``turn_timeout_ms``, but
+        # honour it when present (additionalProperties: true); otherwise keep
+        # the current clock (the default, or whatever match_start announced).
+        announced = message.get("turn_timeout_ms")
+        if isinstance(announced, (int, float)) and announced > 0:
+            self._turn_timeout_ms = int(announced)
+        if self._match_id:
+            self._registry.match_started(self._match_id, turn_timeout_ms=self._turn_timeout_ms)
+
     def on_round_result(self, message: dict) -> None:
         result = dict(message.get("result", {}) or {})
         self._registry.record_round_result(self._match_id, result)
