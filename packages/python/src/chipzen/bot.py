@@ -79,6 +79,22 @@ class ChipzenBot(ABC):
             results: The full ``match_end`` message with final standings.
         """
 
+    def on_reconnected(self, message: dict) -> None:
+        """Called when the server resumes an in-flight match after a reconnect.
+
+        On re-attach the server sends ``reconnected`` -- NOT ``match_start`` --
+        so :meth:`on_match_start` does not fire for a session that (re)joined a
+        match already in progress. Override this to (re)learn match context:
+        ``message`` carries ``match_id``, ``seats``, and ``game_config`` in the
+        same shape as ``match_start``, plus the current ``round_number`` and
+        ``state`` snapshot (see ``docs/protocol/TRANSPORT-PROTOCOL.md`` 8.15).
+
+        Default implementation is a no-op.
+
+        Args:
+            message: The full ``reconnected`` message.
+        """
+
     # ------------------------------------------------------------------
     # Round (hand) hooks
     # ------------------------------------------------------------------

@@ -499,6 +499,42 @@ class TestBridgeBot:
         summary = registry.list_matches()[0]
         assert summary["turn_timeout_ms"] == 30000
 
+    def test_on_reconnected_populates_match_identity(self) -> None:
+        """chipzen-ai/chipzen-sdk#119: a re-attach delivers ``reconnected``,
+        never ``match_start`` -- the bot must still learn which match it is
+        playing, or every turn publishes under an empty '' record."""
+        registry = TurnRegistry()
+        bot = BridgeBot(registry, safety_margin_ms=0)
+        bot.on_reconnected({"match_id": MATCH, "round_number": 3, "match_state": "in_progress"})
+        assert bot._match_id == MATCH
+        assert [m["match_id"] for m in registry.list_matches()] == [MATCH]
+
+    def test_on_reconnected_routes_results_to_the_real_match(self) -> None:
+        # The exact #119 corruption: post-re-attach results/turns must land on
+        # the real match record, not on a shared "" record.
+        registry = TurnRegistry()
+        registry.match_started(MATCH)  # the log tap saw the lobby `matched`
+        bot = BridgeBot(registry, safety_margin_ms=0)
+        bot.on_reconnected({"match_id": MATCH, "round_number": 3})
+        bot.on_round_result({"result": {"hand_number": 61, "winner_seats": [0]}})
+        last = registry.last_result(MATCH)
+        assert last is not None
+        assert last["last_round_result"]["hand_number"] == 61
+        assert registry.get_match("") is None
+
+    def test_on_reconnected_honours_announced_clock_when_present(self) -> None:
+        registry = TurnRegistry()
+        bot = BridgeBot(registry, safety_margin_ms=0)
+        bot.on_reconnected({"match_id": MATCH, "turn_timeout_ms": 2000})
+        assert registry.list_matches()[0]["turn_timeout_ms"] == 2000
+
+    def test_on_reconnected_without_match_id_creates_no_empty_record(self) -> None:
+        # A malformed frame must not mint the very "" record #119 is about.
+        registry = TurnRegistry()
+        bot = BridgeBot(registry, safety_margin_ms=0)
+        bot.on_reconnected({})
+        assert registry.list_matches() == []
+
 
 def test_state_payload_mirrors_wire_schema() -> None:
     payload = state_payload(_turn_state())

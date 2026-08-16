@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Bot.on_reconnected(message)` lifecycle hook.** Fired when the server
+  resumes an in-flight match with a `reconnected` frame (which is what a
+  re-attach delivers instead of `match_start`), so a bot can (re)learn its
+  match context — `match_id`, `seats`, `game_config` — before the replayed
+  pending turn is decided. Default is a no-op; existing bots are unaffected.
+  ([#119](https://github.com/chipzen-ai/chipzen-sdk/issues/119))
+
+### Fixed
+
+- **`your_seat` is re-learned from `reconnected.seats`.** Previously the seat
+  was only captured from `match_start`, so a session that (re)attached to an
+  in-flight match — or resumed after a mid-match gateway drop — built every
+  subsequent `GameState` with `your_seat=0` regardless of the bot's actual
+  seat. ([#119](https://github.com/chipzen-ai/chipzen-sdk/issues/119))
+
 ## [0.3.2] — 2026-07-19
 
 ### Fixed
