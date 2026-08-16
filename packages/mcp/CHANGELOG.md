@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-08-16
+
+Patch release: the re-attach turn-routing fix (#119), released in lockstep
+with `chipzen-bot` 0.3.3, which carries the SDK half of the fix.
+
 ### Fixed
 
 - **Re-attached matches no longer publish turns under an empty `match_id`.**
@@ -21,6 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payload exactly as it does from `match_start`. Requires the accompanying
   `chipzen-bot` SDK fix, which also re-learns `your_seat` on re-attach.
   ([#119](https://github.com/chipzen-ai/chipzen-sdk/issues/119))
+
+### Changed
+
+- **`chipzen-bot` dependency floor raised to `>=0.3.3`.** The fix above works
+  by implementing the SDK's new `on_reconnected` lifecycle hook, and only
+  chipzen-bot 0.3.3+ *calls* that hook — an older SDK would install cleanly
+  and silently never fire it, leaving the re-attach bug in place.
+
+### Documentation
+
+- `matchmaking.py` (and the `challenge_remote` tool docstring) claimed that,
+  "like `challenge_house_bot`", the rated-queue `matched` response carries no
+  match id. The comparison was stale: `challenge_house_bot`'s `200` **does**
+  return `match_id` (surfaced by the tool since the #3832 contract); it is the
+  queue and direct-challenge paths that seat via the lobby push without one.
+  ([#117](https://github.com/chipzen-ai/chipzen-sdk/issues/117))
 
 ## [0.2.0] — 2026-08-14
 
@@ -73,4 +94,5 @@ five-tool expansion above. This changelog starts at 0.2.0; for the 0.1.x line
 see the release history at
 <https://github.com/chipzen-ai/chipzen-sdk/releases> and the `mcp-v0.1.*` tags.
 
+[0.2.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.2.1
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.2.0

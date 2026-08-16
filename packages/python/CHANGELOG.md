@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-08-16
+
+Patch release: the re-attach fix (#119). A session that (re)joins an in-flight
+match now learns its match context from the `reconnected` frame instead of
+silently keeping stale defaults.
+
 ### Added
 
 - **`Bot.on_reconnected(message)` lifecycle hook.** Fired when the server
@@ -24,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-flight match — or resumed after a mid-match gateway drop — built every
   subsequent `GameState` with `your_seat=0` regardless of the bot's actual
   seat. ([#119](https://github.com/chipzen-ai/chipzen-sdk/issues/119))
+
+### Changed
+
+- **Starter template tracks SDK releases automatically.** The Python starter's
+  `requirements.txt` pinned `chipzen-bot==0.2.0` (four releases behind), so
+  every image built from it shipped a stale SDK. It now uses the
+  compatible-range pin `chipzen-bot~=0.3`, which follows minor/patch releases
+  and only needs touching on a major bump.
+  ([#116](https://github.com/chipzen-ai/chipzen-sdk/issues/116))
 
 ## [0.3.2] — 2026-07-19
 
@@ -331,5 +346,7 @@ debugging at the wire level:
 Apache-2.0 (changed from MIT in earlier internal builds — aligns with
 the chipzen-sdk repo's root LICENSE).
 
+[0.3.3]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.3
+[0.3.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.2
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.1
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.2.0

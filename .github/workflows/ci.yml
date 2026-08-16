@@ -94,7 +94,16 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package + dev deps
-        run: pip install -e ".[dev]"
+        # The in-repo SDK is installed first: the bridge is released in
+        # lockstep with `chipzen-bot`, so a release-prep PR raises the
+        # dependency floor to the SDK version cut in the SAME PR — a version
+        # that is not on PyPI until its tag is pushed after the merge.
+        # Resolving the floor against the index would make every such PR
+        # unresolvable; resolving it against the sibling tree under test is
+        # also the pairing that actually ships.
+        run: |
+          pip install -e ../python
+          pip install -e ".[dev]"
       - name: Lint tooling is at the pinned version
         run: |
           installed=$(ruff --version)
