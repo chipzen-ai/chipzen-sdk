@@ -82,6 +82,10 @@ MIRRORED_DOCS: dict[str, str] = {
     # The two Layer 2 variant dialects (chipzen-ai/Chipzen#4242).
     "DRAW27-GAME-STATE-PROTOCOL": "docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md",
     "OFC-GAME-STATE-PROTOCOL": "docs/protocol/OFC-GAME-STATE-PROTOCOL.md",
+    # The variant-agnostic Layer 2 baseline the two dialect specs above (and
+    # every future one) inherit instead of copy-pasting
+    # (chipzen-ai/Chipzen#4484). Mirrored on exactly the same terms they are.
+    "LAYER2-COMMON": "docs/protocol/LAYER2-COMMON.md",
 }
 
 #: The CROSS-REPO digest of every mirrored doc, pinned. See the module docstring:
@@ -94,12 +98,13 @@ MIRRORED_DOCS: dict[str, str] = {
 #: only is exactly the divergence this exists to catch.
 EXPECTED_DIGESTS: dict[str, str] = {
     "DRAW27-GAME-STATE-PROTOCOL": (
-        "0566c74420ee2ff3a105d8b2afd84bcadaf10075fdad5029bbe866b13a54c0f1"
+        "144dbb4320f8f165feef3234aa029c848c410bb932e11211d0a98eaff65a22da"
     ),
     "EXTERNAL-API-BOT-PROTOCOL": (
         "7722496749ca38a52e75b592df13ecba6b076d80a17721be63db14bb46eb9429"
     ),
-    "OFC-GAME-STATE-PROTOCOL": ("142a105b9473d7c39f34dd996ad23b136632efb0f0437638709e7336745330f5"),
+    "LAYER2-COMMON": ("23e075ffa970c77f609c3fa137a62f2b95a077775bb9894ec3868f74f56478d7"),
+    "OFC-GAME-STATE-PROTOCOL": ("3dcf7c806b28e0e117c182795384f40891e2e65dc52ea1e2a805398930abf409"),
     "POKER-GAME-STATE-PROTOCOL": (
         "417007916d3ad0a19b1c370fb1f15a8c3041803f69be48d4122129d016ec5a7b"
     ),
