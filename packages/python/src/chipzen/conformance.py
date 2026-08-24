@@ -94,7 +94,13 @@ class _MockWebSocket:
 # ---------------------------------------------------------------------------
 
 
-def _server_hello() -> dict:
+def _server_hello(game_type: str = "nlhe_6max") -> dict:
+    """The server's handshake reply.
+
+    ``game_type`` is the platform-level game identifier (``nlhe_6max``,
+    ``draw27``, ``ofc_pineapple``). The SDK logs it and does not branch on it
+    -- which is exactly why a variant table needs no envelope change.
+    """
     return {
         "type": "hello",
         "match_id": MATCH_ID,
@@ -102,7 +108,7 @@ def _server_hello() -> dict:
         "server_ts": "2026-04-13T14:30:05.123Z",
         "supported_versions": ["1.0"],
         "selected_version": "1.0",
-        "game_type": "nlhe_6max",
+        "game_type": game_type,
         "capabilities": [],
     }
 
@@ -249,6 +255,506 @@ def _action_rejected(seq: int, request_id: str = "req_1", remaining_ms: int = 40
     }
 
 
+# ---------------------------------------------------------------------------
+# Variant fixtures — 2-7 Triple Draw and Pineapple OFC
+#
+# Fixtures ONLY. They are deliberately NOT wired into
+# ``run_conformance_checks``: an uploaded bot is an NLHE bot, and grading it
+# against a table it never asked to sit at would fail every clean bot on the
+# platform. These exist so tests (and a future gated variant slice) can drive
+# the real session loop against a real variant payload.
+#
+# Shapes are taken from docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md and
+# docs/protocol/OFC-GAME-STATE-PROTOCOL.md, which are the authoritative Layer 2
+# specs. Both games are registered and DARK; nothing here is a commitment.
+# ---------------------------------------------------------------------------
+
+
+def _draw27_match_start(seq: int = 2) -> dict:
+    """``match_start`` for a heads-up 2-7 Triple Draw table.
+
+    ``betting_structure`` is the key to read first: this is FIXED LIMIT, and
+    the four sizes (``small_blind``, ``big_blind``, ``small_bet``,
+    ``big_bet``) are four independent numbers -- none is derivable from
+    another. There is no ``total_hands`` key, exactly as for NLHE.
+    """
+    return {
+        "type": "match_start",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:06.000Z",
+        "seats": [
+            {"seat": 0, "participant_id": "p0", "display_name": "You", "is_self": True},
+            {"seat": 1, "participant_id": "p1", "display_name": "Opp", "is_self": False},
+        ],
+        "game_config": {
+            "variant": "27tripledraw",
+            "starting_stack": 10000,
+            "betting_structure": "fixed_limit",
+            "small_blind": 50,
+            "big_blind": 100,
+            "small_bet": 100,
+            "big_bet": 200,
+            "ante": 0,
+            "bet_cap": 5,
+            "num_betting_rounds": 4,
+            "num_draws": 3,
+            "cards_per_player": 5,
+            "escalation_unit": "small_bet",
+            "escalation_interval": 10,
+            "num_players": 2,
+        },
+        "turn_timeout_ms": 5000,
+    }
+
+
+def _draw27_round_start(seq: int = 3) -> dict:
+    """``round_start`` for 27TD: five cards, and the new ``draws_remaining``."""
+    return {
+        "type": "round_start",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:07.000Z",
+        "round_id": "r_1",
+        "round_number": 1,
+        "state": {
+            "hand_number": 1,
+            "dealer_seat": 0,
+            "your_hole_cards": ["Ah", "Kd", "9s", "7c", "3h"],
+            "pot": 150,
+            "post_blind_stacks": [9950, 9900],
+            "draws_remaining": 3,
+            "stacks": [10000, 10000],
+            "deck_commitment": "",
+        },
+    }
+
+
+def _draw27_turn_request(
+    seq: int = 4,
+    request_id: str = "req_1",
+    *,
+    draw_phase: bool = True,
+) -> dict:
+    """``turn_request`` for 27TD -- a draw turn by default, else a betting turn.
+
+    One shape covers both; ``is_draw_phase`` says which. In a draw phase
+    ``valid_actions`` is exactly ``["draw"]`` and the BOUND on the discard
+    (``max_discard``) lives in the state payload, not in ``valid_actions``.
+    ``board`` is permanently ``[]``: 27TD has no community cards, but the key
+    is carried so a strict NLHE parser still sees an array of valid cards.
+    """
+    if draw_phase:
+        phase_bits = {
+            "phase": "draw1",
+            "to_call": 0,
+            "min_raise": 0,
+            "max_raise": 0,
+            "is_draw_phase": True,
+            "draw_number": 1,
+            "draws_remaining": 3,
+            "max_discard": 5,
+            "valid_actions": ["draw"],
+        }
+    else:
+        # Fixed limit: min_raise == max_raise, always. One legal size.
+        phase_bits = {
+            "phase": "bet1",
+            "to_call": 100,
+            "min_raise": 200,
+            "max_raise": 200,
+            "is_draw_phase": False,
+            "draw_number": 0,
+            "draws_remaining": 2,
+            "max_discard": 0,
+            "valid_actions": ["fold", "call", "raise"],
+        }
+    valid_actions = phase_bits.pop("valid_actions")
+    return {
+        "type": "turn_request",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:07.500Z",
+        "seat": 0,
+        "request_id": request_id,
+        "timeout_ms": 5000,
+        "valid_actions": valid_actions,
+        "state": {
+            "hand_number": 1,
+            "board": [],
+            "your_hole_cards": ["Ah", "Kd", "9s", "7c", "3h"],
+            "pot": 400,
+            "your_stack": 9800,
+            "opponent_stacks": [9800],
+            "your_draw_counts": [],
+            "opponent_draw_counts": {"1": []},
+            "action_history": [
+                {
+                    "seat": 0,
+                    "action": "post_small_blind",
+                    "amount": 50,
+                    "phase": "predraw",
+                    "is_timeout": False,
+                },
+                {
+                    "seat": 1,
+                    "action": "post_big_blind",
+                    "amount": 100,
+                    "phase": "predraw",
+                    "is_timeout": False,
+                },
+            ],
+            **phase_bits,
+        },
+    }
+
+
+def _draw27_turn_result(seq: int = 5) -> dict:
+    """``turn_result`` for a draw: ``amount`` is the CARD COUNT, not chips."""
+    return {
+        "type": "turn_result",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:08.000Z",
+        "is_timeout": False,
+        "details": {"seat": 0, "action": "draw", "amount": 2},
+    }
+
+
+def _draw27_round_result(seq: int = 6) -> dict:
+    """``round_result`` for 27TD: the envelope is unchanged; showdown is not.
+
+    ``hand_rank`` is a dash-joined rank string (``"8-6-4-3-2"``), NOT an NLHE
+    hand-rank enum value, and the LOWEST hand wins.
+    """
+    return {
+        "type": "round_result",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:12.000Z",
+        "round_id": "r_1",
+        "round_number": 1,
+        "result": {
+            "hand_number": 1,
+            "winner_seats": [0],
+            "pot": 800,
+            "payouts": [{"seat": 0, "amount": 800}],
+            "showdown": [
+                {
+                    "seat": 0,
+                    "hole_cards": ["8s", "6h", "4d", "3c", "2h"],
+                    "hand_rank": "8-6-4-3-2",
+                    "best_hand": ["8s", "6h", "4d", "3c", "2h"],
+                },
+                {
+                    "seat": 1,
+                    "hole_cards": ["Js", "9h", "6d", "4c", "2s"],
+                    "hand_rank": "J-9-6-4-2",
+                    "best_hand": ["Js", "9h", "6d", "4c", "2s"],
+                },
+            ],
+            "action_history": [],
+            "stacks": [10400, 9600],
+            "deck_commitment": "",
+            "deck_reveal": None,
+        },
+    }
+
+
+def _draw27_script() -> list[dict]:
+    """Handshake + one 27TD hand (a draw turn AND a betting turn) + match_end."""
+    return [
+        _server_hello(game_type="draw27"),
+        _draw27_match_start(),
+        _draw27_round_start(),
+        _draw27_turn_request(seq=4, request_id="req_1", draw_phase=True),
+        _draw27_turn_result(),
+        _draw27_turn_request(seq=6, request_id="req_2", draw_phase=False),
+        _draw27_round_result(seq=7),
+        _match_end(seq=8),
+    ]
+
+
+def _ofc_match_start(seq: int = 2) -> dict:
+    """``match_start`` for a heads-up Pineapple OFC table.
+
+    ``scoring`` is the key to read first: ``"points"``. There is NO
+    ``betting_structure`` key, and no blinds -- there is nothing for them to
+    describe. ``point_value`` is the ruled quantity (chips per point);
+    ``bank_points`` is its derivation, never a second source of truth.
+    """
+    return {
+        "type": "match_start",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:06.000Z",
+        "seats": [
+            {"seat": 0, "participant_id": "p0", "display_name": "Opp", "is_self": False},
+            {"seat": 1, "participant_id": "p1", "display_name": "You", "is_self": True},
+        ],
+        "game_config": {
+            "variant": "pineapple",
+            "starting_stack": 10000,
+            "scoring": "points",
+            "point_value": 50,
+            "bank_points": 200,
+            "rows": {"top": 3, "middle": 5, "bottom": 5},
+            "cards_per_seat": 17,
+            "cards_placed": 13,
+            "cards_per_street": [5, 3, 3, 3, 3],
+            "fantasy_land": {
+                "cards": 14,
+                "progressive": False,
+                "middle_stay": None,
+                "entry_min_pair_rank": 12,
+            },
+            "min_seats": 2,
+            "max_seats": 3,
+            "rated_max_seats": 2,
+            "escalation_unit": "point_value",
+            "escalation_interval": 20,
+            "num_players": 2,
+        },
+        "turn_timeout_ms": 5000,
+    }
+
+
+def _ofc_round_start(seq: int = 3) -> dict:
+    """``round_start`` for OFC: the opening set of five, plus the public seats."""
+    return {
+        "type": "round_start",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:07.000Z",
+        "round_id": "r_1",
+        "round_number": 1,
+        "state": {
+            "hand_number": 1,
+            "dealer_seat": 0,
+            "your_seat": 1,
+            "your_hole_cards": ["2c", "3d", "4h", "5s", "6s"],
+            "cards_to_place": ["2c", "3d", "4h", "5s", "6s"],
+            "your_rows": {"top": [], "middle": [], "bottom": []},
+            "pot": 0,
+            "post_blind_stacks": [10000, 10000],
+            "point_value": 50,
+            "in_fantasy_land": False,
+            "phase_sequence": ["deal1", "street2", "street3", "street4", "street5", "complete"],
+            "seats": [
+                {
+                    "seat": 0,
+                    "rows": {"top": [], "middle": [], "bottom": []},
+                    "placed": 0,
+                    "royalties": {"top": 0, "middle": 0, "bottom": 0},
+                    "fouled": False,
+                    "stack": 10000,
+                    "in_fantasy_land": False,
+                    "hidden": False,
+                },
+                {
+                    "seat": 1,
+                    "rows": {"top": [], "middle": [], "bottom": []},
+                    "placed": 0,
+                    "royalties": {"top": 0, "middle": 0, "bottom": 0},
+                    "fouled": False,
+                    "stack": 10000,
+                    "in_fantasy_land": False,
+                    "hidden": False,
+                },
+            ],
+            "stacks": [10000, 10000],
+            "deck_commitment": "",
+        },
+    }
+
+
+def _ofc_turn_request(seq: int = 4, request_id: str = "req_1") -> dict:
+    """``turn_request`` for an OFC pineapple street: place 2, discard 1.
+
+    ``valid_actions`` is exactly ``["place"]`` on every OFC turn -- the SHAPE
+    of a legal placement lives in the state payload (``cards_to_place``,
+    ``place``, ``must_discard``, ``row_capacity``), because enumerating every
+    legal card-to-row assignment would run to 243 entries for the opening set
+    alone. ``board`` is always ``[]``, and ``to_call`` / ``min_raise`` /
+    ``max_raise`` are always ``0``: OFC has no betting.
+    """
+    return {
+        "type": "turn_request",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:07.500Z",
+        "seat": 1,
+        "request_id": request_id,
+        "timeout_ms": 5000,
+        "valid_actions": ["place"],
+        "state": {
+            "hand_number": 1,
+            "phase": "street2",
+            "board": [],
+            "your_hole_cards": ["9s", "Js", "Ks"],
+            "pot": 0,
+            "your_stack": 10000,
+            "opponent_stacks": [10000],
+            "to_call": 0,
+            "min_raise": 0,
+            "max_raise": 0,
+            "dealer_seat": 0,
+            "your_seat": 1,
+            "your_rows": {"top": ["2c"], "middle": ["3d", "4h"], "bottom": ["5s", "6s"]},
+            "opponent_rows": {"0": {"top": ["7c"], "middle": ["8d", "9h"], "bottom": ["Ts", "Js"]}},
+            "cards_to_place": ["9s", "Js", "Ks"],
+            "place": 2,
+            "must_discard": 1,
+            "row_capacity": {"top": 2, "middle": 3, "bottom": 3},
+            "royalties": {"top": 0, "middle": 0, "bottom": 0},
+            "opponent_royalties": {"0": {"top": 0, "middle": 0, "bottom": 0}},
+            "point_value": 50,
+            "in_fantasy_land": False,
+            "phase_sequence": ["deal1", "street2", "street3", "street4", "street5", "complete"],
+            "action_history": [
+                # Placement mask for the opening set, 2 bits per dealt card in
+                # deal order (0 discard, 1 top, 2 middle, 3 bottom): 2c->top,
+                # 3d->middle, 4h->middle, 5s->bottom, 6s->bottom, which is
+                # 1 + (2<<2) + (2<<4) + (3<<6) + (3<<8) = 1001. It decodes to
+                # exactly the `your_rows` below -- deal1 places 5 and discards
+                # 0, so no card may carry code 0.
+                {
+                    "seat": 1,
+                    "action": "place",
+                    "amount": 1001,
+                    "phase": "deal1",
+                    "is_timeout": False,
+                }
+            ],
+        },
+    }
+
+
+def _ofc_turn_result(seq: int = 5) -> dict:
+    """``turn_result`` for a placement: ``amount`` is the placement MASK.
+
+    Two bits per dealt card, in deal order: 0 discard, 1 top, 2 middle,
+    3 bottom. The trail carries masks and never cards, which is what keeps a
+    hidden Fantasy Land board hidden.
+    """
+    return {
+        "type": "turn_result",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:08.000Z",
+        "is_timeout": False,
+        "details": {"seat": 1, "action": "place", "amount": 14},
+    }
+
+
+def _ofc_round_result(seq: int = 6) -> dict:
+    """``round_result`` for OFC: showdown entries carry the OFC breakdown.
+
+    ``pot`` is the VIRTUAL pot -- the chips transferred at settlement.
+    ``hand_rank`` is the bottom row's category as a display string, not an
+    NLHE enum value. Every seat appears: OFC has no fold.
+    """
+    return {
+        "type": "round_result",
+        "match_id": MATCH_ID,
+        "seq": seq,
+        "server_ts": "2026-04-13T14:30:12.000Z",
+        "round_id": "r_1",
+        "round_number": 1,
+        "result": {
+            "hand_number": 1,
+            "winner_seats": [1],
+            "pot": 300,
+            "payouts": [{"seat": 1, "amount": 300, "refund": 0}],
+            "showdown": [
+                {
+                    "seat": 0,
+                    "hole_cards": [
+                        "7c",
+                        "7d",
+                        "7h",
+                        "9c",
+                        "9d",
+                        "9h",
+                        "2c",
+                        "2d",
+                        "Ac",
+                        "Ad",
+                        "Ah",
+                        "Kc",
+                        "Kd",
+                    ],
+                    "hand_rank": "Two Pair",
+                    "best_hand": ["Ac", "Ad", "Ah", "Kc", "Kd"],
+                    "rows": {
+                        "top": ["7c", "7d", "7h"],
+                        "middle": ["9c", "9d", "9h", "2c", "2d"],
+                        "bottom": ["Ac", "Ad", "Ah", "Kc", "Kd"],
+                    },
+                    "row_royalties": {"top": 10, "middle": 12, "bottom": 0},
+                    "royalties": 22,
+                    "fouled": False,
+                    "complete": True,
+                    "points": -6,
+                    "net_chips": -300,
+                    "fantasy_land": True,
+                    "in_fantasy_land": False,
+                },
+                {
+                    "seat": 1,
+                    "hole_cards": [
+                        "2c",
+                        "3d",
+                        "4h",
+                        "5s",
+                        "6s",
+                        "9s",
+                        "Js",
+                        "Ks",
+                        "Qs",
+                        "Th",
+                        "8c",
+                        "7d",
+                        "5h",
+                    ],
+                    "hand_rank": "Flush",
+                    "best_hand": ["Ks", "Qs", "Js", "9s", "5s"],
+                    "rows": {
+                        "top": ["2c", "3d", "4h"],
+                        "middle": ["6s", "8c", "7d", "5h", "Th"],
+                        "bottom": ["Ks", "Qs", "Js", "9s", "5s"],
+                    },
+                    "row_royalties": {"top": 0, "middle": 0, "bottom": 4},
+                    "royalties": 4,
+                    "fouled": False,
+                    "complete": True,
+                    "points": 6,
+                    "net_chips": 300,
+                    "fantasy_land": False,
+                    "in_fantasy_land": False,
+                },
+            ],
+            "action_history": [],
+            "stacks": [9700, 10300],
+            "deck_commitment": "",
+            "deck_reveal": None,
+        },
+    }
+
+
+def _ofc_script() -> list[dict]:
+    """Handshake + one OFC placement turn + round_result + match_end."""
+    return [
+        _server_hello(game_type="ofc_pineapple"),
+        _ofc_match_start(),
+        _ofc_round_start(),
+        _ofc_turn_request(),
+        _ofc_turn_result(),
+        _ofc_round_result(),
+        _match_end(seq=7),
+    ]
+
+
 def _full_match_script() -> list[dict]:
     """One handshake + one hand + match_end. Smallest end-to-end exchange."""
     return [
@@ -337,7 +843,20 @@ def _retry_storm_script() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _classify_turn_action(payload: str, expected_request_id: str = "req_1") -> tuple[bool, str]:
+#: The NLHE action vocabulary. Variant tables add to it -- ``draw`` at 2-7
+#: Triple Draw, ``place`` at Pineapple OFC -- but the NLHE conformance
+#: scenarios stay pinned to this set: a bot that answers an NLHE table with
+#: ``place`` has a bug, and widening the default would hide it.
+NLHE_ACTIONS = frozenset({"fold", "check", "call", "raise", "all_in"})
+DRAW27_ACTIONS = NLHE_ACTIONS | {"draw"}
+OFC_ACTIONS = frozenset({"place"})
+
+
+def _classify_turn_action(
+    payload: str,
+    expected_request_id: str = "req_1",
+    legal_actions: frozenset[str] | set[str] | None = None,
+) -> tuple[bool, str]:
     """Return ``(is_valid, message)`` for a captured client-side payload.
 
     Valid means: parseable JSON, ``type == "turn_action"``, includes a
@@ -347,7 +866,15 @@ def _classify_turn_action(payload: str, expected_request_id: str = "req_1") -> t
     Non-``turn_action`` payloads (e.g. ``authenticate``, ``hello``) return
     ``(True, ...)`` so callers can use this on the captured-send buffer
     without filtering first.
+
+    Args:
+        payload: One captured client-side send.
+        expected_request_id: The ``request_id`` the server issued.
+        legal_actions: The action vocabulary this table offers. Defaults to
+            :data:`NLHE_ACTIONS`; pass :data:`DRAW27_ACTIONS` or
+            :data:`OFC_ACTIONS` when classifying a variant exchange.
     """
+    legal = NLHE_ACTIONS if legal_actions is None else legal_actions
     try:
         msg = json.loads(payload)
     except json.JSONDecodeError as exc:
@@ -362,8 +889,8 @@ def _classify_turn_action(payload: str, expected_request_id: str = "req_1") -> t
         )
     params = msg.get("params") or {}
     action = params.get("action") or msg.get("action")
-    if action not in {"fold", "check", "call", "raise", "all_in"}:
-        return False, f"turn_action action {action!r} is not in the legal set"
+    if action not in legal:
+        return False, f"turn_action action {action!r} is not in the legal set {sorted(legal)}"
     return True, f"sent turn_action: action={action!r}"
 
 

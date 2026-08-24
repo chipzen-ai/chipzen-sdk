@@ -51,8 +51,25 @@ def table_position(your_seat: int, dealer_seat: int, num_players: int) -> str:
     return "middle"
 
 
+#: Every action name this starter knows how to build a payload for. The
+#: platform's action vocabulary is open-ended: a table may offer an action a
+#: given SDK release predates (`draw` at a 2-7 Triple Draw table, `place` at a
+#: Pineapple OFC table), and those actions carry their parameters under
+#: `params`, which this starter does not populate. Treat `valid_actions` as
+#: data to check, never as a fixed list to assume.
+KNOWN_ACTIONS = frozenset({"fold", "check", "call", "raise", "all_in"})
+
+
 class MyBot(Bot):
     """Replace `decide()` with your strategy."""
+
+    def __init__(self) -> None:
+        # Remembers which unfamiliar action names have already been reported,
+        # so an unknown table logs once instead of once per turn. Left
+        # unannotated on purpose: this file is cythonized for the runtime
+        # image, and a PEP 526 attribute annotation is a type DECLARATION
+        # there, not a hint.
+        self._reported_unknown = set()
 
     def decide(self, state: GameState) -> Action:
         # The SDK has handed you a fully-parsed GameState. Return one
@@ -67,8 +84,30 @@ class MyBot(Bot):
         num_players = len(state.opponent_stacks) + 1
         _position = table_position(state.your_seat, state.dealer_seat, num_players)
 
+        # Notice, once, any action name this starter cannot build a payload
+        # for. This is a NO-LIMIT HOLD'EM bot; it is not a variant bot, and it
+        # deliberately does not guess at a `draw` or `place` payload it has no
+        # strategy for. Surfacing the mismatch beats silently misplaying it.
+        unknown = sorted(set(state.valid_actions) - KNOWN_ACTIONS - self._reported_unknown)
+        if unknown:
+            self._reported_unknown.update(unknown)
+            print(
+                f"note: this table offers actions this bot does not implement: {unknown} "
+                f"(phase={state.phase!r}) -- falling back to the safest action on offer",
+                file=sys.stderr,
+            )
+
+        # Pick from what is actually offered rather than assuming check/fold
+        # are always available. If NOTHING on offer is understood, fold is the
+        # least-committal thing to send: the server rejects it and substitutes
+        # its own default for the table, and the session survives to the next
+        # turn instead of the bot crashing out of the match.
         if "check" in state.valid_actions:
             return Action.check()
+        if "fold" in state.valid_actions:
+            return Action.fold()
+        if "call" in state.valid_actions:
+            return Action.call()
         return Action.fold()
 
 

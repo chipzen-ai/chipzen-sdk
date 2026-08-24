@@ -8,6 +8,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Variant scaffolding for 2-7 Triple Draw and Pineapple OFC.** Additive and
+  unpublished: both games are registered and **dark**, no dispatch path creates
+  a match at either table today, and none of this changes what an NLHE bot
+  sees. See `docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md` and
+  `docs/protocol/OFC-GAME-STATE-PROTOCOL.md` for the wire contract.
+  - `GameState` gained the variant keys from the two Layer 2 specs —
+    `is_draw_phase`, `draw_number`, `draws_remaining`, `max_discard`,
+    `your_draw_counts`, `opponent_draw_counts` (27TD); `your_rows`,
+    `opponent_rows`, `cards_to_place`, `place`, `must_discard`,
+    `row_capacity`, `royalties`, `opponent_royalties`, `point_value`,
+    `in_fantasy_land`, `phase_sequence` (OFC). **Every one is optional with a
+    default**, so a bot that never reads them behaves exactly as before.
+  - `Action.discard()` / `Action.stand_pat()` (27TD `draw`) and
+    `Action.place()` (OFC `place`). Their parameters travel under `params` —
+    the only top-level key the server's field allowlist accepts for them.
+  - `Bot.decide_draw()` / `Bot.decide_placement()` — **optional, defaulted**
+    convenience hooks the SDK never calls on its own. `decide()` is still the
+    single required entry point.
+  - Conformance fixtures for both variants (fixtures only; deliberately not
+    wired into `run_conformance_checks`, which grades NLHE bots).
+- **`tests/test_variant_backcompat.py`**, sibling of
+  `test_multiway_backcompat.py`. Freezes that a variant `turn_request` parses
+  in an NLHE-shaped bot without raising and without displacing any existing
+  field's default — and proves the hard constraint the whole design rests on:
+  an invalid card in `board` or `your_hole_cards` raises **before `decide()`
+  is called**, driven through the real session loop.
+
+### Changed
+
+- **`Action` carries a `params` dict.** Appended after `amount` with a default,
+  so positional construction and every NLHE `to_wire()` payload are unchanged;
+  `Action` stays hashable.
+- **`GameState.from_turn_request` reads `your_seat` / `dealer_seat` from
+  `state` when present**, falling back to the keyword arguments. OFC carries
+  both in `turn_request.state`; NLHE and 27TD do not.
+- **The Python starter notices an action vocabulary it does not implement**
+  rather than guessing at it — it reports the unfamiliar names once and picks
+  the safest action actually on offer. It remains an NLHE bot.
+
 ## [0.3.3] — 2026-08-16
 
 Patch release: the re-attach fix (#119). A session that (re)joins an in-flight

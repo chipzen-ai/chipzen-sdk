@@ -58,6 +58,89 @@ class ChipzenBot(ABC):
         ...
 
     # ------------------------------------------------------------------
+    # Optional variant convenience hooks
+    #
+    # DEFAULTED, and never called by the SDK on their own: :meth:`decide` is
+    # still the single required entry point and the only method the session
+    # loop invokes. These exist so a bot that plays a variant table can split
+    # its logic without inventing its own dispatch, and so an existing bot
+    # that has never heard of them keeps working untouched.
+    #
+    # The dispatch is yours to write, in ``decide``::
+    #
+    #     def decide(self, state: GameState) -> Action:
+    #         if state.is_draw_phase:            # 2-7 Triple Draw
+    #             return self.decide_draw(state)
+    #         if "place" in state.valid_actions:  # Pineapple OFC
+    #             return self.decide_placement(state)
+    #         ...                                 # your NLHE strategy
+    # ------------------------------------------------------------------
+
+    def decide_draw(self, state: GameState) -> Action:
+        """2-7 Triple Draw: return your ``draw`` action for a draw turn.
+
+        Called only if your own :meth:`decide` delegates to it.
+
+        The default is a **stand pat** -- ``Action.discard([])`` -- which is
+        also what the server substitutes for a seat that times out in a draw
+        phase: the free, hand-preserving option. It is a legal action in every
+        draw phase, so the default never produces a rejection; it is simply
+        not a strategy.
+
+        Discard at most ``state.max_discard`` cards. The bound lives in the
+        state payload, not in ``state.valid_actions`` (which is exactly
+        ``["draw"]`` on a draw turn).
+
+        Args:
+            state: The current game state, with ``is_draw_phase`` True.
+
+        Returns:
+            The draw action to take.
+        """
+        return Action.discard([])
+
+    def decide_placement(self, state: GameState) -> Action:
+        """Pineapple OFC: return your ``place`` action for a placement turn.
+
+        Called only if your own :meth:`decide` delegates to it.
+
+        The default fills the rows with free capacity in ``bottom``,
+        ``middle``, ``top`` order and discards the leftovers. That is
+        **legal, not good**: it respects ``state.place``,
+        ``state.must_discard`` and ``state.row_capacity``, and it will happily
+        foul. Override it.
+
+        Legality matters more here than anywhere else in the protocol: OFC
+        rejects an illegal placement rather than clamping it, because
+        placement is irrevocable and there is no defensible "nearest legal
+        placement".
+
+        Args:
+            state: The current game state, with ``cards_to_place``,
+                ``place``, ``must_discard`` and ``row_capacity`` populated.
+
+        Returns:
+            The placement action to take.
+        """
+        capacity = dict(state.row_capacity)
+        # Canonical order first, then any row name this SDK release has not
+        # heard of, so an added row is filled rather than ignored.
+        rows: list[str] = [name for name in ("bottom", "middle", "top") if name in capacity]
+        rows += [name for name in capacity if name not in rows]
+
+        cards = list(state.cards_to_place)
+        placements: list[tuple[str, str]] = []
+        for card in cards[: state.place]:
+            for row in rows:
+                if capacity.get(row, 0) > 0:
+                    placements.append((card, row))
+                    capacity[row] -= 1
+                    break
+
+        discard = cards[state.place : state.place + state.must_discard]
+        return Action.place(placements, discard=discard)
+
+    # ------------------------------------------------------------------
     # Match-level hooks
     # ------------------------------------------------------------------
 
