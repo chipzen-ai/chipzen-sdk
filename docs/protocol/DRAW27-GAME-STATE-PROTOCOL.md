@@ -42,7 +42,7 @@ A non-poker table advertises itself. The server `hello` carries an additive `gam
 }
 ```
 
-A client declares what it can play with the optional handshake field `supported_games` — a list of `game_type` strings. **Absent means "poker only."** At a non-poker table a client that has not declared the seat's game is rejected at the handshake with the structured code `EXTAPI_CLIENT_GAME_UNSUPPORTED` (409) rather than being seated and auto-substituted to zero. Declaring `"draw27"` is an assertion that the client implements everything in this document.
+A client declares what it can play with the optional handshake field `supported_games` — a list of `game_type` strings. **Absent means "poker only."** At a non-poker table a client that has not declared the seat's game is rejected **before it is seated**, rather than being seated and auto-substituted to zero. The rejection arrives as two frames: an `error` envelope carrying `code: "EXTAPI_CLIENT_GAME_UNSUPPORTED"` and a message naming the game, then a WebSocket close with code **`4002`** and reason `game_unsupported_by_client`. (`409` is that code's HTTP status in the platform error table — it is not a handshake status, and nothing on this socket ever carries it.) Declaring `"draw27"` is an assertion that the client implements everything in this document.
 
 `state_shape` is the marker a client MUST branch on before parsing state payloads. A client that hardcodes the NLHE field list MUST treat an unfamiliar `state_shape` as "I cannot parse this table" — never as "drop the keys I do not recognise".
 
@@ -70,7 +70,7 @@ The Python SDK's `Card.from_str` and the JavaScript SDK's `cardFromString` **thr
 
 ### Rule 4 — all new action parameters nest under `params`
 
-Every 27TD-specific action parameter travels under `turn_action.params`. The WebSocket field allowlist is a fixed set (`type`, `action`, `amount`, `session_token`, `match_id`, `request_id`, `params`), and a bespoke top-level key is rejected as `UNEXPECTED_FIELDS` before any rule set sees the message.
+Every 27TD-specific action parameter travels under `turn_action.params`. **27TD adds no top-level field**, and a bespoke one is not part of the `turn_action` envelope: what happens to it is Layer 1's business, specified by [`TRANSPORT-PROTOCOL.md`](TRANSPORT-PROTOCOL.md) §9.2 (the `turn_action` schema, `additionalProperties: false`) and §16.2 (unknown fields in bot messages). This document does not restate that list — a variant spec that copies it drifts from it.
 
 ### Rule 5 — new keys only
 
@@ -164,9 +164,9 @@ The core decision payload. **One shape covers both a betting turn and a draw tur
   "phase": "draw1",
   "board": [],
   "your_hole_cards": ["Ah", "Kd", "9s", "7c", "3h"],
-  "pot": 400,
-  "your_stack": 9800,
-  "opponent_stacks": [9800],
+  "pot": 200,
+  "your_stack": 9900,
+  "opponent_stacks": [9900],
   "to_call": 0,
   "min_raise": 0,
   "max_raise": 0,
@@ -179,7 +179,7 @@ The core decision payload. **One shape covers both a betting turn and a draw tur
   "action_history": [
     {"seat": 0, "action": "post_small_blind", "amount": 50, "phase": "predraw", "is_timeout": false},
     {"seat": 1, "action": "post_big_blind", "amount": 100, "phase": "predraw", "is_timeout": false},
-    {"seat": 0, "action": "call", "amount": 100, "phase": "predraw", "is_timeout": false},
+    {"seat": 0, "action": "call", "amount": 50, "phase": "predraw", "is_timeout": false},
     {"seat": 1, "action": "check", "amount": 0, "phase": "predraw", "is_timeout": false}
   ]
 }
@@ -195,7 +195,7 @@ The core decision payload. **One shape covers both a betting turn and a draw tur
 | `your_stack` | integer | Yes | Acting seat's remaining stack. |
 | `opponent_stacks` | array of integer | Yes | Other seats' stacks in seat order, excluding the acting seat. Length N-1. |
 | `to_call` | integer | Yes | Chips to add to call. `0` in a draw phase, and when checking is free. |
-| `min_raise` | integer | Yes | The single legal raise-**to** total, or `0` when raising is not available. **In fixed limit `min_raise == max_raise` always.** |
+| `min_raise` | integer | Yes | The single legal raise-**to** total — the next full bet level, capped at the acting seat's all-in figure. **In fixed limit `min_raise == max_raise` always.** `0` in a draw phase, in a terminal phase, and when the seat cannot reach past the current bet. **It is NOT zeroed when a raise is unavailable for a rules reason** — see §5.2. |
 | `max_raise` | integer | Yes | Identical to `min_raise`. See §5.3. |
 | `is_draw_phase` | boolean | Yes | **New key.** `true` iff the acting seat owes a draw rather than a betting decision. The single dial a client branches on. |
 | `draw_number` | integer | Yes | **New key.** `1`-`3` inside a draw round, `0` in every other phase. |
@@ -221,7 +221,7 @@ Identical in shape to NLHE's, with one 27TD-specific reading of `amount`.
 |---|---|---|---|
 | `seat` | integer | Yes | 0-indexed seat that acted. |
 | `action` | string | Yes | One of the action strings in §4.1, or a synthetic posting. |
-| `amount` | integer | Yes | **Chips** for a wager or a posting. For `action: "draw"` it is the **number of cards drawn** — not a bitmask, not chips. `0` for `fold`, `check` and a stand pat. |
+| `amount` | integer | Yes | **Chips committed by this action** — the increment, not the seat's running total — for a wager or a posting. (Heads-up, a small blind of 50 that calls a big blind of 100 records `50`.) For `action: "draw"` it is the **number of cards drawn** — not a bitmask, not chips; the mask is a `turn_result` reading only (§3.6). `0` for `fold`, `check` and a stand pat. |
 | `phase` | string | Yes | The phase the action occurred in. |
 | `is_timeout` | boolean | Yes | `true` if the server substituted this action after a timeout. |
 
@@ -259,7 +259,9 @@ The discard list accepts either **card strings**, matched against the acting sea
 
 ### 3.6 Turn Result Details (`turn_result.details`)
 
-Unchanged from NLHE in shape. For a `draw`, `amount` is the number of cards drawn (public), and `pot` and `stacks` are the post-action values, which a draw does not move. No card — discarded or received — ever appears in a `turn_result`.
+Unchanged from NLHE in shape. `pot` and `stacks` are the post-action values, which a draw does not move. No card — discarded or received — ever appears in a `turn_result`.
+
+**For a `draw`, `amount` is the discard MASK, not the count.** `turn_result.details.amount` carries the server-normalized form of the submission: a five-bit field over the acting seat's hand positions, bit *i* set when position *i* was replaced, `0` for a stand pat. Discarding positions 0 and 1 puts `3` on the wire; position 4 alone puts `16`. This is the one place the two 27TD readings of `amount` diverge — `action_history` (§3.4) carries the public **count**, and that is what a client should read to learn how many cards a seat took.
 
 ### 3.7 Phase Change State (`phase_change.state`)
 
@@ -374,7 +376,7 @@ Why the convention has to be pinned: "4 bets", "a bet and four raises" and "4 ra
 
 **The cap applies in every round, at every table size, heads-up included.** This is a deliberate, documented divergence from the tournament exemption that uncaps an event's final two players: a Chipzen heads-up match would otherwise be permanently uncapped. A client MUST NOT assume heads-up is uncapped.
 
-Once the cap is reached, `raise` disappears from `valid_actions` and `min_raise` / `max_raise` are `0`.
+**Once the cap is reached, `raise` disappears from `valid_actions` — but `min_raise` / `max_raise` do NOT go to `0` with it.** The state payload keeps reporting the next bet level, so a client that branches on `min_raise > 0` to decide it may raise will submit a raise the server rejects, and the retry window that burns can end in a substituted action. **`valid_actions` is the only authority on which actions are legal**; `min_raise` / `max_raise` size a raise, they do not offer one. The same holds wherever else §5.3 removes `raise`.
 
 ### 5.3 Raise sizing is a point, not a range
 
@@ -382,7 +384,7 @@ Once the cap is reached, `raise` disappears from `valid_actions` and `min_raise`
 
 A submitted `raise` amount is **clamped** to that single legal figure whatever the client sends, so a bot cannot mis-size a fixed-limit raise. The one case where the figure is not the full wager unit is a seat too short to post it: the offer collapses to that seat's all-in total.
 
-`raise` is absent from `valid_actions` when the cap is reached, when no opponent can still respond, or when a short all-in has closed the action to a seat that already acted.
+`raise` is absent from `valid_actions` when the cap is reached, when no opponent can still respond, or when a short all-in has closed the action to a seat that already acted. In each of those cases `min_raise` / `max_raise` still carry the next bet level rather than `0` — read `valid_actions` (§5.2).
 
 ### 5.4 The draw: dealing is deal-as-you-go
 
@@ -422,7 +424,13 @@ One card is burned per draw round, **always** — even when every seat stands pa
 
 A 27TD hand can outrun the 52-card stub. When it does, the stub is rebuilt from the previous rounds' discards, the muck and the burn pile — **never** the discards of the round in progress. Reshuffles are dealer procedure and are **public**: the hand record names the rounds in which one happened (§6).
 
-**Integrity consequence, stated plainly.** `deck_commitment` commits to one 52-card order. A mid-hand reshuffle deals cards that order cannot explain, so `SHA-256(seed || join(deck_order)) == deck_commitment` verification of an exhausting hand does not close. This is why v1 offers **at most 5 seats**: at `N <= 5` no hand can exhaust the stub, so no offered configuration can produce an unverifiable hand. The seat cap moves only when the fairness layer commits to a **seed** rather than a card order and the verifier can replay every reshuffle.
+**Integrity consequence, stated plainly.** `deck_commitment` commits to one 52-card order. A mid-hand reshuffle deals cards that order cannot explain, so `SHA-256(seed || join(deck_order)) == deck_commitment` verification of a hand that reshuffled does not close.
+
+**Only heads-up is exhaust-proof, and v1 offers seat counts that are not.** Over a whole hand two seats need at most `2*5 + 3*(2*5 + 1) = 43` cards, which fits in 52, so `N = 2` never reaches the reshuffle. No other offered seat count has that property. At `N` seats the stub after the deal is `52 - 5N`, and one draw round can demand `5N + 1` — five replacements each plus the burn. Three-handed that is 16 against 37 and the stub is dry inside the third draw; five-handed it is 26 against 27, so the *first* draw round clears by exactly one card and the rounds after it do not.
+
+**What a fairness verifier must therefore do.** A 27TD hand at `N >= 3` may legitimately fail deck-order verification, and that failure is not evidence of tampering. Read the hand record's `reshuffles` (§6) **before** concluding anything: `reshuffles.occurred == false` means the commitment covers the whole hand and a mismatch is real; `reshuffles.occurred == true` means the hand went outside what the commitment can explain and the check does not apply. A verifier that reads every mismatch as tampering will raise false alarms on ordinary multi-way hands.
+
+**The 5-seat cap is a separate constraint**, and it is not a claim that the stub holds. Six-handed cannot pay a maximal final draw even *with* the reshuffle: the last drawer's five cards would have to come from outside the five other live hands (25), the round in progress' discards (30, less the burns swapped out of it) and the burn pile — 55 cards' worth of demand against a 52-card deck. The cap moves only when the fairness layer commits to a **seed** rather than a card order and the verifier can replay every reshuffle.
 
 ### 5.7 Showdown, ties and the odd chip
 
