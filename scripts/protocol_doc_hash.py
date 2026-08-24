@@ -12,9 +12,24 @@ repos. Each repo's CI runs ``python scripts/protocol_doc_hash.py --check``, so a
 one-sided edit turns that side red immediately, and re-hashing only one side
 leaves the *other* side red until the mirror is updated too.
 
-This file and the ``.sha256`` beside the doc are byte-identical across the two
-repos — do not diverge them. Same shape as the vendored ``rabbot_dsl``
-drift-guard (``tests/test_rabbot_dsl_drift.py`` on the platform side).
+**What must stay identical across the repos is the NORMALIZATION — not this
+whole file.** ``MIRROR_HEADER_END``, ``PATH_REWRITES``, :func:`normalize` and
+:func:`compute_hash` are what decide a digest; if those diverge the two sides
+compute different hashes for the same text and the guard silently stops meaning
+anything. The ``.sha256`` files stay byte-identical too — that is the artefact
+the pairing rests on. Everything else may legitimately differ: the prose names a
+repo, and ``MIRRORED_DOCS`` names layout-specific paths (``docs/protocol/`` here,
+``docs/arch/`` in the private repo).
+
+:data:`EXPECTED_DIGESTS` is what makes ``--check`` a **cross-repo** guard rather
+than a self-consistency check (chipzen-ai/Chipzen#4242). Without it, editing a
+doc here and re-running ``--write`` here went green on this side while the other
+side stayed green too — its own pinned expectations were the only cross-repo
+anchor and this side had no equivalent, so the pairing could be broken with no
+red anywhere. A real content edit therefore has to bump the pin **in both repos**,
+which is a reviewable diff instead of a silent divergence.
+
+Same shape as the vendored ``rabbot_dsl`` drift-guard.
 
 Normalization exists because the two copies legitimately cannot be
 byte-identical:
@@ -64,6 +79,31 @@ MIRRORED_DOCS: dict[str, str] = {
     "EXTERNAL-API-BOT-PROTOCOL": "docs/EXTERNAL-API-BOT-PROTOCOL.md",
     "POKER-GAME-STATE-PROTOCOL": "docs/protocol/POKER-GAME-STATE-PROTOCOL.md",
     "TRANSPORT-PROTOCOL": "docs/protocol/TRANSPORT-PROTOCOL.md",
+    # The two Layer 2 variant dialects (chipzen-ai/Chipzen#4242).
+    "DRAW27-GAME-STATE-PROTOCOL": "docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md",
+    "OFC-GAME-STATE-PROTOCOL": "docs/protocol/OFC-GAME-STATE-PROTOCOL.md",
+}
+
+#: The CROSS-REPO digest of every mirrored doc, pinned. See the module docstring:
+#: the ``.sha256`` files alone only prove this side is self-consistent, so
+#: ``--check`` compares against these constants as well.
+#:
+#: Changing a doc for real means: edit BOTH repos to the same bytes, run
+#: ``--write`` in BOTH, and bump this dict here and the matching expectations in
+#: the private repo's mirror test, in lockstep. A digest that moves on one side
+#: only is exactly the divergence this exists to catch.
+EXPECTED_DIGESTS: dict[str, str] = {
+    "DRAW27-GAME-STATE-PROTOCOL": (
+        "239905f771fce4beeb0b90ecffe84b0b75dab45a5a51334fbd464ba97ed66016"
+    ),
+    "EXTERNAL-API-BOT-PROTOCOL": (
+        "7722496749ca38a52e75b592df13ecba6b076d80a17721be63db14bb46eb9429"
+    ),
+    "OFC-GAME-STATE-PROTOCOL": ("4ccb8c1b10cf4235ff62929b7abf16c81f4606b362655255d829311c9456f78d"),
+    "POKER-GAME-STATE-PROTOCOL": (
+        "417007916d3ad0a19b1c370fb1f15a8c3041803f69be48d4122129d016ec5a7b"
+    ),
+    "TRANSPORT-PROTOCOL": ("9833c50bbb468ac9e4a6bfeaed38a59788638c260c6e90411415c1f1c25ded91"),
 }
 
 
@@ -116,7 +156,13 @@ def compute_hash(doc_path: Path = DOC_PATH) -> str:
 
 
 def check_one(name: str) -> tuple[bool, str]:
-    """Verify one mirrored doc against its committed digest."""
+    """Verify one mirrored doc against its committed digest AND the cross-repo pin.
+
+    Two assertions, not one. The ``.sha256`` beside the doc only proves this
+    repo is internally consistent — re-running ``--write`` here satisfies it
+    unconditionally. :data:`EXPECTED_DIGESTS` is the value the OTHER repo also
+    pins, so it is the assertion that survives a one-sided ``--write``.
+    """
     path = doc_path(name)
     if not path.exists():
         return False, f"{name}: {path} not found"
@@ -135,6 +181,25 @@ def check_one(name: str) -> tuple[bool, str]:
             "\n  Mirror the change into the OTHER repo, then run --write in BOTH so"
             "\n  the digests stay identical. Re-hashing only one side leaves the"
             "\n  other side red — that is the point, not a bug."
+        )
+
+    pinned = EXPECTED_DIGESTS.get(name)
+    if pinned is None:
+        return False, (
+            f"{name} is in MIRRORED_DOCS with no entry in EXPECTED_DIGESTS."
+            "\n  A doc guarded only by its own .sha256 has a self-consistency check"
+            "\n  and NO cross-repo anchor: an edit here plus --write here would go"
+            "\n  green on both sides. Pin the digest in BOTH repos."
+        )
+    if computed != pinned:
+        return False, (
+            f"{name} drift vs the mirror in chipzen-ai/Chipzen."
+            f"\n    pinned:   {pinned}"
+            f"\n    computed: {computed}"
+            "\n  Mirror the change into the other repo, run --write in BOTH, and bump"
+            "\n  the pin in BOTH in lockstep. The .sha256 matching is not enough:"
+            "\n  --write satisfies that on one side alone, which is the divergence"
+            "\n  this pin exists to catch."
         )
     return True, f"{name}: {computed}"
 
@@ -159,7 +224,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"error: {doc_path(name)} not found", file=sys.stderr)
                 return 2
             digest = compute_hash(doc_path(name))
-            hash_path(name).write_text(digest + "\n", encoding="utf-8")
+            # newline="" suppresses Python's text-mode translation. Without it,
+            # a --write run on Windows emits CRLF while the same command on
+            # Linux emits LF, so the two repos' .sha256 files stop being
+            # byte-identical — the invariant this guard's whole cross-repo
+            # story rests on. `--check` would not notice (it strips), so the
+            # divergence is silent: exactly the failure mode this file exists
+            # to prevent, one level down. The private repo's copy has carried
+            # this since #4105; this side had not (chipzen-ai/Chipzen#4242).
+            hash_path(name).write_text(digest + "\n", encoding="utf-8", newline="")
             print(f"wrote {hash_path(name).name}: {digest}")
         return 0
 
