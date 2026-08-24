@@ -232,7 +232,7 @@ The core decision payload.
   "in_fantasy_land": false,
   "phase_sequence": ["deal1", "street2", "street3", "street4", "street5", "complete"],
   "action_history": [
-    {"seat": 1, "action": "place", "amount": 843, "phase": "deal1", "is_timeout": false}
+    {"seat": 1, "action": "place", "amount": 1001, "phase": "deal1", "is_timeout": false}
   ]
 }
 ```
@@ -273,7 +273,7 @@ The royalty schedule itself is a rules matter, not a protocol matter: read the v
 Identical in shape to NLHE's, with an OFC-specific reading of `amount`.
 
 ```json
-{"seat": 1, "action": "place", "amount": 843, "phase": "deal1", "is_timeout": false}
+{"seat": 1, "action": "place", "amount": 1001, "phase": "deal1", "is_timeout": false}
 ```
 
 | Field | Type | Required | Description |
