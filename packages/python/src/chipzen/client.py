@@ -84,6 +84,7 @@ async def run_bot(
     client_version: str = _VERSION,
     safe_mode: bool = True,
     user_agent: str | None = None,
+    supported_games: list[str] | None = None,
 ) -> dict | None:
     """Connect a bot to the Chipzen server and play until the match ends.
 
@@ -112,6 +113,18 @@ async def run_bot(
             so the first exception propagates (chipzen-ai/chipzen-sdk#52).
         user_agent: Override the WS ``User-Agent`` header. Defaults to
             ``chipzen-sdk-python/<version>`` (chipzen-ai/chipzen-sdk#46).
+        supported_games: The games this client can actually play, declared in
+            the client ``hello`` as ``supported_games`` — a list of
+            ``game_type`` strings (``"poker"``, ``"draw27"``, ``"ofc"``).
+            ``None`` (the default) **omits the field entirely**, and the
+            platform reads an absent declaration as "poker only" — so the
+            default wire bytes are unchanged. See
+            ``docs/protocol/LAYER2-COMMON.md`` section 2: at a non-poker table
+            a client that has not declared the seat's game is rejected before
+            it is seated (``EXTAPI_CLIENT_GAME_UNSUPPORTED``, close ``4002``).
+            Declaring a ``game_type`` asserts you implement everything in that
+            game's Layer 2 document — do not declare a game your ``decide()``
+            cannot produce actions for.
 
     Returns:
         The ``match_end`` payload, or ``None`` if the connection closed without
@@ -150,6 +163,7 @@ async def run_bot(
                     client_name=client_name,
                     client_version=client_version,
                     safe_mode=safe_mode,
+                    supported_games=supported_games,
                 )
 
         except asyncio.CancelledError:
@@ -185,6 +199,7 @@ async def _run_session(
     client_name: str,
     client_version: str,
     safe_mode: bool = True,
+    supported_games: list[str] | None = None,
 ) -> dict | None:
     """Execute a single connected session: handshake + message loop.
 
@@ -290,16 +305,23 @@ async def _run_session(
             )
             return None
 
-    await _send_json(
-        ws,
-        {
-            "type": "hello",
-            "match_id": match_id,
-            "supported_versions": SUPPORTED_PROTOCOL_VERSIONS,
-            "client_name": client_name,
-            "client_version": client_version,
-        },
-    )
+    # #4245 / epic chipzen-ai/Chipzen#4200: the client's declared game
+    # vocabulary. Appended LAST and only when the caller declared something,
+    # so a bot that declares nothing sends the exact same five keys in the
+    # exact same order it has always sent — the platform reads an absent
+    # ``supported_games`` as "poker only", which is what every deployed bot
+    # relies on. ``supported_games`` is on the server's handshake field
+    # allowlist; any other key name closes the socket.
+    client_hello: dict[str, Any] = {
+        "type": "hello",
+        "match_id": match_id,
+        "supported_versions": SUPPORTED_PROTOCOL_VERSIONS,
+        "client_name": client_name,
+        "client_version": client_version,
+    }
+    if supported_games is not None:
+        client_hello["supported_games"] = list(supported_games)
+    await _send_json(ws, client_hello)
     logger.info(
         "Handshake complete: version=%s game_type=%s",
         selected_version or "?",
