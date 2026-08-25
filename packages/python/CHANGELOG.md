@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`supported_games` — declare the games your bot can actually play.**
+  `run_bot(..., supported_games=[...])` and
+  `run_external_bot(..., supported_games=[...])` put the list on the Layer 1
+  client `hello` under `supported_games`, the field the platform reads to
+  decide whether a client may be seated at a non-poker table
+  (`docs/protocol/LAYER2-COMMON.md` section 2). **Default `None` omits the
+  field entirely**, and the platform reads an absent declaration as "poker
+  only" — the client `hello` a bot sends today is byte-identical, frozen by
+  `tests/test_supported_games.py`. Declaring a `game_type` asserts you
+  implement everything in that game's Layer 2 document; a client that declares
+  a game it cannot act in is seated and then timeout-substituted every turn.
+
 - **Variant scaffolding for 2-7 Triple Draw and Pineapple OFC.** Additive and
   unpublished: both games are registered and **dark**, no dispatch path creates
   a match at either table today, and none of this changes what an NLHE bot

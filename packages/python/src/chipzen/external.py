@@ -175,6 +175,7 @@ async def _play_one_match(
     client_version: str,
     safe_mode: bool,
     user_agent: str,
+    supported_games: list[str] | None = None,
 ) -> dict | None:
     """Play one match end-to-end over the per-match gateway WS, reconnecting
     across a mid-match drop.
@@ -218,6 +219,7 @@ async def _play_one_match(
                     client_name=client_name,
                     client_version=client_version,
                     safe_mode=safe_mode,
+                    supported_games=supported_games,
                 )
             if end is not None:
                 return end  # clean match_end — done
@@ -265,6 +267,7 @@ async def _run_lobby_once(
     max_matches: int | None,
     stop: asyncio.Event,
     fatal: list[BaseException],
+    supported_games: list[str] | None = None,
 ) -> str:
     """Hold ONE lobby connection and dispatch every ``matched`` it delivers.
 
@@ -352,6 +355,7 @@ async def _run_lobby_once(
                         client_version=client_version,
                         safe_mode=safe_mode,
                         user_agent=user_agent,
+                        supported_games=supported_games,
                     )
                 )
                 task.add_done_callback(_on_match_done)
@@ -392,6 +396,7 @@ async def run_external_bot(
     safe_mode: bool = True,
     max_matches: int | None = None,
     user_agent: str | None = None,
+    supported_games: list[str] | None = None,
 ) -> list[dict]:
     """Run a bot on the Chipzen external-API remote-play path.
 
@@ -432,6 +437,12 @@ async def run_external_bot(
         user_agent: Override the WS ``User-Agent`` header. Defaults to
             ``chipzen-sdk-python/<version>`` (a non-default UA also clears the
             platform's Cloudflare bot-fight rule; chipzen-ai/chipzen-sdk#46).
+        supported_games: The games this client can actually play, declared in
+            each per-match ``hello`` as ``supported_games``. ``None`` (the
+            default) omits the field, and the platform reads that as "poker
+            only" — so the default wire bytes are unchanged. See
+            :func:`chipzen.client.run_bot` and
+            ``docs/protocol/LAYER2-COMMON.md`` section 2.
 
     Returns:
         A list of per-match result dicts (``{"match_id", "end"}``), one per
@@ -502,6 +513,7 @@ async def run_external_bot(
                 max_matches=max_matches,
                 stop=stop,
                 fatal=fatal,
+                supported_games=supported_games,
             )
             ever_connected = True
         except (OSError, websockets.WebSocketException) as exc:
