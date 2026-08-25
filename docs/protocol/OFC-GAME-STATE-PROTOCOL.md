@@ -197,7 +197,7 @@ The core decision payload.
   "dealer_seat": 0,
   "your_seat": 1,
   "your_rows": {"top": ["2c"], "middle": ["3d", "4h"], "bottom": ["5s", "6s"]},
-  "opponent_rows": {"0": {"top": ["7c"], "middle": ["8d", "9h"], "bottom": ["Ts", "Js"]}},
+  "opponent_rows": {"0": {"top": ["7c"], "middle": ["8d", "9h"], "bottom": ["Ts", "Jc"]}},
   "cards_to_place": ["9s", "Js", "Ks"],
   "place": 2,
   "must_discard": 1,
@@ -323,7 +323,7 @@ Broadcast when a street completes.
   "place": 2,
   "must_discard": 1,
   "rows": {
-    "0": {"top": ["7c"], "middle": ["8d", "9h"], "bottom": ["Ts", "Js"]},
+    "0": {"top": ["7c"], "middle": ["8d", "9h"], "bottom": ["Ts", "Jc"]},
     "1": {"top": ["2c"], "middle": ["3d", "4h"], "bottom": ["5s", "6s"]}
   },
   "placed": {"0": 5, "1": 5},
@@ -592,7 +592,7 @@ Substituted placements carry `is_timeout: true` in `action_history`.
             "discarded": []
           }
         ],
-        "discarded": ["9s", "Js", "Ks", "2d"],
+        "discarded": ["9s", "Jd", "Kd", "2d"],
         "placed": 13,
         "row_royalties": {"top": 0, "middle": 0, "bottom": 0},
         "royalties": 0,

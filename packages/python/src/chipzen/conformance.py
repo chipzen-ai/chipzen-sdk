@@ -601,7 +601,7 @@ def _ofc_turn_request(seq: int = 4, request_id: str = "req_1") -> dict:
             "dealer_seat": 0,
             "your_seat": 1,
             "your_rows": {"top": ["2c"], "middle": ["3d", "4h"], "bottom": ["5s", "6s"]},
-            "opponent_rows": {"0": {"top": ["7c"], "middle": ["8d", "9h"], "bottom": ["Ts", "Js"]}},
+            "opponent_rows": {"0": {"top": ["7c"], "middle": ["8d", "9h"], "bottom": ["Ts", "Jc"]}},
             "cards_to_place": ["9s", "Js", "Ks"],
             "place": 2,
             "must_discard": 1,

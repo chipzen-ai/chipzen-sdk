@@ -179,17 +179,18 @@ The core decision payload. Contains everything a bot needs to choose an action.
   "phase": "flop",
   "board": ["Ts", "7h", "2d"],
   "your_hole_cards": ["Ah", "Kd"],
-  "pot": 40,
-  "your_stack": 960,
-  "opponent_stacks": [940],
+  "pot": 80,
+  "your_stack": 970,
+  "opponent_stacks": [950],
   "to_call": 20,
   "min_raise": 40,
-  "max_raise": 960,
+  "max_raise": 970,
   "action_history": [
     {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
     {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
     {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false},
-    {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false}
+    {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false},
+    {"seat": 1, "action": "raise", "amount": 20, "phase": "flop", "is_timeout": false}
   ]
 }
 ```
@@ -269,7 +270,7 @@ Broadcast to all participants after each action. Reveals what a player did (but 
   "action": "raise",
   "amount": 1200,
   "pot": 2000,
-  "stacks": [9600, 8000],
+  "stacks": [9600, 8400],
   "is_timeout": false
 }
 ```
