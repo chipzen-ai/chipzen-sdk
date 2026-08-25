@@ -49,7 +49,7 @@ A non-poker table advertises itself. The server `hello` carries an additive `gam
 
 Note `actions: ["place"]` — the OFC vocabulary does **not** include `fold`, `check`, `call` or `raise`. A client whose vocabulary is a strict subset of the table's cannot play there.
 
-A client declares what it can play with the optional handshake field `supported_games` — a list of `game_type` strings. **Absent means "poker only."** At a non-poker table a client that has not declared the seat's game is rejected at the handshake with the structured code `EXTAPI_CLIENT_GAME_UNSUPPORTED` (409) rather than being seated and auto-substituted to zero. Declaring `"ofc"` is an assertion that the client implements everything in this document.
+A client declares what it can play with the optional handshake field `supported_games` — a list of `game_type` strings. **Absent means "poker only."** At a non-poker table a client that has not declared the seat's game is rejected **before it is seated**, rather than being seated and auto-substituted to zero. The rejection arrives as two frames: an `error` envelope carrying `code: "EXTAPI_CLIENT_GAME_UNSUPPORTED"` and a message naming the game, then a WebSocket close with code **`4002`** and reason `game_unsupported_by_client`. (`409` is that code's HTTP status in the platform error table — it is not a handshake status, and nothing on this socket ever carries it.) Declaring `"ofc"` is an assertion that the client implements everything in this document.
 
 `state_shape` is the marker a client MUST branch on before parsing state payloads. A client that hardcodes the NLHE field list MUST treat an unfamiliar `state_shape` as "I cannot parse this table" — never as "drop the keys I do not recognise".
 
@@ -63,7 +63,7 @@ A client declares what it can play with the optional handshake field `supported_
 
 `board` and `your_hole_cards` MUST always be arrays whose every element is a valid two-character card string (`"Ah"`, `"Td"`, `"2c"` — see [`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md) §1 for the notation, which is shared verbatim).
 
-The Python SDK's `Card.from_str` and the JavaScript SDK's `cardFromString` **throw inside `parseGameState`**, before `decide()` is called and outside any per-decision safe mode. A `"??"`, `"XX"` or `null` placeholder in either array is therefore a hard session kill for every deployed Python and JavaScript bot. The Rust SDK does not throw — it silently `filter_map`s unparseable entries, which is worse in a different way.
+The Python SDK's `Card.from_str` and the JavaScript SDK's `cardFromString` **throw inside `parseGameState`**, before `decide()` is called and outside any per-decision safe mode. A `"??"`, `"XX"` or `null` placeholder in either array is therefore a hard session kill for every deployed Python and JavaScript bot. The Rust SDK does not throw — it silently `filter_map`s unparseable entries, which is worse in a different way: a hand quietly shrinks instead of failing loudly.
 
 OFC has no community cards, so **`board` is permanently `[]`**. `your_hole_cards` carries the seat's own **pending cards** — the cards it has been dealt and not yet placed — as real cards, or `[]` between streets.
 
@@ -79,7 +79,7 @@ OFC has no community cards, so **`board` is permanently `[]`**. `your_hole_cards
 
 ### Rule 4 — all new action parameters nest under `params`
 
-Every OFC-specific action parameter travels under `turn_action.params`. The WebSocket field allowlist is a fixed set (`type`, `action`, `amount`, `session_token`, `match_id`, `request_id`, `params`), and a bespoke top-level key is rejected as `UNEXPECTED_FIELDS` before any rule set sees the message.
+Every OFC-specific action parameter travels under `turn_action.params`. **OFC adds no top-level field**, and a bespoke one is not part of the `turn_action` envelope: what happens to it is Layer 1's business, specified by [`TRANSPORT-PROTOCOL.md`](TRANSPORT-PROTOCOL.md) §9.2 (the `turn_action` schema, `additionalProperties: false`) and §16.2 (unknown fields in bot messages). This document does not restate that list — a variant spec that copies it drifts from it.
 
 ### Rule 5 — new keys only
 
@@ -232,7 +232,8 @@ The core decision payload.
   "in_fantasy_land": false,
   "phase_sequence": ["deal1", "street2", "street3", "street4", "street5", "complete"],
   "action_history": [
-    {"seat": 1, "action": "place", "amount": 1001, "phase": "deal1", "is_timeout": false}
+    {"seat": 1, "action": "place", "amount": 1001, "phase": "deal1", "is_timeout": false},
+    {"seat": 0, "action": "place", "amount": 1001, "phase": "deal1", "is_timeout": false}
   ]
 }
 ```
@@ -341,7 +342,7 @@ Broadcast when a street completes.
 
 ```json
 {
-  "phase": "street3",
+  "phase": "street2",
   "board": [],
   "place": 2,
   "must_discard": 1,
@@ -378,15 +379,15 @@ The contract's four NLHE keys keep their meaning as closely as OFC allows, and t
 {
   "seat": 0,
   "hole_cards": ["7c", "7d", "7h", "9c", "9d", "9h", "2c", "Ac", "Ad", "Ah", "Kc", "Kd", "2d"],
-  "hand_rank": "Two Pair",
+  "hand_rank": "Full House",
   "best_hand": ["Ac", "Ad", "Ah", "Kc", "Kd"],
   "rows": {
     "top": ["7c", "7d", "7h"],
     "middle": ["9c", "9d", "9h", "2c", "2d"],
     "bottom": ["Ac", "Ad", "Ah", "Kc", "Kd"]
   },
-  "row_royalties": {"top": 10, "middle": 12, "bottom": 0},
-  "royalties": 22,
+  "row_royalties": {"top": 15, "middle": 12, "bottom": 6},
+  "royalties": 33,
   "fouled": false,
   "complete": true,
   "points": 6,
@@ -577,7 +578,7 @@ A seat that does not act gets a **legal auto-placement**: fill the row with the 
 
 Substituted placements carry `is_timeout: true` in `action_history`.
 
-**Consecutive-substitution budgets are scaled for OFC.** The platform counts consecutive substituted *decisions*, and OFC asks a seat for five decisions per hand where NLHE asks for roughly one — and OFC has no fold, so a silent seat is asked every street forever instead of being out of the hand. An unscaled budget would forfeit a dead OFC seat about four times sooner than a dead NLHE one, so OFC's budget is four times the configured value.
+**Consecutive-substitution budgets are scaled for OFC.** The platform counts consecutive substituted *decisions*, so the same number buys a different amount of unresponsiveness per game. Measured with each rule set's own substituted action, a silent seat is asked for **5.00** decisions per hand in OFC against **1.36** in NLHE and **1.10** in 27TD — OFC has no fold, so a silent seat is asked every street forever instead of being out of the hand after one. Un-scaled, a dead OFC seat would forfeit about **four times** sooner than a dead NLHE one, so OFC's budget is **four times** the configured value. It is a multiplier rather than a constant, so the platform setting still governs, including its documented "`<= 0` disables the escalation" meaning.
 
 ---
 
