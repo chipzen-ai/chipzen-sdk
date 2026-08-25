@@ -23,19 +23,15 @@ The Layer 2 dialect is announced as `game_config.variant = "pineapple"`; the pla
 
 ---
 
-## 1. Layer 1 is untouched
+## 1. What this document inherits
 
-**Normative.** OFC introduces **no** Layer 1 change and **no** protocol version bump.
+[`LAYER2-COMMON.md`](LAYER2-COMMON.md) states the part of every Layer 2 dialect that is not variant-specific, and it is **normative here**: *its* §1 (Layer 1 is untouched), *its* §2 (how a client learns which game it is at), *its* §3 (the five backward-compatibility rules) and *its* §4 (the versioning policy). Read it once; this document does not restate it.
 
-- The handshake still negotiates `supported_versions: ["1.0"]`, and `"1.0"` is still the only supported version.
-- Every Layer 1 message type, envelope field, sequencing rule, timeout rule and error code is exactly as specified in [`TRANSPORT-PROTOCOL.md`](TRANSPORT-PROTOCOL.md).
-- Layer 1 carries this document's payloads opaquely, in the same fields it carries NLHE payloads: `match_start.game_config`, `round_start.state`, `turn_request.state`, `turn_action.params`, `turn_result.details`, `phase_change.state`, `round_result.result`.
+What follows in this section and in §2 is only OFC's **deltas** against that baseline.
 
-[`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md) §7 already legislates exactly this: *"New variants … new `variant` value in `game_config`, separate Layer 2 specification document."* This is that document.
+### 1.1 The OFC `game` descriptor
 
-### 1.1 How a client learns it is at an OFC table
-
-A non-poker table advertises itself. The server `hello` carries an additive `game` descriptor — **absent means poker**, so the NLHE `hello` envelope is byte-identical to what ships today:
+The server `hello` at an OFC table carries this additive `game` descriptor (mechanism: [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §2):
 
 ```json
 {
@@ -49,41 +45,21 @@ A non-poker table advertises itself. The server `hello` carries an additive `gam
 
 Note `actions: ["place"]` — the OFC vocabulary does **not** include `fold`, `check`, `call` or `raise`. A client whose vocabulary is a strict subset of the table's cannot play there.
 
-A client declares what it can play with the optional handshake field `supported_games` — a list of `game_type` strings. **Absent means "poker only."** At a non-poker table a client that has not declared the seat's game is rejected **before it is seated**, rather than being seated and auto-substituted to zero. The rejection arrives as two frames: an `error` envelope carrying `code: "EXTAPI_CLIENT_GAME_UNSUPPORTED"` and a message naming the game, then a WebSocket close with code **`4002`** and reason `game_unsupported_by_client`. (`409` is that code's HTTP status in the platform error table — it is not a handshake status, and nothing on this socket ever carries it.) Declaring `"ofc"` is an assertion that the client implements everything in this document.
-
-`state_shape` is the marker a client MUST branch on before parsing state payloads. A client that hardcodes the NLHE field list MUST treat an unfamiliar `state_shape` as "I cannot parse this table" — never as "drop the keys I do not recognise".
+Declaring `"ofc"` in `supported_games` is an assertion that the client implements everything in this document.
 
 ---
 
-## 2. Backward-compatibility rules
+## 2. Backward-compatibility deltas
 
-**Normative, and binding on every future revision of this document.** These rules exist because the deployed SDK parsers are strict, and they fail *before* a bot's `decide()` ever runs.
+The five rules and the reasoning behind them are in [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §3, and they bind every future revision of this document. OFC's values under each:
 
-### Rule 1 — `board` and `your_hole_cards` are arrays of strictly-valid cards
-
-`board` and `your_hole_cards` MUST always be arrays whose every element is a valid two-character card string (`"Ah"`, `"Td"`, `"2c"` — see [`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md) §1 for the notation, which is shared verbatim).
-
-The Python SDK's `Card.from_str` and the JavaScript SDK's `cardFromString` **throw inside `parseGameState`**, before `decide()` is called and outside any per-decision safe mode. A `"??"`, `"XX"` or `null` placeholder in either array is therefore a hard session kill for every deployed Python and JavaScript bot. The Rust SDK does not throw — it silently `filter_map`s unparseable entries, which is worse in a different way: a hand quietly shrinks instead of failing loudly.
-
-OFC has no community cards, so **`board` is permanently `[]`**. `your_hole_cards` carries the seat's own **pending cards** — the cards it has been dealt and not yet placed — as real cards, or `[]` between streets.
-
-**This is why a redacted Fantasy Land row is `[]` and never a placeholder** (§5.6). Hiding information is done by emptying an array, never by putting a fake card in it.
-
-### Rule 2 — the six numeric fields stay present and numeric
-
-`pot`, `to_call`, `min_raise`, `max_raise`, `your_stack` and `opponent_stacks` MUST be present with numeric values in every `turn_request.state`, even though OFC has no wagering. `to_call`, `min_raise` and `max_raise` are **always `0`**; `pot` is `0` for the whole hand (see §5.8). They are never omitted and never `null`.
-
-### Rule 3 — `phase` stays a free string
-
-`phase` is a free-form string. The JavaScript SDK types it as a compile-time-only union and casts at runtime, so an unfamiliar phase string does not throw — but a client MUST NOT assume the value is one of the five NLHE phases. The union is widened in the next SDK release; the wire contract is "any string".
-
-### Rule 4 — all new action parameters nest under `params`
-
-Every OFC-specific action parameter travels under `turn_action.params`. **OFC adds no top-level field**, and a bespoke one is not part of the `turn_action` envelope: what happens to it is Layer 1's business, specified by [`TRANSPORT-PROTOCOL.md`](TRANSPORT-PROTOCOL.md) §9.2 (the `turn_action` schema, `additionalProperties: false`) and §16.2 (unknown fields in bot messages). This document does not restate that list — a variant spec that copies it drifts from it.
-
-### Rule 5 — new keys only
-
-Everything OFC-shaped is carried in **new keys** — `your_rows`, `opponent_rows`, `cards_to_place`, `must_discard`, `royalties` and the rest. No existing NLHE key changes type or meaning. **Additions to this document are new keys; removals and retypings are a major version of this document.**
+| Rule | OFC delta |
+|---|---|
+| **1** — valid cards only, never a placeholder | OFC has no community cards, so **`board` is permanently `[]`**. `your_hole_cards` carries the seat's own **pending cards** — dealt and not yet placed — as real cards, or `[]` between streets. **This is why a redacted Fantasy Land row is `[]` and never a placeholder** (§5.6). |
+| **2** — the six numeric fields stay present and numeric | OFC has no wagering. `to_call`, `min_raise` and `max_raise` are **always `0`**; `pot` is `0` for the whole hand (§5.8). |
+| **3** — `phase` stays a free string | OFC uses six phase strings, none of them NLHE's. They are listed in §4.2. |
+| **4** — new action parameters nest under `params` | OFC's new parameters are `placements` and `discard` (§3.5). **OFC adds no top-level field.** |
+| **5** — new keys only | OFC's new keys are `your_rows`, `opponent_rows`, `cards_to_place`, `must_discard`, `royalties` and the rest of §3. |
 
 ---
 
@@ -699,18 +675,16 @@ Further notes:
 
 ## 7. Versioning
 
-This document describes **v1** of the Pineapple OFC Game State Protocol.
+This document describes **v1** of the Pineapple OFC Game State Protocol. The policy is [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §4 — Layer 1 stays at `1.0`, additive changes do not bump this document, removals and retypings do. OFC adds two things to it:
 
-- **Layer 1 stays at `1.0`.** Nothing in this document is a reason to bump it, now or on a future revision of this document. Layer 2 dialects version independently of Layer 1.
-- **Additive changes** (new keys in a state payload, new optional `params` keys): no version bump. Rule 5 of §2 requires them to be additive.
-- **Breaking changes** (a key removed or retyped, a phase string renamed, a semantic change to an existing field): a major bump of *this* document, and a new `variant` value if the two dialects must coexist.
 - Classic OFC, progressive OFC and 2-7 OFC would each be a **new `variant` value** with their own document, not a revision of this one. Wiring progressive Fantasy Land would add a per-seat card count to the carryover and to the hand record, and would move the hand-record `schema_version`.
-- The hand-record payload versions separately, via its own `schema_version` (§6), because it is persisted: a shape change on already-written rows is a migration, not an edit.
+- The hand-record payload (§6) versions separately, via its own `schema_version`, because it is persisted: a shape change on already-written rows is a migration, not an edit.
 
 ---
 
 ## 8. Related documents
 
+- [`LAYER2-COMMON.md`](LAYER2-COMMON.md) — the Layer 2 baseline this document inherits (§1, §2).
 - [`TRANSPORT-PROTOCOL.md`](TRANSPORT-PROTOCOL.md) — Layer 1. Unchanged by this document.
 - [`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md) — Layer 2 for NLHE. Card notation (§1) and the action-entry shape are shared verbatim.
 - [`DRAW27-GAME-STATE-PROTOCOL.md`](DRAW27-GAME-STATE-PROTOCOL.md) — Layer 2 for 2-7 Triple Draw, the other variant landing under epic `chipzen-ai/Chipzen#4200`.

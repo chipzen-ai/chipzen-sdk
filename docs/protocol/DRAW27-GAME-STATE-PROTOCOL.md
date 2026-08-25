@@ -18,19 +18,15 @@ The Layer 2 dialect is announced as `game_config.variant = "27tripledraw"`; the 
 
 ---
 
-## 1. Layer 1 is untouched
+## 1. What this document inherits
 
-**Normative.** 27TD introduces **no** Layer 1 change and **no** protocol version bump.
+[`LAYER2-COMMON.md`](LAYER2-COMMON.md) states the part of every Layer 2 dialect that is not variant-specific, and it is **normative here**: *its* §1 (Layer 1 is untouched), *its* §2 (how a client learns which game it is at), *its* §3 (the five backward-compatibility rules) and *its* §4 (the versioning policy). Read it once; this document does not restate it.
 
-- The handshake still negotiates `supported_versions: ["1.0"]`, and `"1.0"` is still the only supported version. A client that speaks Layer 1 v1.0 today speaks it at a 27TD table.
-- Every Layer 1 message type, envelope field, sequencing rule, timeout rule and error code is exactly as specified in [`TRANSPORT-PROTOCOL.md`](TRANSPORT-PROTOCOL.md).
-- Layer 1 carries this document's payloads opaquely, in the same fields it carries NLHE payloads: `match_start.game_config`, `round_start.state`, `turn_request.state`, `turn_action.params`, `turn_result.details`, `phase_change.state`, `round_result.result`.
+What follows in this section and in §2 is only 27TD's **deltas** against that baseline.
 
-[`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md) §7 already legislates exactly this: *"New variants … new `variant` value in `game_config`, separate Layer 2 specification document."* This is that document. There is nothing for a Layer 1 implementation to change.
+### 1.1 The 27TD `game` descriptor
 
-### 1.1 How a client learns it is at a 27TD table
-
-A non-poker table advertises itself. The server `hello` carries an additive `game` descriptor — **absent means poker**, so the NLHE `hello` envelope is byte-identical to what ships today:
+The server `hello` at a 27TD table carries this additive `game` descriptor (mechanism: [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §2):
 
 ```json
 {
@@ -42,39 +38,21 @@ A non-poker table advertises itself. The server `hello` carries an additive `gam
 }
 ```
 
-A client declares what it can play with the optional handshake field `supported_games` — a list of `game_type` strings. **Absent means "poker only."** At a non-poker table a client that has not declared the seat's game is rejected **before it is seated**, rather than being seated and auto-substituted to zero. The rejection arrives as two frames: an `error` envelope carrying `code: "EXTAPI_CLIENT_GAME_UNSUPPORTED"` and a message naming the game, then a WebSocket close with code **`4002`** and reason `game_unsupported_by_client`. (`409` is that code's HTTP status in the platform error table — it is not a handshake status, and nothing on this socket ever carries it.) Declaring `"draw27"` is an assertion that the client implements everything in this document.
-
-`state_shape` is the marker a client MUST branch on before parsing state payloads. A client that hardcodes the NLHE field list MUST treat an unfamiliar `state_shape` as "I cannot parse this table" — never as "drop the keys I do not recognise".
+Declaring `"draw27"` in `supported_games` is an assertion that the client implements everything in this document.
 
 ---
 
-## 2. Backward-compatibility rules
+## 2. Backward-compatibility deltas
 
-**Normative, and binding on every future revision of this document.** These rules exist because the deployed SDK parsers are strict, and they fail *before* a bot's `decide()` ever runs.
+The five rules and the reasoning behind them are in [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §3, and they bind every future revision of this document. 27TD's values under each:
 
-### Rule 1 — `board` and `your_hole_cards` are arrays of strictly-valid cards
-
-`board` and `your_hole_cards` MUST always be arrays whose every element is a valid two-character card string (`"Ah"`, `"Td"`, `"2c"` — see [`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md) §1 for the notation, which is shared verbatim).
-
-The Python SDK's `Card.from_str` and the JavaScript SDK's `cardFromString` **throw inside `parseGameState`**, before `decide()` is called and outside any per-decision safe mode. A `"??"`, `"XX"` or `null` placeholder in either array is therefore a hard session kill for every deployed Python and JavaScript bot. The Rust SDK does not throw — it silently `filter_map`s unparseable entries, which is worse in a different way: a hand quietly shrinks instead of failing loudly.
-
-27TD has no community cards, so **`board` is permanently `[]`** — an empty array, never omitted, never a placeholder.
-
-### Rule 2 — the six numeric fields stay present and numeric
-
-`pot`, `to_call`, `min_raise`, `max_raise`, `your_stack` and `opponent_stacks` MUST be present with numeric values in every `turn_request.state`, even where they are meaningless for the phase in progress. In a 27TD **draw** phase `min_raise` and `max_raise` are `0`; they are never omitted and never `null`.
-
-### Rule 3 — `phase` stays a free string
-
-`phase` is a free-form string. The JavaScript SDK types it as a compile-time-only union and casts at runtime, so an unfamiliar phase string does not throw — but a client MUST NOT assume the value is one of the five NLHE phases. The union is widened in the next SDK release; the wire contract is "any string".
-
-### Rule 4 — all new action parameters nest under `params`
-
-Every 27TD-specific action parameter travels under `turn_action.params`. **27TD adds no top-level field**, and a bespoke one is not part of the `turn_action` envelope: what happens to it is Layer 1's business, specified by [`TRANSPORT-PROTOCOL.md`](TRANSPORT-PROTOCOL.md) §9.2 (the `turn_action` schema, `additionalProperties: false`) and §16.2 (unknown fields in bot messages). This document does not restate that list — a variant spec that copies it drifts from it.
-
-### Rule 5 — new keys only
-
-Everything 27TD-shaped is carried in **new keys**. No existing NLHE key changes type or meaning. A parser that ignores unknown keys degrades to "a hand where nothing is ever raiseable", which is wrong but survivable; a parser that trips over a changed key does not survive at all. **Additions to this document are new keys; removals and retypings are a major version of this document.**
+| Rule | 27TD delta |
+|---|---|
+| **1** — valid cards only, never a placeholder | 27TD has no community cards, so **`board` is permanently `[]`** — an empty array, never omitted, never a placeholder. `your_hole_cards` is 5 cards, or fewer between declaring a draw and receiving the replacements (§5.4). |
+| **2** — the six numeric fields stay present and numeric | In a 27TD **draw** phase `to_call`, `min_raise` and `max_raise` are `0`. `min_raise` / `max_raise` are **not** zeroed merely because a raise is unavailable for a rules reason — see §5.2. |
+| **3** — `phase` stays a free string | 27TD uses nine phase strings, none of them NLHE's. They are listed in §4.2. |
+| **4** — new action parameters nest under `params` | 27TD's one new parameter is `discard` (§3.5). **27TD adds no top-level field.** |
+| **5** — new keys only | 27TD's new keys are `draws_remaining`, `is_draw_phase`, `draw_number`, `max_discard`, `your_draw_counts`, `opponent_draw_counts` and `draw_counts`. A parser that ignores them degrades to "a hand where nothing is ever raiseable", which is wrong but survivable. |
 
 ---
 
@@ -158,6 +136,8 @@ The spectator variant of `round_start.state` carries no seat's cards and adds th
 
 The core decision payload. **One shape covers both a betting turn and a draw turn**; `is_draw_phase` says which one this is.
 
+The example below is the **first** `draw1` turn of a heads-up hand with `dealer_seat: 0`. Draw order follows the betting round after the draw, so the big blind draws first (§5.4): this payload goes to **seat 1**, and the only other seat, seat 0, has not drawn yet.
+
 ```json
 {
   "hand_number": 1,
@@ -175,7 +155,7 @@ The core decision payload. **One shape covers both a betting turn and a draw tur
   "draws_remaining": 3,
   "max_discard": 5,
   "your_draw_counts": [],
-  "opponent_draw_counts": {"1": []},
+  "opponent_draw_counts": {"0": []},
   "action_history": [
     {"seat": 0, "action": "post_small_blind", "amount": 50, "phase": "predraw", "is_timeout": false},
     {"seat": 1, "action": "post_big_blind", "amount": 100, "phase": "predraw", "is_timeout": false},
@@ -518,17 +498,15 @@ The record is inside the per-hand audit chain: mutating a recorded discard or re
 
 ## 7. Versioning
 
-This document describes **v1** of the 2-7 Triple Draw Game State Protocol.
+This document describes **v1** of the 2-7 Triple Draw Game State Protocol. The policy is [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §4 — Layer 1 stays at `1.0`, additive changes do not bump this document, removals and retypings do. 27TD adds one thing to it:
 
-- **Layer 1 stays at `1.0`.** Nothing in this document is a reason to bump it, now or on a future revision of this document. Layer 2 dialects version independently of Layer 1.
-- **Additive changes** (new keys in a state payload, new optional `params` keys): no version bump. Rule 5 of §2 requires them to be additive.
-- **Breaking changes** (a key removed or retyped, a phase string renamed, a semantic change to an existing field): a major bump of *this* document, and a new `variant` value if the two dialects must coexist.
-- The hand-record payload versions separately, via its own `schema_version` (§6), because it is persisted: a shape change on already-written rows is a migration, not an edit.
+- The hand-record payload (§6) versions separately, via its own `schema_version`, because it is persisted: a shape change on already-written rows is a migration, not an edit.
 
 ---
 
 ## 8. Related documents
 
+- [`LAYER2-COMMON.md`](LAYER2-COMMON.md) — the Layer 2 baseline this document inherits (§1, §2).
 - [`TRANSPORT-PROTOCOL.md`](TRANSPORT-PROTOCOL.md) — Layer 1. Unchanged by this document.
 - [`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md) — Layer 2 for NLHE. Card notation (§1) and the action-entry shape are shared verbatim.
 - [`OFC-GAME-STATE-PROTOCOL.md`](OFC-GAME-STATE-PROTOCOL.md) — Layer 2 for Pineapple OFC, the other variant landing under epic `chipzen-ai/Chipzen#4200`.
