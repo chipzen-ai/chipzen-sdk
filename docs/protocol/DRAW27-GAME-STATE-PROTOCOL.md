@@ -49,7 +49,7 @@ The five rules and the reasoning behind them are in [`LAYER2-COMMON.md`](LAYER2-
 | Rule | 27TD delta |
 |---|---|
 | **1** — valid cards only, never a placeholder | 27TD has no community cards, so **`board` is permanently `[]`** — an empty array, never omitted, never a placeholder. `your_hole_cards` is 5 cards, or fewer between declaring a draw and receiving the replacements (§5.4). |
-| **2** — the six numeric fields stay present and numeric | In a 27TD **draw** phase `to_call`, `min_raise` and `max_raise` are `0`. `min_raise` / `max_raise` are **not** zeroed merely because a raise is unavailable for a rules reason — see §5.2. |
+| **2** — the six numeric fields stay present and numeric | In a 27TD **draw** phase `to_call`, `min_raise` and `max_raise` are `0`. `min_raise` / `max_raise` are also `0` whenever `raise` is unavailable for a rules reason — they are `0` in exactly the spots `valid_actions` omits `raise`, see §5.2. |
 | **3** — `phase` stays a free string | 27TD uses nine phase strings, none of them NLHE's. They are listed in §4.2. |
 | **4** — new action parameters nest under `params` | 27TD's one new parameter is `discard` (§3.5). **27TD adds no top-level field.** |
 | **5** — new keys only | 27TD's new keys are `draws_remaining`, `is_draw_phase`, `draw_number`, `max_discard`, `your_draw_counts`, `opponent_draw_counts` and `draw_counts`. A parser that ignores them degrades to "a hand where nothing is ever raiseable", which is wrong but survivable. |
@@ -175,7 +175,7 @@ The example below is the **first** `draw1` turn of a heads-up hand with `dealer_
 | `your_stack` | integer | Yes | Acting seat's remaining stack. |
 | `opponent_stacks` | array of integer | Yes | Other seats' stacks in seat order, excluding the acting seat. Length N-1. |
 | `to_call` | integer | Yes | Chips to add to call. `0` in a draw phase, and when checking is free. |
-| `min_raise` | integer | Yes | The single legal raise-**to** total — the next full bet level, capped at the acting seat's all-in figure. **In fixed limit `min_raise == max_raise` always.** `0` in a draw phase, in a terminal phase, and when the seat cannot reach past the current bet. **It is NOT zeroed when a raise is unavailable for a rules reason** — see §5.2. |
+| `min_raise` | integer | Yes | The single legal raise-**to** total — the next full bet level, capped at the acting seat's all-in figure. **In fixed limit `min_raise == max_raise` always.** `0` **exactly when `raise` is absent from `valid_actions`**: a draw phase, a terminal phase, a settled round, the bet cap (§5.2), a reopening closed by a short all-in, no opponent left who can respond, or a stack too short to reach past the current bet. `min_raise > 0` and "`raise` is offered" are therefore the same test. |
 | `max_raise` | integer | Yes | Identical to `min_raise`. See §5.3. |
 | `is_draw_phase` | boolean | Yes | **New key.** `true` iff the acting seat owes a draw rather than a betting decision. The single dial a client branches on. |
 | `draw_number` | integer | Yes | **New key.** `1`-`3` inside a draw round, `0` in every other phase. |
@@ -356,7 +356,9 @@ Why the convention has to be pinned: "4 bets", "a bet and four raises" and "4 ra
 
 **The cap applies in every round, at every table size, heads-up included.** This is a deliberate, documented divergence from the tournament exemption that uncaps an event's final two players: a Chipzen heads-up match would otherwise be permanently uncapped. A client MUST NOT assume heads-up is uncapped.
 
-**Once the cap is reached, `raise` disappears from `valid_actions` — but `min_raise` / `max_raise` do NOT go to `0` with it.** The state payload keeps reporting the next bet level, so a client that branches on `min_raise > 0` to decide it may raise will submit a raise the server rejects, and the retry window that burns can end in a substituted action. **`valid_actions` is the only authority on which actions are legal**; `min_raise` / `max_raise` size a raise, they do not offer one. The same holds wherever else §5.3 removes `raise`.
+**Once the cap is reached, `raise` disappears from `valid_actions`, and `min_raise` / `max_raise` go to `0` with it.** The action list and the numbers beside it are one answer, not two: `min_raise > 0` holds in exactly the spots `raise` is on offer, so a client may branch on either. **`valid_actions` remains the authority on which actions are legal** — it is the list a submission is checked against, and a size is not an offer — but it can no longer be contradicted by the state block. The same zeroing holds wherever else §5.3 removes `raise`.
+
+> **Changed in `chipzen-ai/Chipzen#4487`.** Until that fix the payload kept reporting the next bet level at the cap, so a client branching on `min_raise > 0` submitted a raise the server rejected and burned its retry window into a substituted action. 27TD shipped `enabled=False` throughout, so no client ever received the old shape; see §7.
 
 ### 5.3 Raise sizing is a point, not a range
 
@@ -364,7 +366,7 @@ Why the convention has to be pinned: "4 bets", "a bet and four raises" and "4 ra
 
 A submitted `raise` amount is **clamped** to that single legal figure whatever the client sends, so a bot cannot mis-size a fixed-limit raise. The one case where the figure is not the full wager unit is a seat too short to post it: the offer collapses to that seat's all-in total.
 
-`raise` is absent from `valid_actions` when the cap is reached, when no opponent can still respond, or when a short all-in has closed the action to a seat that already acted. In each of those cases `min_raise` / `max_raise` still carry the next bet level rather than `0` — read `valid_actions` (§5.2).
+`raise` is absent from `valid_actions` when the cap is reached, when no opponent can still respond, or when a short all-in has closed the action to a seat that already acted. In each of those cases `min_raise` / `max_raise` are `0` (§5.2): the size is read out of the same offer that produces the action entry, so there is no state in which one exists without the other.
 
 ### 5.4 The draw: dealing is deal-as-you-go
 
@@ -501,6 +503,8 @@ The record is inside the per-hand audit chain: mutating a recorded discard or re
 This document describes **v1** of the 2-7 Triple Draw Game State Protocol. The policy is [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §4 — Layer 1 stays at `1.0`, additive changes do not bump this document, removals and retypings do. 27TD adds one thing to it:
 
 - The hand-record payload (§6) versions separately, via its own `schema_version`, because it is persisted: a shape change on already-written rows is a migration, not an edit.
+
+The §5.2 / §5.3 zeroing change (`chipzen-ai/Chipzen#4487`) is a semantic change to an existing field, which LAYER2-COMMON §4 would normally make a major bump. It is **not** bumped here: 27TD has never been enabled, so v1 has no client to break — the dialect is still unreleased and v1 is what it will first ship as. A change of this kind after 27TD goes live would bump.
 
 ---
 
