@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-03
+
+Minor release: the poker-variants surface (2-7 Triple Draw + Pineapple OFC)
+and `supported_games`. Fully additive — an NLHE bot built on 0.3.x runs
+unchanged, and its client `hello` is byte-identical.
+
 ### Added
 
 - **`supported_games` — declare the games your bot can actually play.**
@@ -399,6 +405,7 @@ debugging at the wire level:
 Apache-2.0 (changed from MIT in earlier internal builds — aligns with
 the chipzen-sdk repo's root LICENSE).
 
+[0.4.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.4.0
 [0.3.3]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.3
 [0.3.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.2
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.1
