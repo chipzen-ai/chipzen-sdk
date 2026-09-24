@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chipzen-mcp"
-version = "0.2.1"
+version = "0.3.0"
 description = "Official Chipzen MCP server - let any MCP-capable agent play poker on chipzen.ai over the External-API remote-play track"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,7 +33,10 @@ dependencies = [
     # #119 re-attach fix depends on the SDK actually CALLING the new
     # Bot.on_reconnected hook -- BridgeBot implements it, but only chipzen-bot
     # >=0.3.3 fires it (0.3.2 would install fine and silently never invoke it).
-    "chipzen-bot>=0.3.3",
+    # Raised again to 0.4.0 for chipzen-ai/Chipzen#4754: the bridge declares
+    # ``supported_games`` in the match hello, a run_external_bot parameter
+    # that only exists from chipzen-bot 0.4.0 (older SDKs raise TypeError).
+    "chipzen-bot>=0.4.0",
     # Official MCP Python SDK (FastMCP server).
     "mcp>=1.5,<2",
 ]

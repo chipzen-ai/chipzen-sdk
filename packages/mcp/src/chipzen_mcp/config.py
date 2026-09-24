@@ -21,6 +21,12 @@ Optional:
 * ``CHIPZEN_LOBBY_URL`` -- explicit full lobby WS URL override
   (``wss://.../ws/external/bot/{bot_id}``); when set it wins over
   ``CHIPZEN_ENV`` derivation. Mostly for local development.
+* ``CHIPZEN_SUPPORTED_GAMES`` -- comma-separated ``game_type`` list declared
+  to the platform as ``supported_games`` in every per-match ``hello``
+  (chipzen-ai/Chipzen#4754). Defaults to :data:`BRIDGE_PLAYABLE_GAMES`, which
+  is everything this bridge can actually play; a value naming a game outside
+  that set is rejected at startup, because declaring a game the bridge cannot
+  play would seat the agent at a table it can only fold its way out of.
 """
 
 from __future__ import annotations
@@ -33,6 +39,15 @@ ENV_TOKEN = "CHIPZEN_EXTBOT_TOKEN"
 ENV_BOT_ID = "CHIPZEN_BOT_ID"
 ENV_ENV = "CHIPZEN_ENV"
 ENV_LOBBY_URL = "CHIPZEN_LOBBY_URL"
+ENV_SUPPORTED_GAMES = "CHIPZEN_SUPPORTED_GAMES"
+
+#: The games this bridge can actually play, as platform ``game_type`` ids.
+#: The bridge's state payload is the NLHE turn shape and its ``act`` tool
+#: speaks only the NLHE action vocabulary (fold/check/call/raise/all_in), so
+#: this is No-Limit Hold'em -- ``"poker"`` -- and nothing else. Widen it only
+#: together with the state serialization and action surface for the new game;
+#: it is also the ceiling for the ``CHIPZEN_SUPPORTED_GAMES`` override.
+BRIDGE_PLAYABLE_GAMES: tuple[str, ...] = ("poker",)
 
 _VALID_ENVS = ("prod", "staging", "local")
 
@@ -54,6 +69,34 @@ class McpConfig:
     bot_id: str
     env: str | None = None
     lobby_url: str | None = None
+    #: Declared to the platform as the handshake's ``supported_games``.
+    supported_games: tuple[str, ...] = BRIDGE_PLAYABLE_GAMES
+
+
+def _parse_supported_games(raw: str) -> tuple[str, ...]:
+    """Parse and validate the ``CHIPZEN_SUPPORTED_GAMES`` override.
+
+    Blank means "not set" (the default applies). Entries are trimmed and
+    de-duplicated in order; every entry must be in
+    :data:`BRIDGE_PLAYABLE_GAMES`.
+    """
+    games: list[str] = []
+    for part in raw.split(","):
+        game = part.strip()
+        if game and game not in games:
+            games.append(game)
+    if not games:
+        return BRIDGE_PLAYABLE_GAMES
+    unplayable = [game for game in games if game not in BRIDGE_PLAYABLE_GAMES]
+    if unplayable:
+        raise McpConfigError(
+            f"{ENV_SUPPORTED_GAMES} names {', '.join(unplayable)}, which this "
+            "MCP bridge cannot play (it speaks only the No-Limit Hold'em state "
+            "and action vocabulary). Declaring it would seat your agent at "
+            "tables it can only fold at. Supported: "
+            f"{', '.join(BRIDGE_PLAYABLE_GAMES)}. Unset the variable to use the default."
+        )
+    return tuple(games)
 
 
 def load_config(environ: Mapping[str, str] | None = None) -> McpConfig:
@@ -103,4 +146,12 @@ def load_config(environ: Mapping[str, str] | None = None) -> McpConfig:
             f"{', '.join(_VALID_ENVS)}."
         )
 
-    return McpConfig(token=token, bot_id=bot_id, env=env, lobby_url=lobby_url)
+    supported_games = _parse_supported_games(env_map.get(ENV_SUPPORTED_GAMES) or "")
+
+    return McpConfig(
+        token=token,
+        bot_id=bot_id,
+        env=env,
+        lobby_url=lobby_url,
+        supported_games=supported_games,
+    )

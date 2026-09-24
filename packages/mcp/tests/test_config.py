@@ -3,9 +3,11 @@
 import pytest
 
 from chipzen_mcp.config import (
+    BRIDGE_PLAYABLE_GAMES,
     ENV_BOT_ID,
     ENV_ENV,
     ENV_LOBBY_URL,
+    ENV_SUPPORTED_GAMES,
     ENV_TOKEN,
     McpConfigError,
     load_config,
@@ -53,3 +55,30 @@ def test_lobby_url_substitutes_for_bot_id() -> None:
 def test_bad_env_rejected() -> None:
     with pytest.raises(McpConfigError, match="production"):
         load_config({ENV_TOKEN: TOKEN, ENV_BOT_ID: BOT_ID, ENV_ENV: "production"})
+
+
+# --- supported_games declaration (chipzen-ai/Chipzen#4754) -----------------
+
+
+def test_supported_games_defaults_to_what_the_bridge_can_play() -> None:
+    cfg = load_config({ENV_TOKEN: TOKEN, ENV_BOT_ID: BOT_ID})
+    assert cfg.supported_games == BRIDGE_PLAYABLE_GAMES == ("poker",)
+
+
+@pytest.mark.parametrize("raw", ["", "   ", ",", " , ,"])
+def test_blank_supported_games_uses_the_default(raw: str) -> None:
+    cfg = load_config({ENV_TOKEN: TOKEN, ENV_BOT_ID: BOT_ID, ENV_SUPPORTED_GAMES: raw})
+    assert cfg.supported_games == BRIDGE_PLAYABLE_GAMES
+
+
+def test_supported_games_override_is_trimmed_and_deduped() -> None:
+    cfg = load_config({ENV_TOKEN: TOKEN, ENV_BOT_ID: BOT_ID, ENV_SUPPORTED_GAMES: " poker, poker "})
+    assert cfg.supported_games == ("poker",)
+
+
+@pytest.mark.parametrize("raw", ["draw27", "poker,ofc", "Poker", "nlhe"])
+def test_supported_games_cannot_claim_a_game_the_bridge_cannot_play(raw: str) -> None:
+    """Declaring a variant would seat the agent at a table whose actions the
+    ``act`` tool cannot express -- the silent fold-out the gate exists to stop."""
+    with pytest.raises(McpConfigError, match=ENV_SUPPORTED_GAMES):
+        load_config({ENV_TOKEN: TOKEN, ENV_BOT_ID: BOT_ID, ENV_SUPPORTED_GAMES: raw})

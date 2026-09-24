@@ -805,3 +805,92 @@ class TestExternalSession:
         # Presence saw "connected", but the thread is gone -> not connected.
         assert session.lobby_connected is False
         session.stop()
+
+
+class TestSupportedGamesDeclaration:
+    """chipzen-ai/Chipzen#4754: the bridge declares what it can play.
+
+    Without a declaration the platform reads the client as "poker only" and
+    the capability gate treats it as an undeclared client. The bridge now says
+    so explicitly, via the SDK's ``supported_games`` hello field.
+    """
+
+    @staticmethod
+    def _captured_kwargs(monkeypatch: pytest.MonkeyPatch, config: McpConfig) -> dict:
+        import chipzen
+
+        captured: dict = {}
+
+        async def fake_run_external_bot(factory, **kwargs):
+            captured.update(kwargs)
+            captured["bot"] = factory()
+
+        monkeypatch.setattr(chipzen, "run_external_bot", fake_run_external_bot)
+        session = ExternalSession(config, TurnRegistry())
+        asyncio.run(session._session_coro())
+        return captured
+
+    def test_default_declares_poker_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        kwargs = self._captured_kwargs(monkeypatch, CONFIG)
+        assert kwargs["supported_games"] == ["poker"]
+        assert kwargs["client_name"] == "chipzen-mcp"
+        assert isinstance(kwargs["bot"], BridgeBot)
+
+    def test_declaration_follows_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = McpConfig(
+            token="cz_extbot_x", bot_id="b-1", env="staging", supported_games=("poker",)
+        )
+        kwargs = self._captured_kwargs(monkeypatch, config)
+        # A fresh list, so the SDK can never mutate the frozen config.
+        assert kwargs["supported_games"] == ["poker"]
+        assert kwargs["supported_games"] is not config.supported_games
+
+    def test_installed_sdk_accepts_the_declaration(self) -> None:
+        """The dependency floor guard: ``supported_games`` exists only in
+        chipzen-bot >= 0.4.0. An older SDK would raise ``TypeError`` at
+        session start instead of declaring."""
+        from chipzen import run_external_bot
+
+        assert "supported_games" in inspect.signature(run_external_bot).parameters
+
+    def test_declaration_reaches_the_wire_hello(self) -> None:
+        """End to end through the real SDK handshake: the per-match client
+        ``hello`` carries ``supported_games`` exactly as the bridge declares
+        it, on the SAME field name the platform's capability gate reads."""
+        import json
+
+        from chipzen import client as sdk_client
+
+        sent: list[dict] = []
+
+        class FakeWs:
+            """Server hello, then a clean close (empty message loop)."""
+
+            async def send(self, raw: str) -> None:
+                sent.append(json.loads(raw))
+
+            async def recv(self) -> str:
+                return json.dumps({"type": "hello", "supported_versions": ["1.0"]})
+
+            def __aiter__(self) -> "FakeWs":
+                return self
+
+            async def __anext__(self) -> str:
+                raise StopAsyncIteration
+
+        asyncio.run(
+            sdk_client._run_session(
+                FakeWs(),
+                BridgeBot(TurnRegistry()),
+                match_id="m-1",
+                token="cz_extbot_x",
+                ticket=None,
+                client_name="chipzen-mcp",
+                client_version="test",
+                supported_games=list(CONFIG.supported_games),
+            )
+        )
+        hellos = [msg for msg in sent if msg.get("type") == "hello"]
+        assert len(hellos) == 1
+        assert hellos[0]["supported_games"] == ["poker"]
+        assert hellos[0]["client_name"] == "chipzen-mcp"
