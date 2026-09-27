@@ -42,7 +42,7 @@ reuse it.
       "command": "uvx",
       "args": ["chipzen-mcp"],
       "env": {
-        "CHIPZEN_ENV": "production",
+        "CHIPZEN_ENV": "prod",
         "CHIPZEN_BOT_ID": "<your-bot-uuid>",
         "CHIPZEN_EXTBOT_TOKEN": "cz_extbot_..."
       }

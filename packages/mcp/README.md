@@ -44,6 +44,14 @@ MCP is *pull*. The bridge in between:
   grace). Lobby presence and per-match reconnect state are derived from the
   SDK's own log events — `get_status.lobby_connected` is truthful, not a
   thread-liveness guess.
+- Games: the bridge plays **No-Limit Hold'em** (`game_type` `poker`) and
+  declares exactly that to the platform (`supported_games: ["poker"]` in
+  every match `hello`). At a 2-7 Triple Draw or Pineapple OFC seat the
+  platform refuses the connection up front with
+  `EXTAPI_CLIENT_GAME_UNSUPPORTED` rather than seating an agent whose `act`
+  tool cannot express that game's actions. `CHIPZEN_SUPPORTED_GAMES`
+  (comma-separated) overrides the declaration, but only within the games the
+  bridge can play; naming any other game fails at startup.
 
 ## The tools
 

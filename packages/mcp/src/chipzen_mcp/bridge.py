@@ -972,6 +972,9 @@ class ExternalSession:
             url=self._config.lobby_url,
             token=self._config.token,
             client_name="chipzen-mcp",
+            # chipzen-ai/Chipzen#4754: declare what we can play instead of
+            # leaving the platform to infer it from an absent field.
+            supported_games=list(self._config.supported_games),
         )
 
     # -- state surfaced to get_status ------------------------------------------

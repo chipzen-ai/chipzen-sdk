@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-24
+
+Minor bump: the bridge now declares the games it can play, a new optional
+`CHIPZEN_SUPPORTED_GAMES` setting, and a higher `chipzen-bot` floor. An agent
+that only plays hold'em keeps working unchanged; the tool surface is the same
+fifteen tools.
+
+### Added
+
+- **The bridge declares `supported_games: ["poker"]` in every match `hello`.**
+  It used to send no declaration, which the platform reads as "poker only"
+  by inference. The declaration is now explicit and names what the bridge can
+  actually play: No-Limit Hold'em, the only game whose state shape and action
+  vocabulary (`fold` / `check` / `call` / `raise` / `all_in`) the `act` tool
+  speaks. At a 2-7 Triple Draw or Pineapple OFC seat the platform's capability
+  gate refuses the connection with `EXTAPI_CLIENT_GAME_UNSUPPORTED` (close
+  `4002`) before seating, instead of the agent folding its way out of a game
+  it cannot play. ([chipzen-ai/Chipzen#4754](https://github.com/chipzen-ai/Chipzen/issues/4754))
+- **`CHIPZEN_SUPPORTED_GAMES`** (optional, comma-separated `game_type` ids)
+  overrides the declaration. It is capped at the games the bridge can play,
+  so today the only accepted value is `poker`. Naming any other game (`draw27`,
+  `ofc`, …) fails at startup with a message naming the variable, rather than
+  claiming a game the bridge would forfeit.
+
+### Changed
+
+- **`chipzen-bot` dependency floor raised to `>=0.4.0`.** `supported_games` is
+  a `run_external_bot` parameter that only exists from chipzen-bot 0.4.0; on
+  0.3.x a fresh install would resolve an SDK without it and the session would
+  fail to start.
+
 ## [0.2.1] — 2026-08-16
 
 Patch release: the re-attach turn-routing fix (#119), released in lockstep
@@ -94,5 +125,6 @@ five-tool expansion above. This changelog starts at 0.2.0; for the 0.1.x line
 see the release history at
 <https://github.com/chipzen-ai/chipzen-sdk/releases> and the `mcp-v0.1.*` tags.
 
+[0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.3.0
 [0.2.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.2.1
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.2.0
