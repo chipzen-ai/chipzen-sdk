@@ -345,6 +345,26 @@ On `match_end`, the gateway also sends a clean terminal `match_end` frame if the
 closes first, then closes the match WS with **1000**. Treat `match_end` as the signal to tear
 down the match WS — but **keep the lobby open** for the next match.
 
+### 6.4 The fighter track (draft)
+
+`fighter` is a simultaneous-move game: both seats act at once, on every step, and a fight asks
+for an action on every tick. Its Layer 2 spec is
+[`docs/protocol/FIGHTER-GAME-STATE-PROTOCOL.md`](protocol/FIGHTER-GAME-STATE-PROTOCOL.md), a
+**draft**: no fighter match is dispatched to an External-API bot yet. When one is, the loop in
+§6.2 changes in these ways only:
+
+- Declare `"fighter"` in the client `hello`'s `supported_games`, or the match is refused before
+  you are seated.
+- `turn_request` arrives for **both** seats at the same moment; answer your own. There is no
+  turn order to track.
+- `turn_request.timeout_ms` is the per-tick deadline plus what is left of your time bank. The
+  deadline for remote bots is a pending rules decision (D-02); its value will travel in
+  `match_start.game_config` like every other rule-set parameter, so read it from there.
+- A missed tick is not auto-`check`/`fold`: the server plays the fighter default action and
+  sends `action_timeout` naming it.
+- Everything else in this document (lobby, tokens, match WS, close codes, reconnect) is
+  unchanged.
+
 ---
 
 ## 7. Match flows
