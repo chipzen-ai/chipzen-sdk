@@ -1,7 +1,7 @@
 # Rule Sets
 
 **Date:** 2026-09-29
-**Status:** Draft (chipzen-ai/chipzen-sdk#138). The first game to use rule sets is `fighter`, and no fighter rule set has been released yet.
+**Status:** Draft (chipzen-ai/chipzen-sdk#138). The first game to use rule sets is **Big Bad Bots** (B3), the robot-fighting game, whose game type id is `fighter`. Its first rule set, `fighter-1.0`, was frozen with engine `1.0.0` and is in `preview` (§7).
 
 > **Provisional values.** These are placeholders pending a rules decision (D-13), and may change
 > before the first rule set is released:
@@ -15,7 +15,7 @@
 
 ## Overview
 
-A **rule set** is the complete, named set of numbers a game is played under: for `fighter`, the budget, the bodies and parts, the move frame data, the arena, the round length, the per-tick deadline, the forfeit rule, and every other tunable. Every match is played under exactly one rule set, named in its `match_start.game_config`, and a bot never needs any other source for the numbers it plays by.
+A **rule set** is the complete, named set of numbers a game is played under: for Big Bad Bots (`fighter`), the budget, the bodies and parts, the move frame data, the arena, the round length, the per-tick deadline, the forfeit rule, and every other tunable. Every match is played under exactly one rule set, named in its `match_start.game_config`, and a bot never needs any other source for the numbers it plays by.
 
 Three things version independently, and they are easy to confuse:
 
@@ -36,7 +36,7 @@ fighter-MAJOR.MINOR
 ```
 
 - `MAJOR` and `MINOR` are non-negative integers without leading zeros: `fighter-1.0`, `fighter-1.1`, `fighter-2.0`.
-- The prefix is the `game_type`. Each game numbers its rule sets on its own.
+- The prefix is the `game_type` id, not the game's display name: Big Bad Bots rule sets are `fighter-…`. Each game numbers its rule sets on its own.
 - An id with a lowercase suffix, `fighter-1.1-dev`, names a **local or test** rule set. It is never offered for rated or competition play.
 
 In full: `^fighter-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[a-z0-9][a-z0-9-]*)?$`.
@@ -100,7 +100,7 @@ Transitions happen at published UTC timestamps. A rule set is never announced be
 | `rule_set_id` | The id, e.g. `"fighter-1.0"`. |
 | `rule_set` | The rule set's **full parameter table**, by section: the whole rule set except its human-readable notes. |
 
-The `fighter` sections:
+The Big Bad Bots (`fighter`) sections:
 
 | Section | What it holds |
 |---|---|
@@ -134,7 +134,7 @@ The table for each released rule set is generated from the rule set itself and p
 
 ## 6. How the local simulator selects a rule set
 
-When the SDK's local fighter simulator ships (chipzen-ai/chipzen-sdk#141), it selects a rule set like this:
+When the SDK's local Big Bad Bots simulator ships (chipzen-ai/chipzen-sdk#141), it selects a rule set like this:
 
 | How | Selects |
 |---|---|
@@ -158,8 +158,11 @@ One entry per rule set, newest first. Each entry gives the id, its lifecycle dat
 
 ### `fighter-1.0`
 
-- **State:** not yet released. Its numbers are provisional until it is frozen, and its parameter table will be published here when it is.
-- **Changes:** the first fighter rule set.
+- **State:** `preview`. Frozen with engine `1.0.0` (chipzen-ai/fighter-mvp tag `v1.0.0`) on 2026-09-29.
+- **sha256** (canonical JSON, as in every log header): `906705ea2c539721250da502de45b902b54dd7f0e77fab6550b0ecc0e29df334`.
+- **Live date:** not set. It stays in `preview` until the provisional decisions D-01, D-03, D-04 and D-16 are confirmed (chipzen-ai/Chipzen#5089). The notice period (§3.1) starts when a live date is announced.
+- **Parameter table:** to be generated from the released file and published here (#138).
+- **Changes:** the first Big Bad Bots rule set.
 
 ---
 
@@ -173,6 +176,6 @@ Every rating event records the rule-set id it was earned under, so either policy
 
 ## 9. Related documents
 
-- [`protocol/FIGHTER-GAME-STATE-PROTOCOL.md`](protocol/FIGHTER-GAME-STATE-PROTOCOL.md): the fighter Layer 2 dialect, and where `game_config` carries the rule set (§4.1).
+- [`protocol/FIGHTER-GAME-STATE-PROTOCOL.md`](protocol/FIGHTER-GAME-STATE-PROTOCOL.md): the Big Bad Bots (`fighter`) Layer 2 dialect, and where `game_config` carries the rule set (§4.1).
 - [`protocol/LAYER2-COMMON.md`](protocol/LAYER2-COMMON.md): how a Layer 2 dialect itself versions (§4).
 - [`protocol/TRANSPORT-PROTOCOL.md`](protocol/TRANSPORT-PROTOCOL.md): Layer 1, unchanged by rule sets.
