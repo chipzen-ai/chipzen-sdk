@@ -1,13 +1,13 @@
-"""The fighter Layer 2 spec's JSON examples, made executable (chipzen-sdk#137).
+"""The Big Bad Bots Layer 2 spec's JSON examples, made executable (chipzen-sdk#137).
 
-``docs/protocol/FIGHTER-GAME-STATE-PROTOCOL.md`` publishes every fighter wire
+``docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md`` publishes every Big Bad Bots wire
 message a bot must handle. A spec example nobody runs is a spec example that
 drifts, so this module reads the fenced JSON blocks straight out of the
 document and holds them to what the document says about them:
 
 * every block parses;
 * every ``turn_request`` is a Layer 1 v1.0 envelope whose ``state`` carries the
-  LAYER2-COMMON Rule 1 and Rule 2 fields with exactly the fighter values
+  LAYER2-COMMON Rule 1 and Rule 2 fields with exactly the Big Bad Bots values
   (empty card arrays, the five chip fields at ``0``, ``opponent_stacks`` of
   ``[0]``), and whose ``valid_actions`` match the call table in section 3.1;
 * every ``turn_action`` is a closed Layer 1 bot message whose ``params`` have
@@ -16,13 +16,13 @@ document and holds them to what the document says about them:
 * the provisional numbers in the document's front table are the numbers in the
   published ``game_config``, and ``timeout_ms`` is the deadline plus the bank;
 * the size caps hold;
-* **a stock SDK client that declares ``fighter`` parses every fighter message
+* **a stock SDK client that declares ``bigbadbots`` parses every Big Bad Bots message
   without throwing**, driven through the real session loop, and answers with
   well-formed ``turn_action`` frames. That is the LAYER2-COMMON section 3
   promise: the deployed parsers throw inside ``parseGameState``, before
   ``decide()``, so a single bad field would be a hard session kill.
 
-The examples are also validated against the fighter wire schemas the server
+The examples are also validated against the Big Bad Bots wire schemas the server
 checks messages against; that check runs where the schemas live. The matching
 executable-example suite for the platform's mirror of this document lands with
 the coordinated pair (chipzen-ai/chipzen-sdk#140).
@@ -43,7 +43,9 @@ from chipzen.client import _run_session
 from chipzen.conformance import _MockWebSocket
 from chipzen.models import Action, GameState, RoundStart, TurnResult
 
-DOC = Path(__file__).resolve().parents[3] / "docs" / "protocol" / "FIGHTER-GAME-STATE-PROTOCOL.md"
+DOC = (
+    Path(__file__).resolve().parents[3] / "docs" / "protocol" / "BIGBADBOTS-GAME-STATE-PROTOCOL.md"
+)
 
 FIGHT_ACTIONS = [
     "idle",
@@ -64,7 +66,7 @@ CALLS = {
     "fitting": ("fit", ["fit"]),
     "fight": ("act", FIGHT_ACTIONS),
 }
-#: LAYER2-COMMON Rules 1 and 2, with the fighter values (section 2).
+#: LAYER2-COMMON Rules 1 and 2, with the Big Bad Bots values (section 2).
 LAYER2_COMPAT = {
     "board": [],
     "your_hole_cards": [],
@@ -130,7 +132,7 @@ def _one(predicate) -> dict:
 
 
 def _descriptor() -> dict:
-    return _one(lambda b: b.get("state_shape") == "fighter")
+    return _one(lambda b: b.get("state_shape") == "bigbadbots")
 
 
 def _game_config() -> dict:
@@ -166,7 +168,7 @@ def test_every_call_has_one_published_request_and_one_answer():
 
 
 @pytest.mark.parametrize("call", ["choose_body", "bid", "fit", "act"])
-def test_turn_request_is_a_layer1_envelope_with_the_fighter_compat_fields(call):
+def test_turn_request_is_a_layer1_envelope_with_the_bigbadbots_compat_fields(call):
     request = _requests()[call]
     assert TURN_REQUEST_ENVELOPE <= set(request)
     assert request["seat"] in (0, 1)
@@ -217,9 +219,9 @@ def test_turn_action_is_a_closed_layer1_message_answering_a_published_request(an
 
 def test_game_descriptor_matches_the_call_table():
     descriptor = _descriptor()
-    assert descriptor["game_type"] == "fighter"
-    assert descriptor["variant"] == "fighter"
-    assert descriptor["state_shape"] == "fighter"
+    assert descriptor["game_type"] == "bigbadbots"
+    assert descriptor["variant"] == "bigbadbots"
+    assert descriptor["state_shape"] == "bigbadbots"
     assert descriptor["phases"] == list(CALLS)
     assert descriptor["actions"] == ["choose_body", "bid", "fit", *FIGHT_ACTIONS]
     assert not {"fold", "check", "call", "raise"} & set(descriptor["actions"])
@@ -227,8 +229,8 @@ def test_game_descriptor_matches_the_call_table():
 
 def test_game_config_names_the_rule_set_and_is_not_the_variant():
     config = _game_config()
-    assert config["variant"] == "fighter"
-    assert re.fullmatch(r"fighter-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", config["rule_set_id"])
+    assert config["variant"] == "bigbadbots"
+    assert re.fullmatch(r"bigbadbots-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", config["rule_set_id"])
     assert config["num_players"] == 2
     assert config["rule_set"]["gearup"]["auction_lots"] == _requests()["bid"]["state"]["lots_total"]
 
@@ -325,7 +327,7 @@ def test_size_caps_hold_for_every_published_message():
 
 
 # ---------------------------------------------------------------------------
-# A stock client parses every fighter message without throwing
+# A stock client parses every Big Bad Bots message without throwing
 # ---------------------------------------------------------------------------
 
 
@@ -357,8 +359,8 @@ def test_stock_parser_reads_round_start_and_turn_result():
     assert result.action == "kick_low" and result.amount == 0
 
 
-class _FighterCallBot(ChipzenBot):
-    """Answers each fighter call with a legal-shaped action, from the SDK as shipped."""
+class _BigBadBotsCallBot(ChipzenBot):
+    """Answers each Big Bad Bots call with a legal-shaped action, from the SDK as shipped."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -389,7 +391,7 @@ def _session_script() -> list[dict]:
             "hello",
             supported_versions=["1.0"],
             selected_version="1.0",
-            game_type="fighter",
+            game_type="bigbadbots",
             capabilities=["reconnect"],
             game=_descriptor(),
         ),
@@ -435,30 +437,30 @@ def _session_script() -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_a_stock_client_declaring_fighter_plays_every_published_message():
-    """The issue's acceptance test: a stock client that declares ``fighter``
-    parses a fighter ``turn_request`` without throwing. ``safe_mode=False``,
+async def test_a_stock_client_declaring_bigbadbots_plays_every_published_message():
+    """The issue's acceptance test: a stock client that declares ``bigbadbots``
+    parses a ``bigbadbots`` ``turn_request`` without throwing. ``safe_mode=False``,
     so any exception inside parsing, ``decide()`` or a hook fails the test
     instead of being swallowed."""
     script = _session_script()
     ws = _MockWebSocket(script)
-    bot = _FighterCallBot()
+    bot = _BigBadBotsCallBot()
     end = await _run_session(
         ws,
         bot,
         match_id=script[0]["match_id"],
         token="t",
         ticket=None,
-        client_name="fighter-doc-test",
+        client_name="bigbadbots-doc-test",
         client_version="0.0.0",
         safe_mode=False,
-        supported_games=["fighter"],
+        supported_games=["bigbadbots"],
     )
     assert end is not None and end["type"] == "match_end"
 
     sent = [json.loads(frame) for frame in ws.sent]
     hello = next(frame for frame in sent if frame["type"] == "hello")
-    assert hello["supported_games"] == ["fighter"]
+    assert hello["supported_games"] == ["bigbadbots"]
 
     answers = [frame for frame in sent if frame["type"] == "turn_action"]
     requests = _requests()
