@@ -1,11 +1,11 @@
-# Fighter Game State Protocol (Layer 2)
+# Big Bad Bots Game State Protocol (Layer 2)
 
 **Date:** 2026-09-29
-**Status:** Draft. No fighter table exists on the platform yet.
+**Status:** Draft. No Big Bad Bots table exists on the platform yet.
 **Version:** 1.0 draft (Layer 1 protocol version is **unchanged at `1.0`**)
 
 > **Provisional values.** Every number in this document marked **provisional** is a placeholder
-> pending a rules decision, and may change before rule set `fighter-1.0` is frozen:
+> pending a rules decision, and may change before rule set `bigbadbots-1.0` is frozen:
 >
 > | Value | Placeholder | Decision |
 > |---|---|---|
@@ -22,23 +22,23 @@
 
 ## Overview
 
-This document defines the **Fighter Game State Protocol**: the content that travels inside the game-agnostic Transport Protocol (Layer 1) at a `fighter` table. It is a sibling of [`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md), not a revision of it: NLHE payloads are byte-unchanged by everything below.
+This document defines the **Big Bad Bots Game State Protocol**: the content that travels inside the game-agnostic Transport Protocol (Layer 1) at a `bigbadbots` table. It is a sibling of [`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md), not a revision of it: NLHE payloads are byte-unchanged by everything below.
 
-A fighter match is one bot against one bot, in two stages:
+A Big Bad Bots match is one bot against one bot, in two stages:
 
 1. **Gear-up.** Each bot buys a fighter body from a private offer, bids in a sealed-bid auction for body-mod parts, and fits the parts it won into its body's slots.
 2. **Fight.** The two fighters fight a best-of-three (extended by drawn rounds) on a one-dimensional arena. Time advances in **ticks**, and on every tick both bots choose an action.
 
-Fighter breaks more NLHE assumptions than any earlier dialect:
+Big Bad Bots breaks more NLHE assumptions than any earlier dialect:
 
 - **Both seats act at the same time.** Every decision is simultaneous: the body choice, every bid, the fitting, and every fight tick. There is no turn order and no `action_on`.
 - **The decision rate is high.** A fight asks each seat for an action on every tick, several times a second.
 - **There are no cards and no chips.** Credits are spent in gear-up; nothing is wagered.
 - **The opponent's move is hidden while it winds up.** A bot sees what the opponent is doing only once it can no longer be answered on sight (§5).
 
-The platform `game_type` is `fighter`, and so are the Layer 2 `variant` and `state_shape`. **The rule set is not the variant.** The rules a match is played under are named by `game_config.rule_set_id` (for example `fighter-1.0`), which versions independently of this document: see [`docs/RULESETS.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/RULESETS.md) (chipzen-ai/chipzen-sdk#138). A balance change is a new rule set, never a new dialect.
+The platform `game_type` is `bigbadbots`, and so are the Layer 2 `variant` and `state_shape` (the id was `fighter` in drafts before 2026-10-01; it was renamed before any match was played, chipzen-ai/Chipzen#5291). **The rule set is not the variant.** The rules a match is played under are named by `game_config.rule_set_id` (for example `bigbadbots-1.0`), which versions independently of this document: see [`docs/RULESETS.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/RULESETS.md) (chipzen-ai/chipzen-sdk#138). A balance change is a new rule set, never a new dialect.
 
-**Status.** This is a draft (chipzen-ai/chipzen-sdk#137). Every `turn_request` and `turn_action` example below is a real message and validates against the fighter wire schemas the server checks messages against. The shapes in §4.5 to §4.8 (`turn_result`, `phase_change`, `round_start`, `round_result`) are not yet pinned by those schemas and are marked as such. Section 7 lists the places where fighter meets a Layer 1 behavioural rule that was written for turn-based games; each needs review before a runner ships.
+**Status.** This is a draft (chipzen-ai/chipzen-sdk#137). Every `turn_request` and `turn_action` example below is a real message and validates against the Big Bad Bots wire schemas the server checks messages against. The shapes in §4.5 to §4.8 (`turn_result`, `phase_change`, `round_start`, `round_result`) are not yet pinned by those schemas and are marked as such. Section 7 lists the places where Big Bad Bots meets a Layer 1 behavioural rule that was written for turn-based games; each needs review before a runner ships.
 
 ---
 
@@ -46,16 +46,16 @@ The platform `game_type` is `fighter`, and so are the Layer 2 `variant` and `sta
 
 [`LAYER2-COMMON.md`](LAYER2-COMMON.md) states the part of every Layer 2 dialect that is not game-specific, and it is **normative here**: *its* §1 (Layer 1 is untouched), *its* §2 (how a client learns which game it is at), *its* §3 (the five backward-compatibility rules) and *its* §4 (the versioning policy). Read it once; this document does not restate it.
 
-What follows in this section and in §2 is only fighter's **deltas** against that baseline.
+What follows in this section and in §2 is only Big Bad Bots' **deltas** against that baseline.
 
-### 1.1 The fighter `game` descriptor
+### 1.1 The `bigbadbots` `game` descriptor
 
-The server `hello` at a fighter table carries this additive `game` descriptor (mechanism: [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §2):
+The server `hello` at a `bigbadbots` table carries this additive `game` descriptor (mechanism: [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §2):
 
 ```json
 {
-  "game_type": "fighter",
-  "variant": "fighter",
+  "game_type": "bigbadbots",
+  "variant": "bigbadbots",
   "actions": [
     "choose_body",
     "bid",
@@ -72,29 +72,29 @@ The server `hello` at a fighter table carries this additive `game` descriptor (m
     "special"
   ],
   "phases": ["body_shop", "auction", "fitting", "fight"],
-  "state_shape": "fighter"
+  "state_shape": "bigbadbots"
 }
 ```
 
-`actions` is every `turn_action.action` string the dialect uses: the three gear-up actions and the ten fight actions. It does **not** include `fold`, `check`, `call` or `raise`. `variant` and `state_shape` are `fighter` under every rule set.
+`actions` is every `turn_action.action` string the dialect uses: the three gear-up actions and the ten fight actions. It does **not** include `fold`, `check`, `call` or `raise`. `variant` and `state_shape` are `bigbadbots` under every rule set.
 
-Declaring `"fighter"` in `supported_games` is an assertion that the client implements everything in this document.
+Declaring `"bigbadbots"` in `supported_games` is an assertion that the client implements everything in this document.
 
 ---
 
 ## 2. Backward-compatibility deltas
 
-The five rules and the reasoning behind them are in [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §3, and they bind every future revision of this document. Fighter's values under each:
+The five rules and the reasoning behind them are in [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §3, and they bind every future revision of this document. Big Bad Bots' values under each:
 
-| Rule | Fighter delta |
+| Rule | Big Bad Bots delta |
 |---|---|
-| **1** — valid cards only, never a placeholder | Fighter has no cards. **`board` and `your_hole_cards` are `[]` in every `turn_request.state`**, never omitted. |
-| **2** — the six numeric fields stay present and numeric | Fighter has no chips. **`pot`, `to_call`, `min_raise`, `max_raise` and `your_stack` are always `0`, and `opponent_stacks` is always `[0]`** (heads-up: one opponent, pinned to 0). Credits live in `me.credits` / `opp.credits`, never in the chip fields. |
-| **3** — `phase` stays a free string | Fighter uses four phase strings, none of them NLHE's: `body_shop`, `auction`, `fitting`, `fight` (§3.1). |
-| **4** — new action parameters nest under `params` | Fighter's new parameters are `body`, `amount` and `fit` (§4.4). The fight actions carry no parameters. **Fighter adds no top-level field.** |
-| **5** — new keys only | Fighter's new keys are `offer`, `lot`, `owned`, `slots`, `me`, `opp`, `lot_index`, `lots_total`, `history`, `tick`, `round`, `rounds_won`, `distance` and `facing` (§4.3). |
+| **1** — valid cards only, never a placeholder | Big Bad Bots has no cards. **`board` and `your_hole_cards` are `[]` in every `turn_request.state`**, never omitted. |
+| **2** — the six numeric fields stay present and numeric | Big Bad Bots has no chips. **`pot`, `to_call`, `min_raise`, `max_raise` and `your_stack` are always `0`, and `opponent_stacks` is always `[0]`** (heads-up: one opponent, pinned to 0). Credits live in `me.credits` / `opp.credits`, never in the chip fields. |
+| **3** — `phase` stays a free string | Big Bad Bots uses four phase strings, none of them NLHE's: `body_shop`, `auction`, `fitting`, `fight` (§3.1). |
+| **4** — new action parameters nest under `params` | Big Bad Bots' new parameters are `body`, `amount` and `fit` (§4.4). The fight actions carry no parameters. **Big Bad Bots adds no top-level field.** |
+| **5** — new keys only | Big Bad Bots' new keys are `offer`, `lot`, `owned`, `slots`, `me`, `opp`, `lot_index`, `lots_total`, `history`, `tick`, `round`, `rounds_won`, `distance` and `facing` (§4.3). |
 
-A deployed SDK that does not implement this document parses a fighter `turn_request` without throwing (the Rule 1 and Rule 2 fields are all present and well-typed) but sees none of the fighter keys, so it cannot play. Fighter support in the SDKs is tracked separately (chipzen-ai/chipzen-sdk#139).
+A deployed SDK that does not implement this document parses a `bigbadbots` `turn_request` without throwing (the Rule 1 and Rule 2 fields are all present and well-typed) but sees none of the Big Bad Bots keys, so it cannot play. Big Bad Bots support in the SDKs is tracked separately (chipzen-ai/chipzen-sdk#139).
 
 ---
 
@@ -147,7 +147,7 @@ A seat **misses** a tick when no acceptable answer arrives within `timeout_ms`, 
 
 Gear-up calls default too, when no acceptable answer arrives in time: the **first body on the offer**, a **bid of 0**, and an **empty fitting**.
 
-This replaces Layer 1 §8.12's "`check` if legal, otherwise `fold`", which names two actions fighter does not have. The Pineapple OFC dialect set the precedent ([`OFC-GAME-STATE-PROTOCOL.md`](OFC-GAME-STATE-PROTOCOL.md) §5.9).
+This replaces Layer 1 §8.12's "`check` if legal, otherwise `fold`", which names two actions Big Bad Bots does not have. The Pineapple OFC dialect set the precedent ([`OFC-GAME-STATE-PROTOCOL.md`](OFC-GAME-STATE-PROTOCOL.md) §5.9).
 
 ### 3.6 One answer per request
 
@@ -160,7 +160,7 @@ A request is answered once. **The first acceptable `turn_action` carrying its `r
 - If no acceptable answer arrives in time, the call's default applies (§3.5) and the rejected answer is recorded as a rules violation. It does not count as a miss, because the seat did answer.
 - Every rejection counts toward Layer 1's invalid-action limit (§13.1). See §7.
 
-**A well-shaped answer is never rejected for its content.** Fighter corrects instead:
+**A well-shaped answer is never rejected for its content.** Big Bad Bots corrects instead:
 
 | Call | Well-shaped but not legal | What is applied |
 |---|---|---|
@@ -198,7 +198,7 @@ The next `turn_request.state` is authoritative. `turn_result` is a convenience f
 
 ## 4. Payload schemas
 
-Every integer in a fighter payload is a JSON integer in the signed 64-bit range, and every float is finite. A number with a fractional part, including `12.0`, is not an integer: a bid of `12.0` is malformed. Size caps: a bot message is at most **4096 bytes** (Layer 1 §3.5; a longer one closes the connection with `4008`). A fighter server message is at most **8192 bytes**, measured as compact UTF-8 JSON, so a bot can read with a fixed buffer.
+Every integer in a Big Bad Bots payload is a JSON integer in the signed 64-bit range, and every float is finite. A number with a fractional part, including `12.0`, is not an integer: a bid of `12.0` is malformed. Size caps: a bot message is at most **4096 bytes** (Layer 1 §3.5; a longer one closes the connection with `4008`). A Big Bad Bots server message is at most **8192 bytes**, measured as compact UTF-8 JSON, so a bot can read with a fixed buffer.
 
 ### 4.1 Game config (`match_start.game_config`)
 
@@ -206,8 +206,8 @@ Sent once, at the start of the match. It names the rule set and carries its **co
 
 ```json
 {
-  "variant": "fighter",
-  "rule_set_id": "fighter-1.0",
+  "variant": "bigbadbots",
+  "rule_set_id": "bigbadbots-1.0",
   "num_players": 2,
   "rule_set": {
     "gearup": {"budget": 1000, "body_offer_size": 4, "auction_lots": 6},
@@ -229,8 +229,8 @@ The example is **abridged**: it shows five of the rule set's sections. A real `r
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `variant` | string | Yes | Always `"fighter"`. Selects this document. |
-| `rule_set_id` | string | Yes | The rule set this match is pinned to, e.g. `"fighter-1.0"`. Fixed when the match is created and never changes during it. See `docs/RULESETS.md`. |
+| `variant` | string | Yes | Always `"bigbadbots"`. Selects this document. |
+| `rule_set_id` | string | Yes | The rule set this match is pinned to, e.g. `"bigbadbots-1.0"`. Fixed when the match is created and never changes during it. See `docs/RULESETS.md`. |
 | `num_players` | integer | Yes | Always `2`. |
 | `rule_set` | object | Yes | The rule set's full parameter table, by section. **Read the numbers from here**; they differ between rule sets. |
 
@@ -777,22 +777,22 @@ Every random draw comes from one match seed, through a generator that belongs to
 
 ## 7. Layer 1 behavioural notes
 
-Fighter changes no Layer 1 message, field, sequencing rule or error code, and no wire shape. Four Layer 1 **behavioural** rules were written for turn-based play with one decision every few seconds. How fighter meets each is stated here, and the three marked "review" need an explicit ruling before a fighter runner ships. If any is judged a Layer 1 change, it gets its own ADR, a `supported_versions` bump across all three SDKs, and a rules decision ([`LAYER2-COMMON.md`](LAYER2-COMMON.md) §1). None is changed by this document.
+Big Bad Bots changes no Layer 1 message, field, sequencing rule or error code, and no wire shape. Four Layer 1 **behavioural** rules were written for turn-based play with one decision every few seconds. How Big Bad Bots meets each is stated here, and the three marked "review" need an explicit ruling before a Big Bad Bots runner ships. If any is judged a Layer 1 change, it gets its own ADR, a `supported_versions` bump across all three SDKs, and a rules decision ([`LAYER2-COMMON.md`](LAYER2-COMMON.md) §1). None is changed by this document.
 
-| Layer 1 rule | How fighter meets it | Status |
+| Layer 1 rule | How Big Bad Bots meets it | Status |
 |---|---|---|
-| §8.12: the auto-action is `check` if legal, otherwise `fold` | Fighter's default action (§3.5). Same shape of delta as OFC's legal auto-placement. | Delta, with precedent |
-| §10.3 / §14.4: 100–500 ms of random jitter before each `turn_result` | A 100–500 ms delay cannot fit a 100 ms tick (provisional). The jitter exists so that result timing never reveals an opponent's thinking time. Fighter meets that purpose by releasing both requests of a step together and fight results on the fixed tick boundary, which carry no timing information. | Review |
-| §11.2 / §12.4: the disconnected seat's turn timer pauses on its first disconnect | Pausing one seat's timer would stall the opponent's fight. Fighter keeps the tick clock running; the disconnected seat's ticks take the default action and spend none of its bank (§3.9). | Review |
-| §13.1: at most 10 messages per second per participant, and 5 invalid actions per round | At 10 ticks per second, a bot that answers every tick already sends 10 messages a second, before any `pong` or retry, and would be rate-limited in normal play. A fight round is up to `rounds.round_ticks` decisions, against a limit of 5 invalid actions. The server-side limits for fighter tables must be set for the tick rate. | **Review, blocks the runner** |
+| §8.12: the auto-action is `check` if legal, otherwise `fold` | Big Bad Bots' default action (§3.5). Same shape of delta as OFC's legal auto-placement. | Delta, with precedent |
+| §10.3 / §14.4: 100–500 ms of random jitter before each `turn_result` | A 100–500 ms delay cannot fit a 100 ms tick (provisional). The jitter exists so that result timing never reveals an opponent's thinking time. Big Bad Bots meets that purpose by releasing both requests of a step together and fight results on the fixed tick boundary, which carry no timing information. | Review |
+| §11.2 / §12.4: the disconnected seat's turn timer pauses on its first disconnect | Pausing one seat's timer would stall the opponent's fight. Big Bad Bots keeps the tick clock running; the disconnected seat's ticks take the default action and spend none of its bank (§3.9). | Review |
+| §13.1: at most 10 messages per second per participant, and 5 invalid actions per round | At 10 ticks per second, a bot that answers every tick already sends 10 messages a second, before any `pong` or retry, and would be rate-limited in normal play. A fight round is up to `rounds.round_ticks` decisions, against a limit of 5 invalid actions. The server-side limits for `bigbadbots` tables must be set for the tick rate. | **Review, blocks the runner** |
 
 ---
 
 ## 8. Versioning
 
-This document describes **v1** of the Fighter Game State Protocol. The policy is [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §4: Layer 1 stays at `1.0`, additive changes do not bump this document, removals and retypings do. Fighter adds one thing to it:
+This document describes **v1** of the Big Bad Bots Game State Protocol. The policy is [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §4: Layer 1 stays at `1.0`, additive changes do not bump this document, removals and retypings do. Big Bad Bots adds one thing to it:
 
-- **Rule sets version separately from this document.** A new rule set (`fighter-1.1`, `fighter-2.0`) changes `game_config.rule_set_id` and the numbers in `game_config.rule_set`, not `variant` and not this document. A rule set whose new mechanics need a new key in a payload is an additive change to this document like any other; one that needs a removal or a retyping is a major version of it. See `docs/RULESETS.md`.
+- **Rule sets version separately from this document.** A new rule set (`bigbadbots-1.1`, `bigbadbots-2.0`) changes `game_config.rule_set_id` and the numbers in `game_config.rule_set`, not `variant` and not this document. A rule set whose new mechanics need a new key in a payload is an additive change to this document like any other; one that needs a removal or a retyping is a major version of it. See `docs/RULESETS.md`.
 
 ---
 

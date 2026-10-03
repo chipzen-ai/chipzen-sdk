@@ -82,8 +82,10 @@ MIRRORED_DOCS: dict[str, str] = {
     # The two Layer 2 variant dialects (chipzen-ai/Chipzen#4242).
     "DRAW27-GAME-STATE-PROTOCOL": "docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md",
     "OFC-GAME-STATE-PROTOCOL": "docs/protocol/OFC-GAME-STATE-PROTOCOL.md",
-    # The fighter dialect: the first simultaneous-move game (chipzen-ai/chipzen-sdk#137).
-    "FIGHTER-GAME-STATE-PROTOCOL": "docs/protocol/FIGHTER-GAME-STATE-PROTOCOL.md",
+    # The Big Bad Bots dialect: the first simultaneous-move game (chipzen-ai/chipzen-sdk#137).
+    # Named FIGHTER-GAME-STATE-PROTOCOL until the game id was renamed to
+    # ``bigbadbots`` (chipzen-ai/Chipzen#5291).
+    "BIGBADBOTS-GAME-STATE-PROTOCOL": "docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md",
     # The variant-agnostic Layer 2 baseline the two dialect specs above (and
     # every future one) inherit instead of copy-pasting
     # (chipzen-ai/Chipzen#4484). Mirrored on exactly the same terms they are.
@@ -99,14 +101,14 @@ MIRRORED_DOCS: dict[str, str] = {
 #: the private repo's mirror test, in lockstep. A digest that moves on one side
 #: only is exactly the divergence this exists to catch.
 EXPECTED_DIGESTS: dict[str, str] = {
+    "BIGBADBOTS-GAME-STATE-PROTOCOL": (
+        "afd1110b770897d0601dc3b2daaeef8022290c798c62c8d30eab402bc313122c"
+    ),
     "DRAW27-GAME-STATE-PROTOCOL": (
         "554a90f867092335af873b837b22c4a084c26de18edfa14f064e305b31893549"
     ),
     "EXTERNAL-API-BOT-PROTOCOL": (
-        "7b8859eb868c2a0cf2740129c4aeded5dd3c1548a3ca5d3d9792018cdeaea4b8"
-    ),
-    "FIGHTER-GAME-STATE-PROTOCOL": (
-        "7796ffc61cf8aa5e6c9931d52f911e914f428007c844615a13961ddc86011eb5"
+        "b71310891c08a9f1c170903b8a9df981160062b16e88fbc65619d814d0bfb443"
     ),
     "LAYER2-COMMON": ("23e075ffa970c77f609c3fa137a62f2b95a077775bb9894ec3868f74f56478d7"),
     "OFC-GAME-STATE-PROTOCOL": ("102a9c4e1f10fda6318e3d3b00a73b015603d90abc0723a725b25057483e3bf1"),
