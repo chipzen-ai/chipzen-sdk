@@ -5,7 +5,8 @@
 **Version:** 1.0 draft (Layer 1 protocol version is **unchanged at `1.0`**)
 
 > **Provisional values.** Every number in this document marked **provisional** is a placeholder
-> pending a rules decision, and may change before rule set `bigbadbots-1.0` is frozen:
+> pending a rules decision. Rule set `bigbadbots-1.0` (frozen with engine `1.0.0`, in `preview`) carries these values;
+> if a decision changes one, the change ships as a new rule set before any rule set goes live:
 >
 > | Value | Placeholder | Decision |
 > |---|---|---|

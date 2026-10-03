@@ -1,7 +1,7 @@
 # Rule Sets
 
 **Date:** 2026-09-29
-**Status:** Draft (chipzen-ai/chipzen-sdk#138). The first game to use rule sets is **Big Bad Bots** (B3), the robot-fighting game, whose game type id is `bigbadbots`. Its first rule set is `bigbadbots-1.0` (§7). The id was `fighter` until 2026-10-01, when it was renamed before any match was played (chipzen-ai/Chipzen#5291); the one rule set released under the old name, `fighter-1.0`, is retired (§7).
+**Status:** Draft (chipzen-ai/chipzen-sdk#138). The first game to use rule sets is **Big Bad Bots** (B3), the robot-fighting game, whose game type id is `bigbadbots`. Its first rule set, `bigbadbots-1.0`, was frozen with engine `1.0.0` and is in `preview` (§7). The id was `fighter` until 2026-10-01, when it was renamed before any match was played (chipzen-ai/Chipzen#5291); the one rule set released under the old name, `fighter-1.0`, is retired (§7).
 
 > **Provisional values.** These are placeholders pending a rules decision (D-13), and may change
 > before the first rule set is released:
@@ -60,7 +60,7 @@ Once a rule set is released, its content never changes. A fix is a new id. Every
 
 The engine that runs the rules uses **SemVer**, independently of rule-set ids.
 
-- **Every engine release plays every released rule set exactly.** For a given rule set, seed and set of answers, any later engine release produces the same match, bit for bit. `bigbadbots-1.0` can run on engine `1.1.0`, `1.4.2` or `2.1.0` with the same result.
+- **Every engine release plays every released rule set exactly.** For a given rule set, seed and set of answers, any later engine release produces the same match, bit for bit. `bigbadbots-1.0` can run on engine `1.0.0`, `1.4.2` or `2.1.0` with the same result.
 - An engine **minor** release can add a rule set. An engine **patch** release never changes the result of any match.
 - A major rule set may need new engine code. The rule sets of the old major keep running on the code they were released on, unchanged.
 - A replay records **both** the rule-set id and the exact engine version, so a match can always be re-verified.
@@ -158,15 +158,16 @@ One entry per rule set, newest first. Each entry gives the id, its lifecycle dat
 
 ### `bigbadbots-1.0`
 
-- **State:** not yet released. It is released in `preview` with the next engine minor release (`1.1.0`), and its sha256 is recorded here then (chipzen-ai/Chipzen#5291).
-- **Content:** the same numbers as the retired `fighter-1.0`, under the new id: the code as played (**provisional, D-04**). The new id changes the canonical content, so it gets its own sha256 and golden replays.
+- **State:** `preview`. Frozen with engine `1.0.0` (chipzen-ai/bigbadbots-engine tag `v1.0.0`, engine line `v1`) on 2026-10-03.
+- **sha256** (canonical JSON, as in every log header): `edc31048adeac8ed315a31a923e92f889c95ffde473d478f492ec0107de916a2`.
+- **Content:** the same numbers as the retired `fighter-1.0`, under the new id: the code as played (**provisional, D-04**). Every table is identical; only `rule_set_id` and the notes differ, so the sha256 and the golden replays are new.
 - **Live date:** not set. It stays in `preview` until the provisional decisions D-01, D-03, D-04 and D-16 are confirmed (chipzen-ai/Chipzen#5089). The notice period (§3.1) starts when a live date is announced.
 - **Parameter table:** to be generated from the released file and published here (#138).
 - **Changes:** the first Big Bad Bots rule set under the `bigbadbots` id. No rule changes from `fighter-1.0`.
 
 ### `fighter-1.0` (retired)
 
-- **State:** `retired` on 2026-10-01, without ever being played. It was frozen with engine `1.0.0` (chipzen-ai/fighter-mvp tag `v1.0.0`) on 2026-09-29 and stayed in `preview`; the game id was then renamed from `fighter` to `bigbadbots` (chipzen-ai/Chipzen#5291), and `bigbadbots-1.0` replaces it. The id is never reused.
+- **State:** `retired` on 2026-10-01, without ever being played. It was frozen with engine `1.0.0` (chipzen-ai/fighter-mvp tag `v1.0.0`) on 2026-09-29 and stayed in `preview`; the game id was then renamed from `fighter` to `bigbadbots` (chipzen-ai/Chipzen#5291), and `bigbadbots-1.0` replaces it. No engine ships it, not even as an alias, and the id is never reused.
 - **sha256** (canonical JSON, as in every log header): `906705ea2c539721250da502de45b902b54dd7f0e77fab6550b0ecc0e29df334`.
 
 ---
