@@ -1,7 +1,7 @@
 # Pineapple OFC Game State Protocol (Layer 2)
 
 **Date:** 2026-08-24
-**Status:** Draft — the game is registered but **dark**
+**Status:** Live — playable on Chipzen since 2026-09-04
 **Version:** 1.0 (Layer 1 protocol version is **unchanged at `1.0`**)
 
 ---
@@ -19,7 +19,7 @@ OFC is the variant that breaks the most NLHE assumptions at once:
 
 The Layer 2 dialect is announced as `game_config.variant = "pineapple"`; the platform `game_type` is `ofc`. Classic OFC, progressive OFC and 2-7 OFC are dialects of the same engine and are explicitly out of v1 scope.
 
-**Status.** The OFC plugin is registered with `enabled = true` (`chipzen-ai/Chipzen#4200`). No dispatch path creates an OFC match on its own: every scheduled surface carries `game_type="poker"` (#4246), the declared-capability gate (#4256) refuses a poker-only house bot in front of a thirteen-card board, and the challenge picker only offers OFC once a bot with a *verified* OFC capability exists (#4609) — so `enabled = true` on its own creates no OFC match anywhere. This document describes the wire shape an OFC match will have when a gated slice enables one, and the shape the engine tests already exercise end to end. It is an internal contract; nothing here is a public commitment.
+**Status.** Live — OFC has been playable on Chipzen since 2026-09-04. The OFC plugin is registered with `enabled = true` (`chipzen-ai/Chipzen#4200`). This document describes the wire shape of an OFC match, and the shape the engine tests exercise end to end. It is an internal contract; nothing here is a public commitment.
 
 ---
 

@@ -1,7 +1,7 @@
 # 2-7 Triple Draw Game State Protocol (Layer 2)
 
 **Date:** 2026-08-24
-**Status:** Draft — the game is registered but **dark**
+**Status:** Live — playable on Chipzen since 2026-09-04
 **Version:** 1.0 (Layer 1 protocol version is **unchanged at `1.0`**)
 
 ---
@@ -14,7 +14,7 @@ This document defines the **2-7 Triple Draw (27TD) Game State Protocol** — the
 
 The Layer 2 dialect is announced as `game_config.variant = "27tripledraw"`; the platform `game_type` is `draw27`.
 
-**Status.** The 27TD plugin is registered with `enabled = true` (`chipzen-ai/Chipzen#4490`). No dispatch path creates a 27TD match today: `CHIPZEN_VARIANT_DISPATCH_GAMES` (#4255) is `"none"` in every environment, every scheduled surface carries `game_type="poker"` (#4246), and the declared-capability gate (#4256) refuses a poker-only house bot at a lowball table — so `enabled = true` on its own creates no 27TD match anywhere. This document describes the wire shape a 27TD match will have when a gated slice creates one, and the shape the engine tests already exercise end to end. It is an internal contract; nothing here is a public commitment.
+**Status.** Live — 27TD has been playable on Chipzen since 2026-09-04. The 27TD plugin is registered with `enabled = true` (`chipzen-ai/Chipzen#4490`). This document describes the wire shape of a 27TD match, and the shape the engine tests exercise end to end. It is an internal contract; nothing here is a public commitment.
 
 ---
 
@@ -358,7 +358,7 @@ Why the convention has to be pinned: "4 bets", "a bet and four raises" and "4 ra
 
 **Once the cap is reached, `raise` disappears from `valid_actions`, and `min_raise` / `max_raise` go to `0` with it.** The action list and the numbers beside it are one answer, not two: `min_raise > 0` holds in exactly the spots `raise` is on offer, so a client may branch on either. **`valid_actions` remains the authority on which actions are legal** — it is the list a submission is checked against, and a size is not an offer — but it can no longer be contradicted by the state block. The same zeroing holds wherever else §5.3 removes `raise`.
 
-> **Changed in `chipzen-ai/Chipzen#4487`.** Until that fix the payload kept reporting the next bet level at the cap, so a client branching on `min_raise > 0` submitted a raise the server rejected and burned its retry window into a substituted action. No dispatch path has ever created a 27TD match, so no client ever received the old shape; see §7.
+> **Changed in `chipzen-ai/Chipzen#4487`.** Until that fix the payload kept reporting the next bet level at the cap, so a client branching on `min_raise > 0` submitted a raise the server rejected and burned its retry window into a substituted action. 27TD had not shipped when that fix landed, so no client ever received the old shape; see §7.
 
 ### 5.3 Raise sizing is a point, not a range
 
@@ -504,7 +504,7 @@ This document describes **v1** of the 2-7 Triple Draw Game State Protocol. The p
 
 - The hand-record payload (§6) versions separately, via its own `schema_version`, because it is persisted: a shape change on already-written rows is a migration, not an edit.
 
-The §5.2 / §5.3 zeroing change (`chipzen-ai/Chipzen#4487`) is a semantic change to an existing field, which LAYER2-COMMON §4 would normally make a major bump. It is **not** bumped here: no 27TD match has ever been dispatched, so v1 has no client to break — the dialect is still unreleased and v1 is what it will first ship as. A change of this kind after 27TD goes live would bump.
+The §5.2 / §5.3 zeroing change (`chipzen-ai/Chipzen#4487`) is a semantic change to an existing field, which LAYER2-COMMON §4 would normally make a major bump. It is **not** bumped here: 27TD had not shipped when that change landed, so v1 had no client to break — the dialect was still unreleased and v1 is what it first shipped as. Now that 27TD is live, a change of this kind would bump.
 
 ---
 
