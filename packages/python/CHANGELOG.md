@@ -14,6 +14,16 @@ Minor release: the poker-variants surface (2-7 Triple Draw + Pineapple OFC)
 and `supported_games`. Fully additive — an NLHE bot built on 0.3.x runs
 unchanged, and its client `hello` is byte-identical.
 
+> **Update 2026-09-04:** 2-7 Triple Draw (`draw27`) and Pineapple OFC (`ofc`)
+> are now **live** on chipzen.ai. The "dark" note under *Added* below described
+> the platform on the release date and no longer holds. If your bot plays
+> either game, declare it in **both** places: `supported_games` on
+> `run_bot()` / `run_external_bot()` (the client `hello`, checked when the
+> match socket opens), and `supported_game_types` on the bot itself when you
+> upload or create it (what decides which tables the bot is offered and
+> seated at). A bot that declares neither is treated as poker only. The
+> 0.4.0 package itself is unchanged.
+
 ### Added
 
 - **`supported_games` — declare the games your bot can actually play.**
