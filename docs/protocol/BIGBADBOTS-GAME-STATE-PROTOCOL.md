@@ -5,7 +5,8 @@
 **Version:** 1.0 draft (Layer 1 protocol version is **unchanged at `1.0`**)
 
 > **Provisional values.** Every number in this document marked **provisional** is a placeholder
-> pending a rules decision. Rule set `bigbadbots-1.0` (frozen with engine `1.0.0`, in `preview`) carries these values;
+> pending a rules decision. Rule set `bigbadbots-1.0` (frozen with engine `1.0.0`, in `preview`) carries these values,
+> and so does `bigbadbots-1.1` (frozen with engine `1.1.0`, also in `preview`), whose deadline and forfeit sections are unchanged;
 > if a decision changes one, the change ships as a new rule set before any rule set goes live:
 >
 > | Value | Placeholder | Decision |
@@ -93,7 +94,7 @@ The five rules and the reasoning behind them are in [`LAYER2-COMMON.md`](LAYER2-
 | **2** — the six numeric fields stay present and numeric | Big Bad Bots has no chips. **`pot`, `to_call`, `min_raise`, `max_raise` and `your_stack` are always `0`, and `opponent_stacks` is always `[0]`** (heads-up: one opponent, pinned to 0). Credits live in `me.credits` / `opp.credits`, never in the chip fields. |
 | **3** — `phase` stays a free string | Big Bad Bots uses four phase strings, none of them NLHE's: `body_shop`, `auction`, `fitting`, `fight` (§3.1). |
 | **4** — new action parameters nest under `params` | Big Bad Bots' new parameters are `body`, `amount` and `fit` (§4.4). The fight actions carry no parameters. **Big Bad Bots adds no top-level field.** |
-| **5** — new keys only | Big Bad Bots' new keys are `offer`, `lot`, `owned`, `slots`, `me`, `opp`, `lot_index`, `lots_total`, `history`, `tick`, `round`, `rounds_won`, `distance` and `facing` (§4.3). |
+| **5** — new keys only | Big Bad Bots' new keys are `offer`, `lot`, `owned`, `slots`, `me`, `opp`, `lot_index`, `lots_total`, `history`, `tick`, `round`, `rounds_won`, `distance`, `facing` and `walls` (§4.3). `walls` was added with engine `1.1.0`, under rule 5: a bot that ignores it plays on. |
 
 A deployed SDK that does not implement this document parses a `bigbadbots` `turn_request` without throwing (the Rule 1 and Rule 2 fields are all present and well-typed) but sees none of the Big Bad Bots keys, so it cannot play. Big Bad Bots support in the SDKs is tracked separately (chipzen-ai/chipzen-sdk#139).
 
@@ -495,7 +496,8 @@ The rest of the payload depends on the call. The objects it uses (Body, Part, Si
       "buffs": {}
     },
     "distance": 1.798,
-    "facing": -1
+    "facing": -1,
+    "walls": [0.0, 12.0]
   }
 }
 ```
@@ -511,6 +513,7 @@ Here `timeout_ms` is 3100: the 100 ms deadline plus an untouched 3000 ms bank (b
 | `opp` | Fighter (masked) | Yes | **New key.** The opponent's fighter as this seat may see it (§5). |
 | `distance` | number | Yes | **New key.** The distance between the two fighters, in arena units. |
 | `facing` | integer | Yes | **New key.** `1` if the opponent is to this seat's right, `-1` if to its left. |
+| `walls` | array of number | Yes | **New key** (engine `1.1.0`). `[left, right]`: where the arena's walls stand this tick, in arena units. Always `[0.0, arena.width]` unless the rule set has closing walls (`rounds.stall_close_after`, §6.2) and they have moved in this round. Public to both seats; it reopens to the whole arena every round. |
 
 `valid_actions` is always all ten fight actions. Whether one can be performed right now (stamina, a busy fighter, a used special) is decided when the tick resolves (§3.7), not by removing it from the list.
 
@@ -708,7 +711,7 @@ and, by phase, what the step revealed about the opponent:
 | `hand_number` | integer | Yes | The round number. |
 | `round` | integer | Yes | **New key.** The round number. |
 | `winner_seats` | array of integer | Yes | The seat that took the round, or `[]` for a drawn round. |
-| `outcome` | string | Yes | **New key.** `"ko"`, `"time_out"` (the higher HP share wins), `"draw"`, or `"forfeit"`. |
+| `outcome` | string | Yes | **New key.** `"ko"`, `"time_out"` (decided by the rule set's `rounds.timeout_tiebreak`, §6.2), `"draw"`, or `"forfeit"`. |
 | `forfeit` | array of integer | Yes | **New key.** Seats that forfeited this round (§3.9). Usually `[]`. |
 | `rounds_won` | array of integer | Yes | **New key.** Round wins so far, **by seat index** (not seat-relative). |
 | `pot` | integer | Yes | Always `0`. Carried for shape compatibility. |
@@ -731,9 +734,9 @@ The server masks every view **before** it is serialised, so no payload ever carr
 | `body_shop` | the opponent's offer (`opp.offer` is `[]`) | both seats' credits; both bodies are still `null` |
 | `auction` | the opponent's offer; the opponent's bid on the lot being sold; the lots not yet revealed | the opponent's body, credits and parts won; both bids on every lot already sold (`history`) |
 | `fitting` | the opponent's offer and its fitting (`opp.fitted` is one `null` per slot) | everything the auction showed |
-| `fight` | while the opponent winds up a move (`opp.phase` is `"startup"`): the move's name and its frames left | the opponent's position, HP, stamina, attributes, strike range, move rate, special id and status; its move once it becomes active, and during recovery |
+| `fight` | while the opponent winds up a move (`opp.phase` is `"startup"`): the move's name and its frames left | the opponent's position, HP, stamina, attributes, strike range, move rate, special id and status; its move once it is revealed (`combat.intent_reveal`, below), and during recovery |
 
-**Hidden intent in the fight.** While the opponent winds up a move, it shows only as `action: "attack"` in `phase: "startup"`, with `frames_left: null`. Its `stamina`, `special_used`, `last_attack`, `repeats` and `buffs` keep their values from **before** the move started, so none of them gives the move away. The move is revealed on the tick it becomes active. Without this mask every attack could be answered on sight, and the strike/throw/block triangle (§6.2) would stop being a read.
+**Hidden intent in the fight.** While the opponent winds up a move, it shows only as `action: "attack"` in `phase: "startup"`, with `frames_left: null`. Its `stamina`, `special_used`, `last_attack`, `repeats` and `buffs` keep their values from **before** the move started, so none of them gives the move away. When the move is revealed is the rule set's `combat.intent_reveal`. Absent or `"on_active"` (`bigbadbots-1.0`): on the tick it becomes active, which is the tick its hit lands, so a `block` answered on that tick still counts. `"after_hit"` (`bigbadbots-1.1`): its first active tick still shows as a wind-up (`"attack"`, `"startup"`), and the move is revealed from the next tick on, so what happens on a tick is not visible to the opponent until the tick after. A move with no startup is revealed as under `"on_active"`. Without this mask every attack could be answered on sight, and the strike/throw/block triangle (§6.2) would stop being a read.
 
 **An interrupted wind-up is revealed too.** If a hit staggers the opponent during its wind-up, the attempted move is never shown as its `action` (the opponent shows `"hitstun"`), but from that tick on `last_attack` and `repeats` name it, `stamina` shows its cost paid, and `special_used` is set if it was the special. The mask covers the wind-up only.
 
@@ -761,13 +764,14 @@ Every number the rules use is in `game_config.rule_set` (§4.1), named by its se
 
 ### 6.2 The fight
 
-- **The arena** is one-dimensional (`arena`). Fighters start facing each other; both start positions get the same small seeded shift each round. Fighters cannot pass closer than `arena.min_separation`, and nobody leaves the arena.
+- **The arena** is one-dimensional (`arena`). Fighters start facing each other; both start positions get the same small seeded shift each round. Fighters cannot pass closer than `arena.min_separation`, and nobody leaves the arena, or stands outside its walls (`walls`, §4.3.4).
+- **Closing walls** (optional rule-set keys, `rounds.stall_close_after`, `rounds.stall_close_rate`, `rounds.stall_min_width`; absent in `bigbadbots-1.0`, set in `bigbadbots-1.1`). After `stall_close_after` ticks in which neither side lands damage, both walls move in by `stall_close_rate` a tick until they stand `stall_min_width` apart, pushing the fighters with them. Damage by either side stops them where they are and restarts the count; they reopen to the whole arena at the start of every round. Each seat sees them as `walls`.
 - **Ticks.** Each tick, both seats submit one action and both resolve together. A round lasts at most `rounds.round_ticks` ticks.
 - **Actions.** `idle`, `move_in`, `move_out`, `block`, five attacks (`punch_high`, `uppercut`, `kick_high`, `kick_low`, `throw`) and `special` (the body's special move, once per round). Each attack has a **startup**, **active** and **recovery** phase, a stamina cost and a range (`moves`, `specials`).
 - **A busy fighter cannot start a new action.** While it is in startup, active, recovery, hitstun or dazed, its submitted action is ignored until the current one ends. An action it cannot afford, or a special already used, plays as `idle`.
 - **The counter triangle.** A strike beats a throw, a throw beats a block, a block beats a strike. Blocked strikes still deal a little chip damage and drain stamina; at 0 stamina the block breaks.
 - **Stamina.** Attacks cost stamina and none can be started below its cost; stamina regenerates while idle. A fighter drained to 0 by the opponent's pressure is briefly **dazed**, which both seats can see.
-- **Round end.** A round ends on a KO, at the tick limit (the higher share of max HP wins), or by forfeit (§3.9). A double KO, an exact HP tie at the limit, or a double forfeit is a **drawn round**; nobody scores.
+- **Round end.** A round ends on a KO, at the tick limit, or by forfeit (§3.9). At the tick limit the rule set's `rounds.timeout_tiebreak` decides it: absent or `"hp_pct"` (`bigbadbots-1.0`), the higher share of max HP wins; `"damage"` (`bigbadbots-1.1`), the seat that dealt more damage this round wins (hits, chip, reflects, counter returns and venom). A double KO, an exact tie at the limit, or a double forfeit is a **drawn round**; nobody scores.
 - **Match end.** The first seat to `rounds.rounds_to_win` round wins takes the match. Drawn rounds extend the match up to `rounds.max_rounds` rounds; after that the seat with more round wins takes it, and if they are level a seeded coin flip decides. Health, stamina, buffs, the special and the repeated-move counter reset every round; the fitted build does not.
 
 ### 6.3 Determinism and replays

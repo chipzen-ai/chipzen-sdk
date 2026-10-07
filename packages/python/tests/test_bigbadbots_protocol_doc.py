@@ -82,7 +82,7 @@ STATE_KEYS = {
     "choose_body": {"offer", "me", "opp", "lot_index", "lots_total", "history"},
     "bid": {"lot", "me", "opp", "lot_index", "lots_total", "history"},
     "fit": {"owned", "slots", "me", "opp", "lot_index", "lots_total", "history"},
-    "act": {"tick", "round", "rounds_won", "me", "opp", "distance", "facing"},
+    "act": {"tick", "round", "rounds_won", "me", "opp", "distance", "facing", "walls"},
 }
 TURN_REQUEST_ENVELOPE = {
     "type",
