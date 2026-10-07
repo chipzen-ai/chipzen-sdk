@@ -110,15 +110,18 @@ configured them for that package, no new environment is needed here.)
    ```bash
    git checkout main
    git pull
-   git tag mcp-v0.3.0   # match the pyproject / server.json version exactly
-   git push origin mcp-v0.3.0
+   git tag mcp-v0.3.1   # match the pyproject / server.json version exactly
+   git push origin mcp-v0.3.1
    ```
    Pushing the tag triggers the workflow, which builds + publishes. The
    `mcp-` prefix keeps this distinct from the chipzen-bot `python-v*`
    tags in the same repo.
 4. **Approve** the publish (if reviewers were added in setup step 3).
-5. **Verify**: `pip install chipzen-mcp==0.3.0` in a clean venv, run
-   `chipzen-mcp --help` to confirm the console script resolves.
+5. **Verify**: `pip install chipzen-mcp==0.3.1` in a clean venv, then
+   `python -c "import chipzen_mcp; print(chipzen_mcp.__version__)"` should
+   print the new version. (Since 0.3.1 a bare `chipzen-mcp` without a token
+   starts and waits for an MCP client on stdin instead of exiting, so it is
+   no longer a quick smoke check; close it with Ctrl-D / Ctrl-Z, Enter.)
 
 ## Cutting a TestPyPI release first
 
@@ -133,9 +136,9 @@ without polluting the real PyPI namespace.
    ```bash
    pip install --index-url https://test.pypi.org/simple/ \
      --extra-index-url https://pypi.org/simple/ \
-     chipzen-mcp==0.3.0
+     chipzen-mcp==0.3.1
    ```
-5. Once happy, push the real tag (`mcp-v0.3.0`).
+5. Once happy, push the real tag (`mcp-v0.3.1`).
 
 ## Dry-run a build without publishing
 
@@ -147,8 +150,8 @@ first real release.
 3. Download the `chipzen-mcp-dist` artifact from the workflow run.
 4. Inspect:
    ```bash
-   tar tzvf chipzen_mcp-0.3.0.tar.gz | head -30
-   unzip -l chipzen_mcp-0.3.0-py3-none-any.whl | head -30
+   tar tzvf chipzen_mcp-0.3.1.tar.gz | head -30
+   unzip -l chipzen_mcp-0.3.1-py3-none-any.whl | head -30
    ```
 
 ## Yanking a bad release

@@ -2,9 +2,20 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.chipzen-ai/chipzen-mcp",
   "title": "Chipzen",
-  "description": "AI poker arena for agents. Play rated poker on chipzen.ai against LLM bots and human-built bots.",
-  "version": "0.3.0",
+  "description": "Poker arena for AI agents: play rated heads-up No-Limit Hold'em on chipzen.ai.",
+  "version": "0.3.1",
   "websiteUrl": "https://chipzen.ai",
+  "icons": [
+    {
+      "src": "https://chipzen.ai/favicon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    },
+    {
+      "src": "https://chipzen.ai/apple-touch-icon.png",
+      "mimeType": "image/png"
+    }
+  ],
   "repository": {
     "url": "https://github.com/chipzen-ai/chipzen-sdk",
     "source": "github",
@@ -15,11 +26,34 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "chipzen-mcp",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
-      }
+      },
+      "environmentVariables": [
+        {
+          "name": "CHIPZEN_EXTBOT_TOKEN",
+          "description": "API token for an External API bot you own (starts with cz_extbot_). Create it on the bot's page at chipzen.ai; it is shown once.",
+          "isRequired": true,
+          "isSecret": true,
+          "placeholder": "cz_extbot_..."
+        },
+        {
+          "name": "CHIPZEN_BOT_ID",
+          "description": "UUID of that bot, from its page at chipzen.ai.",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "CHIPZEN_ENV",
+          "description": "Which Chipzen environment to play on.",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "prod",
+          "choices": ["prod", "staging"]
+        }
+      ]
     }
   ]
 }

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chipzen-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "Official Chipzen MCP server - let any MCP-capable agent play poker on chipzen.ai over the External-API remote-play track"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,8 +37,13 @@ dependencies = [
     # ``supported_games`` in the match hello, a run_external_bot parameter
     # that only exists from chipzen-bot 0.4.0 (older SDKs raise TypeError).
     "chipzen-bot>=0.4.0",
-    # Official MCP Python SDK (FastMCP server).
-    "mcp>=1.5,<2",
+    # Official MCP Python SDK (FastMCP server). Floor 1.14: every tool now
+    # sets ``title`` + ``annotations`` (FastMCP.tool() takes both from 1.10),
+    # and before 1.14 FastMCP crashes registering a tool whose parameters are
+    # string annotations (``from __future__ import annotations``, used by
+    # server.py) -- the old ">=1.5" floor could already resolve to a release
+    # on which the server could not start.
+    "mcp>=1.14,<2",
 ]
 
 [project.optional-dependencies]

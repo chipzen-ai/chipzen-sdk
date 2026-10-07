@@ -1,0 +1,15 @@
+# Only packages/mcp is copied into the image (see Dockerfile); keep local
+# environments and caches out of the build context.
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/dist
+**/build
+**/node_modules
+**/target
+.git

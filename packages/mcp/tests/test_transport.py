@@ -507,3 +507,66 @@ def test_hostile_frame_sequence_then_live_request_then_clean_exit() -> None:
         pytest.fail("server did not exit within 15s of stdin close (lingering child)")
     assert code in (0, WATCHDOG_EXIT_CODE), f"unexpected exit code {code}"
     assert time.time() - start < 15
+
+
+def _env_without_credentials() -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CHIPZEN_")}
+    return env
+
+
+def test_starts_without_a_token_lists_tools_and_explains_setup() -> None:
+    """No token: the real entrypoint serves MCP (it used to exit 2), lists every
+    tool with its annotations, and a tool that needs a bot answers with the
+    setup steps instead of failing."""
+    proc = subprocess.Popen(
+        _SERVER_CMD,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        env=_env_without_credentials(),
+    )
+    try:
+        client = _StdioClient(proc)
+        client.handshake()
+
+        client.send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        listed = client.wait_resp(2)
+        assert listed is not None and "result" in listed, listed
+        tools = {tool["name"]: tool for tool in listed["result"]["tools"]}
+        assert len(tools) == 15
+        assert all(tool.get("annotations", {}).get("title") for tool in tools.values())
+        assert tools["join_rated_queue"]["annotations"]["readOnlyHint"] is False
+        assert tools["get_status"]["annotations"]["readOnlyHint"] is True
+
+        client.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "join_rated_queue", "arguments": {}},
+            }
+        )
+        called = client.wait_resp(3)
+        assert called is not None and "result" in called, called
+        text = json.dumps(called["result"])
+        assert "not_configured" in text
+        assert "CHIPZEN_EXTBOT_TOKEN" in text and "Create token" in text
+    finally:
+        proc.stdin.close()
+        try:
+            code = proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            pytest.fail("unconfigured server did not exit within 15s of stdin close")
+    assert code in (0, WATCHDOG_EXIT_CODE), f"unexpected exit code {code}"
+
+
+def test_a_malformed_token_still_fails_fast() -> None:
+    """A token that IS set but wrong keeps the old fail-fast exit (code 2)."""
+    env = {**_env_without_credentials(), "CHIPZEN_EXTBOT_TOKEN": "not-a-bot-token"}
+    proc = subprocess.run(
+        _SERVER_CMD, input=b"", capture_output=True, env=env, timeout=30, check=False
+    )
+    assert proc.returncode == 2
+    assert b"cz_extbot_" in proc.stderr

@@ -43,17 +43,25 @@ chipzen-ai/Chipzen#3748):
 
 Transport is stdio. Everything written to stdout is protocol traffic, so all
 logging goes to stderr.
+
+Started without a bot token, the server still comes up and lists every tool
+(so MCP directories and hosts can introspect it); there is no game session,
+and each tool that needs one answers ``error=not_configured`` with the setup
+steps instead.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
+from collections.abc import Callable
 from typing import Any
 
 from chipzen import Action
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from chipzen_mcp.bridge import (
     SUBMIT_ACCEPTED,
@@ -61,7 +69,14 @@ from chipzen_mcp.bridge import (
     ExternalSession,
     TurnRegistry,
 )
-from chipzen_mcp.config import McpConfig, McpConfigError, load_config
+from chipzen_mcp.config import (
+    ENV_BOT_ID,
+    ENV_ENV,
+    ENV_TOKEN,
+    McpConfig,
+    McpConfigError,
+    load_config,
+)
 from chipzen_mcp.housebot import HttpPost, request_house_bot_challenge
 from chipzen_mcp.matchmaking import (
     HttpRequest,
@@ -78,6 +93,8 @@ from chipzen_mcp.remote_challenge import (
 from chipzen_mcp.stdio_guard import run_guarded_stdio
 
 logger = logging.getLogger("chipzen_mcp.server")
+
+_ToolFn = Callable[..., Any]
 
 #: Per-token concurrent-match cap enforced platform-side
 #: (``external_api_max_concurrent_matches_per_token``).
@@ -151,6 +168,159 @@ Rules of the road:
   diamonds. State semantics: docs/protocol/POKER-GAME-STATE-PROTOCOL.md.
 """
 
+#: Where a new user learns to create an External-API bot and mint its token.
+SETUP_DOCS_URL = "https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/mcp/QUICKSTART.md"
+
+#: Appended to the server instructions only when it was started without
+#: credentials, so a configured server's instructions are unchanged.
+_UNCONFIGURED_INSTRUCTIONS = f"""
+NOT CONFIGURED: this server was started without a Chipzen bot token, so it has
+no game session. Every tool that plays or talks to chipzen.ai answers
+error=not_configured with setup steps. To play, set {ENV_TOKEN} and
+{ENV_BOT_ID} in this MCP server's env block and restart it ({SETUP_DOCS_URL}).
+"""
+
+
+def setup_instructions() -> dict[str, Any]:
+    """How to get credentials: the payload every unconfigured tool returns."""
+    return {
+        "steps": [
+            "Sign in at https://chipzen.ai (free).",
+            "Bots > Create bot, choose External API as the bot kind, and copy "
+            "the bot id (a UUID) from the bot's page.",
+            "On the same page, API tokens > Create token. Copy the cz_extbot_... "
+            "value straight away: it is shown once (rotate it if you lose it).",
+            f"Set {ENV_TOKEN} and {ENV_BOT_ID} in the env block of this MCP "
+            "server's config, then restart the server.",
+        ],
+        "env": {
+            ENV_TOKEN: "required: the bot's API token (starts with cz_extbot_)",
+            ENV_BOT_ID: "required: the bot's UUID",
+            ENV_ENV: "optional: prod (default) or staging",
+        },
+        "docs": SETUP_DOCS_URL,
+    }
+
+
+_NOT_CONFIGURED_NOTE = (
+    "The server was started without Chipzen credentials, so it has no game "
+    f"session; set {ENV_TOKEN} and {ENV_BOT_ID} in the MCP config and restart "
+    "it. setup has the steps to create a bot and its token."
+)
+
+
+#: Tool title + behaviour hints (MCP ``ToolAnnotations``). Reads of local
+#: bridge state are closed-world; anything that reaches chipzen.ai is
+#: open-world. Writes that only add (a move, a challenge, a queue entry) are
+#: non-destructive; leaving the queue and declining a challenge remove state.
+TOOL_ANNOTATIONS: dict[str, ToolAnnotations] = {
+    "get_status": ToolAnnotations(
+        title="Get connection status",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    "wait_for_turn": ToolAnnotations(
+        title="Wait for your turn",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    "get_match_state": ToolAnnotations(
+        title="Get match state",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    "act": ToolAnnotations(
+        title="Play your turn",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    "list_matches": ToolAnnotations(
+        title="List matches",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    "get_last_result": ToolAnnotations(
+        title="Get last result",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    "challenge_house_bot": ToolAnnotations(
+        title="Challenge a house bot (unrated)",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    "join_rated_queue": ToolAnnotations(
+        title="Join the rated queue",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    "rated_queue_status": ToolAnnotations(
+        title="Get rated queue status",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    "leave_rated_queue": ToolAnnotations(
+        title="Leave the rated queue",
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    "list_lobby_opponents": ToolAnnotations(
+        title="List lobby opponents",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    "challenge_remote": ToolAnnotations(
+        title="Challenge an agent (rated)",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+    "list_remote_challenges": ToolAnnotations(
+        title="List direct challenges",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    "accept_remote_challenge": ToolAnnotations(
+        title="Accept a challenge",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+    "decline_remote_challenge": ToolAnnotations(
+        title="Decline a challenge",
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Tool implementations (module-level, dependency-injected, unit-testable).
@@ -177,6 +347,16 @@ def get_status_impl(
         status.update(session.presence_snapshot())
     else:
         status.update({"lobby_connected": False, "lobby_state": None, "lobby_detail": None})
+    if config is None:
+        # Started without credentials: say so, and how to fix it, right where
+        # the instructions tell an agent to look first.
+        status.update(
+            {
+                "configured": False,
+                "note": _NOT_CONFIGURED_NOTE,
+                "setup": setup_instructions(),
+            }
+        )
     return status
 
 
@@ -319,14 +499,7 @@ def challenge_house_bot_impl(
     session looks down (a dispatch to a disconnected bot cannot succeed).
     """
     if config is None:
-        return {
-            "status": "error",
-            "error": "not_configured",
-            "note": (
-                "The server was started without Chipzen credentials; set "
-                "CHIPZEN_EXTBOT_TOKEN and CHIPZEN_BOT_ID in the MCP config."
-            ),
-        }
+        return _not_configured()
     result = request_house_bot_challenge(config, bot_name, post=post)
     if (
         result.get("status") == "challenge_created"
@@ -342,14 +515,12 @@ def challenge_house_bot_impl(
 
 
 def _not_configured() -> dict[str, Any]:
-    """The local config gate shared by the rated-queue tools."""
+    """The local config gate shared by every tool that needs credentials."""
     return {
         "status": "error",
         "error": "not_configured",
-        "note": (
-            "The server was started without Chipzen credentials; set "
-            "CHIPZEN_EXTBOT_TOKEN and CHIPZEN_BOT_ID in the MCP config."
-        ),
+        "note": _NOT_CONFIGURED_NOTE,
+        "setup": setup_instructions(),
     }
 
 
@@ -519,16 +690,29 @@ def build_server(
 
     Kept separate from :func:`main` so tests can build a server around a
     fake registry without touching the network or the environment.
-    """
-    mcp = FastMCP("chipzen", instructions=_INSTRUCTIONS)
 
-    @mcp.tool()
+    With ``config=None`` (started without credentials) the server still
+    registers every tool, but each one that needs a bot -- the match loop and
+    everything that calls chipzen.ai -- answers ``error=not_configured`` with
+    :func:`setup_instructions`; ``get_status`` reports ``configured: false``
+    and ``list_matches`` is simply empty.
+    """
+    configured = config is not None
+    instructions = _INSTRUCTIONS if configured else _INSTRUCTIONS + _UNCONFIGURED_INSTRUCTIONS
+    mcp = FastMCP("chipzen", instructions=instructions)
+
+    def tool(name: str) -> Callable[[_ToolFn], _ToolFn]:
+        """Register ``name`` with its title and behaviour hints."""
+        annotations = TOOL_ANNOTATIONS[name]
+        return mcp.tool(name=name, title=annotations.title, annotations=annotations)
+
+    @tool("get_status")
     def get_status() -> dict[str, Any]:
         """Connection/session status: am I online, how many matches are active
         (per-token cap is 5), and did the background session hit an error."""
         return get_status_impl(registry, session, config)
 
-    @mcp.tool()
+    @tool("wait_for_turn")
     async def wait_for_turn(timeout_ms: int = DEFAULT_WAIT_TIMEOUT_MS) -> dict[str, Any]:
         """Block until it's your turn in ANY match, then return that match's
         full decision state (hole cards, board, pot, valid_actions,
@@ -536,16 +720,20 @@ def build_server(
         on timeout -- just call it again. This is your primary loop; think,
         then call act(match_id, action, ..., request_id=<the request_id you
         just got>) so your decision can only be applied to THIS turn."""
+        if not configured:
+            return _not_configured()
         return await wait_for_turn_async(registry, timeout_ms)
 
-    @mcp.tool()
+    @tool("get_match_state")
     def get_match_state(match_id: str) -> dict[str, Any]:
         """Re-read one match: pending turn (if it's your move, including its
         request_id to quote back to act), last hand result, and final result
         when the match is over."""
+        if not configured:
+            return _not_configured()
         return get_match_state_impl(registry, match_id)
 
-    @mcp.tool()
+    @tool("act")
     def act(
         match_id: str,
         action: str,
@@ -562,21 +750,25 @@ def build_server(
         applied to whatever turn is pending by then. Omitting it keeps the
         old, unsafe behaviour: the action lands on the match's current pending
         turn, whichever turn that now is."""
+        if not configured:
+            return _not_configured()
         return act_impl(registry, match_id, action, amount, request_id)
 
-    @mcp.tool()
+    @tool("list_matches")
     def list_matches() -> list[dict[str, Any]]:
         """All matches this session: which are live, which await your action,
         which finished."""
         return list_matches_impl(registry)
 
-    @mcp.tool()
+    @tool("get_last_result")
     def get_last_result(match_id: str | None = None) -> dict[str, Any]:
         """Latest hand/match outcome (winners, payouts, showdown) for one
         match, or the most recent across all matches."""
+        if not configured:
+            return _not_configured()
         return get_last_result_impl(registry, match_id)
 
-    @mcp.tool()
+    @tool("challenge_house_bot")
     async def challenge_house_bot(bot_name: str | None = None) -> dict[str, Any]:
         """Start an UNRATED practice match against a Chipzen house bot on a
         relaxed ~30s decision clock (never affects ratings). On success the
@@ -590,7 +782,7 @@ def build_server(
         id that exists)."""
         return await asyncio.to_thread(challenge_house_bot_impl, config, session, bot_name)
 
-    @mcp.tool()
+    @tool("join_rated_queue")
     async def join_rated_queue() -> dict[str, Any]:
         """Opt into the RATED matchmaking queue to play another remote agent
         heads-up for real Glicko rating. Returns status="matched" (an opponent
@@ -609,7 +801,7 @@ def build_server(
         dispatched match in the logs)."""
         return await asyncio.to_thread(join_rated_queue_impl, config, session)
 
-    @mcp.tool()
+    @tool("rated_queue_status")
     async def rated_queue_status() -> dict[str, Any]:
         """Poll your rated matchmaking queue state without changing it.
         status is "queued" (still waiting; position/waiting_seconds included),
@@ -621,7 +813,7 @@ def build_server(
         correlator; quote it when reporting a problem."""
         return await asyncio.to_thread(rated_queue_status_impl, config)
 
-    @mcp.tool()
+    @tool("leave_rated_queue")
     async def leave_rated_queue() -> dict[str, Any]:
         """Cancel: remove yourself from the rated matchmaking queue. Idempotent
         -- returns status="left" if you were waiting, "not_queued" if you
@@ -630,7 +822,7 @@ def build_server(
         platform correlator; quote it when reporting a problem."""
         return await asyncio.to_thread(leave_rated_queue_impl, config)
 
-    @mcp.tool()
+    @tool("list_lobby_opponents")
     async def list_lobby_opponents() -> dict[str, Any]:
         """See which OTHER remote agents are connected to the Chipzen lobby
         right now and can be challenged directly. Returns opponents: [{bot_id,
@@ -645,7 +837,7 @@ def build_server(
         problem."""
         return await asyncio.to_thread(list_lobby_opponents_impl, config)
 
-    @mcp.tool()
+    @tool("challenge_remote")
     async def challenge_remote(opponent: str) -> dict[str, Any]:
         """Challenge ONE named remote agent to a RATED heads-up match for real
         Glicko rating. opponent is the bot_id (or exact name) from
@@ -663,7 +855,7 @@ def build_server(
         correlator; quote it when reporting a problem."""
         return await asyncio.to_thread(challenge_remote_impl, config, session, opponent)
 
-    @mcp.tool()
+    @tool("list_remote_challenges")
     async def list_remote_challenges() -> dict[str, Any]:
         """Your direct challenges: inbound (other agents challenging YOU --
         answer these with accept_remote_challenge / decline_remote_challenge)
@@ -677,7 +869,7 @@ def build_server(
         when reporting a problem."""
         return await asyncio.to_thread(list_remote_challenges_impl, config)
 
-    @mcp.tool()
+    @tool("accept_remote_challenge")
     async def accept_remote_challenge(challenge_id: str) -> dict[str, Any]:
         """Accept an inbound challenge (challenge_id from
         list_remote_challenges' inbound list) -- a RATED heads-up match against
@@ -693,7 +885,7 @@ def build_server(
             answer_remote_challenge_impl, config, session, challenge_id, action="accept"
         )
 
-    @mcp.tool()
+    @tool("decline_remote_challenge")
     async def decline_remote_challenge(challenge_id: str) -> dict[str, Any]:
         """Decline an inbound challenge (challenge_id from
         list_remote_challenges' inbound list). Closes it for both sides so the
@@ -709,6 +901,16 @@ def build_server(
     return mcp
 
 
+def _serve_unconfigured() -> int:
+    """Serve the tool surface over stdio with no credentials and no session."""
+    server = build_server(TurnRegistry(), None, None)
+    try:
+        run_guarded_stdio(server)
+    except KeyboardInterrupt:
+        logger.info("chipzen-mcp: interrupted")
+    return 0
+
+
 def main() -> int:
     """Console entrypoint (``chipzen-mcp``): stdio transport."""
     # stdout belongs to the MCP protocol -- log to stderr only.
@@ -720,8 +922,21 @@ def main() -> int:
     try:
         config = load_config()
     except McpConfigError as exc:
-        print(f"chipzen-mcp: {exc}", file=sys.stderr)
-        return 2
+        if (os.environ.get(ENV_TOKEN) or "").strip():
+            # A token was supplied but the configuration is wrong (malformed
+            # token, missing bot id, bad CHIPZEN_ENV, ...): fail fast, as
+            # always -- the user is mid-setup and needs to see the error.
+            print(f"chipzen-mcp: {exc}", file=sys.stderr)
+            return 2
+        # No token at all: start without a session so the host (or an MCP
+        # directory introspecting the server) can still list the tools; each
+        # tool that needs credentials answers with the setup steps.
+        print(
+            f"chipzen-mcp: {exc} Starting without a game session: tools are "
+            "listed, and each one that needs a bot returns setup steps.",
+            file=sys.stderr,
+        )
+        return _serve_unconfigured()
 
     registry = TurnRegistry()
     session = ExternalSession(config, registry)
