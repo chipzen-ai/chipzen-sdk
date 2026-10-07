@@ -363,7 +363,7 @@ Sent at the conclusion of each hand. Provides the complete audit trail.
 | `winner_seats`   | array of integer       | Yes      | Seat(s) that won. Multiple entries for split pots.                                          |
 | `pot`            | integer                | Yes      | Total pot size for the hand.                                                                |
 | `payouts`          | array of PayoutEntry   | Yes      | Array of `{"seat": <int>, "amount": <int>}` objects. All seats in `winner_seats` appear here. Consistent with other seat-indexed structures in the protocol. |
-| `showdown`         | array of ShowdownEntry | Yes      | Every seat still in the hand when it ended, with its hole cards. On a hand that reached the river these are the showdown hands. **This includes a hand won by a fold:** the uncontested winner is listed with its hole cards and an empty `hand_rank` and `best_hand`. |
+| `showdown`         | array of ShowdownEntry | Yes      | The hands revealed at showdown. Entries appear only when two or more seats were still contesting the hand at its end (including an all-in run-out); each such seat is listed with its hole cards. **When the hand was won by a fold, players receive `showdown: []`:** no hole cards are revealed. |
 | `action_history`   | array of ActionEntry   | Yes      | Complete ordered list of every action in the hand, including synthetic blind/ante entries. This is the **canonical source** for the hand's action history. Full audit trail. |
 | `stacks`           | array of integer       | Yes      | Updated chip stacks after payouts, indexed by seat.                                         |
 | `deck_commitment`  | string                 | Yes      | The `SHA-256(deck_seed \|\| deck_order)` commitment from `round_start`. See Section 6. |
@@ -839,7 +839,7 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 
 ### Message 20: round_result (to Seat 0, seq 11; Seat 1 receives the same as its seq 12)
 
-No showdown: Seat 1 folded and Seat 0 wins the pot. `showdown` still lists Seat 0, the seat left in the hand, with its hole cards and an empty `hand_rank` and `best_hand` (see Section 3.8).
+No showdown: Seat 1 folded and Seat 0 wins the pot. Because the hand was won by a fold, `showdown` is `[]` and no hole cards are revealed (see Section 3.8).
 
 ```json
 {
@@ -856,9 +856,7 @@ No showdown: Seat 1 folded and Seat 0 wins the pot. `showdown` still lists Seat 
     "payouts": [
       {"seat": 0, "amount": 100}
     ],
-    "showdown": [
-      {"seat": 0, "hole_cards": ["As", "Kh"], "hand_rank": "", "best_hand": []}
-    ],
+    "showdown": [],
     "action_history": [
       {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
