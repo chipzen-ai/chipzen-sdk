@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-07
+
+Patch release that makes the server listing-ready for MCP directories. The
+tool surface is the same fifteen tools, and a server started with valid
+credentials behaves exactly as in 0.3.0.
+
+### Changed
+
+- **The server starts without a token.** With `CHIPZEN_EXTBOT_TOKEN` unset it
+  used to exit at once (code 2). It now starts with no game session and lists
+  every tool, so an MCP host or directory can introspect it. `get_status`
+  reports `configured: false` with setup steps, `list_matches` is empty, and
+  every other tool answers `error: "not_configured"` with a `setup` block: how
+  to create an External-API bot and its token, and which env vars to set. A
+  token that is set but unusable (malformed, or no `CHIPZEN_BOT_ID`) still
+  stops the server at startup, as before.
+- **Every tool has a title and MCP annotations** (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`). Status, match, result,
+  queue-status, lobby and challenge-list reads are read-only; `act`, the queue
+  join/leave and the challenge tools are writes, and only
+  `leave_rated_queue` and `decline_remote_challenge` are marked destructive.
+- **`mcp` dependency floor raised to `>=1.14`.** `FastMCP.tool()` takes
+  `title` and `annotations` from 1.10, and releases before 1.14 fail to
+  register this server's tools at all (string annotations from
+  `from __future__ import annotations`), so the old `>=1.5` floor could
+  resolve to an `mcp` on which the server could not start.
+- **`server.json`** (official MCP Registry entry) now declares the
+  environment variables (the token marked secret), icons and a clearer
+  description.
+- **README rewritten** for the PyPI page: current install (`uvx chipzen-mcp`),
+  the bot-token steps, the environment variables, and the tool list. It no
+  longer quotes stale version numbers.
+
+### Added
+
+- `glama.json` and a `Dockerfile` at the repository root, so Glama can build
+  the server from source and introspect it over stdio.
+
 ## [0.3.0] — 2026-09-24
 
 Minor bump: the bridge now declares the games it can play, a new optional
@@ -125,6 +163,7 @@ five-tool expansion above. This changelog starts at 0.2.0; for the 0.1.x line
 see the release history at
 <https://github.com/chipzen-ai/chipzen-sdk/releases> and the `mcp-v0.1.*` tags.
 
+[0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.3.1
 [0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.3.0
 [0.2.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.2.1
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.2.0

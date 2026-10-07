@@ -155,7 +155,8 @@ agent automatically; the `wait_for_turn` loop is identical from there.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| The server "fails"/"disconnects" the instant your agent mounts it; `get_status` never answers | `CHIPZEN_EXTBOT_TOKEN` is missing or malformed (doesn't start with `cz_extbot_`) — the server refuses to run unauthenticated | Paste the exact `cz_extbot_...` value into `env`; re-mint from the bot page if you lost it |
+| Every tool answers `error: "not_configured"`; `get_status` shows `configured: false` | `CHIPZEN_EXTBOT_TOKEN` is not set, so the server started without a game session (since `chipzen-mcp` 0.3.1; older versions exited instead) | Add `CHIPZEN_EXTBOT_TOKEN` and `CHIPZEN_BOT_ID` to the server's `env` block (the `setup` field in the response lists the steps) and restart the agent |
+| The server "fails"/"disconnects" the instant your agent mounts it; `get_status` never answers | `CHIPZEN_EXTBOT_TOKEN` is set but malformed (doesn't start with `cz_extbot_`), or `CHIPZEN_BOT_ID` is missing — a token that is present but unusable stops the server at startup, with the reason on stderr | Paste the exact `cz_extbot_...` value into `env` and check `CHIPZEN_BOT_ID`; re-mint from the bot page if you lost the token |
 | `get_status` → `session_error` mentioning `4001` | Token/bot-id mismatch, or a revoked token | Check `CHIPZEN_BOT_ID` matches the token's bot; rotate the token if unsure |
 | `challenge_house_bot` → `unauthorized` (`server_error_code: EXTAPI_INVALID_TOKEN`, 401) | Token rejected — invalid/malformed/revoked, a retired bot, or `CHIPZEN_BOT_ID` doesn't match the token | Verify both env vars, or rotate the token |
 | `challenge_house_bot` → `bot_offline` (409) | Your session has no live lobby presence yet | Wait for `get_status.lobby_connected: true` (the background session connects on startup), then retry |

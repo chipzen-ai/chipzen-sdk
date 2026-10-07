@@ -1,6 +1,7 @@
 """Tests for the MCP tool surface."""
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -208,7 +209,7 @@ async def test_act_tool_schema_exposes_request_id() -> None:
 
 async def test_act_tool_rejects_a_stale_turn_end_to_end() -> None:
     registry = TurnRegistry()
-    server = build_server(registry)
+    server = build_server(registry, None, McpConfig(token="cz_extbot_x", bot_id="b-1"))
     _publish(registry, request_id="A")
     registry.clear_pending(MATCH)
     _publish(registry, request_id="B")
@@ -484,3 +485,162 @@ async def test_remote_challenge_tools_run_off_loop() -> None:
         # No config injected -> the impl's config gate answers, proving the
         # async wrapper + to_thread path works end-to-end through FastMCP.
         assert "not_configured" in str(result)
+
+
+# ---------------------------------------------------------------------------
+# Started without credentials (no token): every tool is listed, and each one
+# that needs a bot answers not_configured with the setup steps.
+# ---------------------------------------------------------------------------
+
+#: Tools that still answer from local state when unconfigured.
+UNGATED_TOOLS = {"get_status", "list_matches"}
+
+#: Minimal valid arguments for every tool.
+TOOL_ARGS: dict[str, dict] = {
+    "get_status": {},
+    "wait_for_turn": {"timeout_ms": 50},
+    "get_match_state": {"match_id": MATCH},
+    "act": {"match_id": MATCH, "action": "fold"},
+    "list_matches": {},
+    "get_last_result": {},
+    "challenge_house_bot": {},
+    "join_rated_queue": {},
+    "rated_queue_status": {},
+    "leave_rated_queue": {},
+    "list_lobby_opponents": {},
+    "challenge_remote": {"opponent": "rival"},
+    "list_remote_challenges": {},
+    "accept_remote_challenge": {"challenge_id": "c-1"},
+    "decline_remote_challenge": {"challenge_id": "c-1"},
+}
+
+
+def _payload(result: object) -> object:
+    """The JSON value a tool returned, from ``FastMCP.call_tool``'s result."""
+    if isinstance(result, tuple):  # (content, structured) on current mcp
+        structured = result[1]
+        # list-returning tools are wrapped as {"result": [...]}.
+        return structured["result"] if set(structured) == {"result"} else structured
+    blocks = list(result)  # type: ignore[call-overload]
+    if not blocks:
+        return []
+    return json.loads(blocks[0].text) if len(blocks) == 1 else [json.loads(b.text) for b in blocks]
+
+
+def _assert_setup_message(payload: dict) -> None:
+    assert payload["status"] == "error"
+    assert payload["error"] == "not_configured"
+    assert "CHIPZEN_EXTBOT_TOKEN" in payload["note"]
+    assert "CHIPZEN_BOT_ID" in payload["note"]
+    setup = payload["setup"]
+    assert set(setup["env"]) >= {"CHIPZEN_EXTBOT_TOKEN", "CHIPZEN_BOT_ID"}
+    assert any("Create token" in step for step in setup["steps"])
+    assert setup["docs"].startswith("https://")
+
+
+def test_tool_args_cover_every_tool() -> None:
+    assert set(TOOL_ARGS) == EXPECTED_TOOLS
+
+
+async def test_unconfigured_server_lists_every_tool() -> None:
+    server = build_server(TurnRegistry(), None, None)
+    assert {tool.name for tool in await server.list_tools()} == EXPECTED_TOOLS
+
+
+async def test_unconfigured_tools_return_the_setup_message() -> None:
+    server = build_server(TurnRegistry(), None, None)
+    for name in sorted(EXPECTED_TOOLS - UNGATED_TOOLS):
+        result = await asyncio.wait_for(server.call_tool(name, TOOL_ARGS[name]), timeout=5.0)
+        payload = _payload(result)
+        assert isinstance(payload, dict), name
+        _assert_setup_message(payload)
+
+
+async def test_unconfigured_get_status_says_so_and_how_to_fix_it() -> None:
+    server = build_server(TurnRegistry(), None, None)
+    status = _payload(await server.call_tool("get_status", {}))
+    assert isinstance(status, dict)
+    assert status["configured"] is False
+    assert status["lobby_connected"] is False
+    assert "CHIPZEN_EXTBOT_TOKEN" in status["note"]
+    assert status["setup"]["env"]["CHIPZEN_BOT_ID"]
+    assert _payload(await server.call_tool("list_matches", {})) == []
+
+
+async def test_unconfigured_instructions_carry_the_setup_pointer() -> None:
+    unconfigured = build_server(TurnRegistry(), None, None)
+    configured = build_server(TurnRegistry(), None, McpConfig(token="cz_extbot_x", bot_id="b-1"))
+    assert "NOT CONFIGURED" in (unconfigured.instructions or "")
+    assert "NOT CONFIGURED" not in (configured.instructions or "")
+
+
+def test_configured_get_status_is_unchanged() -> None:
+    """With credentials, get_status grows no unconfigured-mode keys."""
+    config = McpConfig(token="cz_extbot_x", bot_id="b-1", env="staging")
+    status = get_status_impl(TurnRegistry(), None, config)
+    assert "configured" not in status and "setup" not in status
+
+
+async def test_configured_registry_tools_are_not_gated() -> None:
+    registry = TurnRegistry()
+    server = build_server(registry, None, McpConfig(token="cz_extbot_x", bot_id="b-1"))
+    _publish(registry)
+    turn = _payload(await server.call_tool("wait_for_turn", {"timeout_ms": 1000}))
+    assert isinstance(turn, dict) and turn["status"] == "your_turn"
+    state = _payload(await server.call_tool("get_match_state", {"match_id": MATCH}))
+    assert isinstance(state, dict) and state["turn"]["request_id"] == "req-1"
+    acted = _payload(await server.call_tool("act", {"match_id": MATCH, "action": "check"}))
+    assert isinstance(acted, dict) and acted["accepted"] is True
+    last = _payload(await server.call_tool("get_last_result", {}))
+    assert isinstance(last, dict) and last == {"status": "no_results_yet"}
+
+
+# ---------------------------------------------------------------------------
+# Tool titles + behaviour annotations
+# ---------------------------------------------------------------------------
+
+READ_ONLY_TOOLS = {
+    "get_status",
+    "wait_for_turn",
+    "get_match_state",
+    "list_matches",
+    "get_last_result",
+    "rated_queue_status",
+    "list_lobby_opponents",
+    "list_remote_challenges",
+}
+
+
+@pytest.mark.parametrize("config", [None, McpConfig(token="cz_extbot_x", bot_id="b-1")])
+async def test_every_tool_has_a_title_and_annotations(config: McpConfig | None) -> None:
+    server = build_server(TurnRegistry(), None, config)
+    tools = await server.list_tools()
+    assert {tool.name for tool in tools} == EXPECTED_TOOLS
+    for tool in tools:
+        ann = tool.annotations
+        assert ann is not None, tool.name
+        assert tool.title and ann.title == tool.title, tool.name
+        for hint in ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"):
+            assert isinstance(getattr(ann, hint), bool), (tool.name, hint)
+        assert ann.readOnlyHint is (tool.name in READ_ONLY_TOOLS), tool.name
+        if ann.readOnlyHint:
+            assert ann.destructiveHint is False, tool.name
+
+
+async def test_writes_are_marked_as_writes() -> None:
+    tools = {tool.name: tool for tool in await build_server(TurnRegistry()).list_tools()}
+    for name in (
+        "act",
+        "challenge_house_bot",
+        "join_rated_queue",
+        "leave_rated_queue",
+        "challenge_remote",
+        "accept_remote_challenge",
+        "decline_remote_challenge",
+    ):
+        ann = tools[name].annotations
+        assert ann is not None and ann.readOnlyHint is False, name
+        assert ann.openWorldHint is True, name
+    # Only the tools that remove state are destructive.
+    destructive = {n for n, t in tools.items() if t.annotations and t.annotations.destructiveHint}
+    assert destructive == {"leave_rated_queue", "decline_remote_challenge"}
