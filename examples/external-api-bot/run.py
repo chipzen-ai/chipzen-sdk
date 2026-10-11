@@ -9,13 +9,13 @@ example README for prerequisites (you need a ``cz_extbot_`` token issued for an
 Usage (from this directory)::
 
     python run.py \\
-        --base-url wss://staging.chipzen.ai \\
+        --base-url wss://chipzen.ai \\
         --bot-id <bot-uuid> \\
         --token cz_extbot_...
 
 Or via environment variables (CLI flags take precedence)::
 
-    CHIPZEN_BASE_URL   — platform origin, e.g. wss://staging.chipzen.ai
+    CHIPZEN_BASE_URL   — platform origin, e.g. wss://chipzen.ai
     CHIPZEN_BOT_ID     — the External-API bot's UUID
     CHIPZEN_EXTBOT_TOKEN — the cz_extbot_ token
 
@@ -39,7 +39,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         default=os.environ.get("CHIPZEN_BASE_URL"),
-        help="Platform origin (e.g. wss://staging.chipzen.ai or ws://localhost:8001)",
+        help="Platform origin (e.g. wss://chipzen.ai or ws://localhost:8001)",
     )
     parser.add_argument(
         "--bot-id",

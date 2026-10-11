@@ -455,6 +455,10 @@ The error code is the stable identifier; the message text may evolve.
 | USER_002 | User not found.                                                                          | 404  |
 | USER_003 | Guest users cannot access this feature. Please upgrade your account.                     | 403  |
 
+Hit `USER_001` right after signing up? Check the host: builders use
+<https://chipzen.ai>, where new accounts are approved automatically.
+`staging.chipzen.ai` is an internal environment that is not open to builders.
+
 ### Game session (GAME)
 
 | Code     | Message                                            | HTTP |

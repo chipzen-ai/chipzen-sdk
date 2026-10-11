@@ -327,7 +327,7 @@ you like any other competitor. **The same `Bot` subclass works on both paths.**
 import asyncio
 from chipzen import Bot, run_external_bot
 
-asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging",
+asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="prod",
                              token="cz_extbot_..."))
 ```
 
@@ -344,7 +344,7 @@ bot_id = "<bot-uuid>"
 ```
 
 ```bash
-chipzen run-external my_bot.py --env staging
+chipzen run-external my_bot.py   # targets prod (chipzen.ai) by default
 ```
 
 Knobs: `connect_to_chipzen(bot_id, env)` (env → lobby URL), `RetryPolicy`
@@ -499,7 +499,7 @@ This is the supported test surface. Run it as the final step before
 
 ## 5. Debugging a live match
 
-When your bot is running on the platform (local, staging, or prod), you
+When your bot is running on the platform (local or prod), you
 have five observability surfaces.
 
 ### 5.1 Per-match container log
@@ -993,8 +993,8 @@ queue drain — see §6.3.
 - **Wrong port.** API defaults to 8001 in dev. Frontend proxies to 8001.
   If you copied a production URL into a local test, the port is wrong.
 - **Auth rejection.** Check `CHIPZEN_TOKEN` / `CHIPZEN_TICKET`. Local dev
-  often accepts an empty token for the `/bot` endpoint; staging does
-  not.
+  often accepts an empty token for the `/bot` endpoint; the hosted
+  platform does not.
 
 ### 9.5 "Container dies immediately with no logs"
 

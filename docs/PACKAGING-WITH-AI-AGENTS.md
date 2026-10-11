@@ -236,7 +236,7 @@ INPUTS
 - My existing bot lives at: <PATH TO YOUR EXISTING BOT>
 - Its decision logic is: <FILE / FUNCTION NAME, or "find it">
 - Language: <python | other — see note below>
-- Environment: <staging | prod>   (start with staging)
+- Environment: prod   (https://chipzen.ai; the SDK default)
 
 SOURCE OF TRUTH — read these first and follow them; do not invent commands.
 - docs/external-api/FIRST-30-MINUTES.md   (the 30-minute walkthrough)
@@ -253,10 +253,10 @@ STEPS
      upload path — if I ever want to package it as a container later, the same
      class works.
    - Wire it up with run_external_bot(...) OR the `chipzen run-external
-     my_bot.py --env <env>` CLI, exactly as DEV-MANUAL §2.7 and
+     my_bot.py` CLI (prod is the default, so no --env), exactly as DEV-MANUAL §2.7 and
      FIRST-30-MINUTES show. Put the token + bot_id in a chipzen.toml
      ([external_api] token = "cz_extbot_...", bot_id = "...").
-2. Tell me to create the credentials in the Chipzen dashboard (I do this part;
+2. Tell me to create the credentials in the Chipzen dashboard at chipzen.ai (I do this part;
    you can't): on the bot dashboard pick "Create bot" -> "External API", copy
    the bot_id from the detail page, then issue a token in the "API tokens"
    section. The plaintext token (format cz_extbot_<suffix>) is shown ONCE —
@@ -268,8 +268,8 @@ STEPS
    - The bot must be ONLINE in the lobby before a match is dispatched, or the
      dispatch fails. Use the loop/keep-alive option so it stays up across a
      tournament's successive matches.
-   - Plain ws:// is only allowed on localhost; staging/prod are wss://.
-4. Give me the exact command to run it against <env>, and tell me how to fire a
+   - Plain ws:// is only allowed on localhost; chipzen.ai is wss://.
+4. Give me the exact command to run it against chipzen.ai, and tell me how to fire a
    first match: challenge a house bot from the /challenges page as an UNRANKED
    EXHIBITION (external-API vs a sandboxed house bot is a cross-division pair,
    so ranked mode is rejected).

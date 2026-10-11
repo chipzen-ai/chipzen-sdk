@@ -72,7 +72,7 @@ The same `Bot` class works on both paths:
   import asyncio
   from chipzen import Bot, run_external_bot
 
-  asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging", token="cz_extbot_..."))
+  asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="prod", token="cz_extbot_..."))
   ```
 
   It holds one lobby connection and plays every match dispatched to your bot — a
@@ -81,7 +81,7 @@ The same `Bot` class works on both paths:
   `url`) and the CLI is a one-liner:
 
   ```bash
-  chipzen run-external my_bot.py --env staging
+  chipzen run-external my_bot.py   # targets prod (chipzen.ai) by default
   ```
 
   Tunables: `connect_to_chipzen()` (env→URL), `RetryPolicy` (reconnect/backoff),

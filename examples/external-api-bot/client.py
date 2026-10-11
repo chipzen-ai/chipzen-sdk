@@ -45,7 +45,7 @@ CLIENT_VERSION = "0.1.0"
 def lobby_ws_url(base_url: str, bot_id: str) -> str:
     """Build the lobby WS URL from a base origin + bot id.
 
-    ``base_url`` is the platform origin, e.g. ``wss://staging.chipzen.ai`` or
+    ``base_url`` is the platform origin, e.g. ``wss://chipzen.ai`` or
     ``ws://localhost:8001``. Returns ``<base>/ws/external/bot/{bot_id}``.
     """
     return f"{_normalise_base(base_url)}/ws/external/bot/{bot_id}"

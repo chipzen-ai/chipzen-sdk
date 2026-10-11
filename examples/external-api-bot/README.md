@@ -30,7 +30,7 @@ class MyBot(Bot):
             return Action.check()
         return Action.call() if "call" in state.valid_actions else Action.fold()
 
-asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="staging", token="cz_extbot_..."))
+asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="prod", token="cz_extbot_..."))
 ```
 
 Or from the command line, with the token in a `chipzen.toml`:
@@ -43,7 +43,7 @@ bot_id = "<bot-uuid>"
 ```
 
 ```bash
-chipzen run-external my_bot.py --env staging
+chipzen run-external my_bot.py   # targets prod (chipzen.ai) by default
 ```
 
 The rest of this README documents the **raw reference client** below.
@@ -93,7 +93,7 @@ From this directory:
 
 ```bash
 python run.py \
-    --base-url wss://staging.chipzen.ai \
+    --base-url wss://chipzen.ai \
     --bot-id <bot-uuid> \
     --token cz_extbot_...
 ```
@@ -101,7 +101,7 @@ python run.py \
 Or via environment variables (CLI flags take precedence):
 
 ```bash
-export CHIPZEN_BASE_URL=wss://staging.chipzen.ai
+export CHIPZEN_BASE_URL=wss://chipzen.ai
 export CHIPZEN_BOT_ID=<bot-uuid>
 export CHIPZEN_EXTBOT_TOKEN=cz_extbot_...
 python run.py
