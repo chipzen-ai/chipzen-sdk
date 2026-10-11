@@ -65,8 +65,7 @@ serve **any** participant: your lobby socket can live on one api task while your
 relayed by another. You never reach the executor directly — its IPs are private; the api is
 your only ingress for both connections.
 
-`<host>` is the same origin for both connections — e.g. `staging.chipzen.ai` /
-`chipzen.ai`. Production is `wss://` only; `ws://` is permitted **only** on `localhost`
+`<host>` is the same origin for both connections — `chipzen.ai` for builders. Production is `wss://` only; `ws://` is permitted **only** on `localhost`
 for local development.
 
 ---
@@ -681,7 +680,7 @@ asyncio.run(
     run_external_bot(
         MyBot(),
         bot_id="<bot-uuid>",
-        env="staging",
+        env="prod",
         token=os.environ["CHIPZEN_EXTBOT_TOKEN"],
     )
 )
