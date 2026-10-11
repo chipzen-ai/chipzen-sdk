@@ -1,7 +1,7 @@
 # First 30 minutes with the Chipzen External-API
 
 Long-form walkthrough for getting an **external-API bot** online and into
-its first match against the Chipzen staging platform. Budget: **30
+its first match on the Chipzen platform (<https://chipzen.ai>). Budget: **30
 minutes**, including detours.
 
 This is the long-form counterpart to the in-dashboard onboarding page
@@ -16,7 +16,7 @@ step in enough detail that you don't have to guess.
 >
 > ```bash
 > pip install chipzen-bot
-> chipzen run-external my_bot.py --env staging   # token in chipzen.toml
+> chipzen run-external my_bot.py   # prod is the default; token in chipzen.toml
 > ```
 >
 > This walkthrough uses the in-repo **reference client**
@@ -40,10 +40,10 @@ step in enough detail that you don't have to guess.
   `git clone https://github.com/chipzen-ai/chipzen-sdk.git`.
 - **The `websockets` library** — the only dependency the reference client
   needs (`pip install websockets`).
-- **A Chipzen account** with access to staging — `staging.chipzen.ai`.
-  If you don't have one yet, drop a note in
-  [Discord](https://discord.gg/5JNGkT9Dh) and we'll add you to the
-  allowlist.
+- **A Chipzen account** on <https://chipzen.ai>. Sign up there; new
+  accounts are approved automatically. (Use `chipzen.ai`, not
+  `staging.chipzen.ai`: staging is an internal environment that is not
+  open to builders, and sign-ups there sit in a manual approval queue.)
 
 That's it. No Docker, no image build, no upload.
 
@@ -53,7 +53,7 @@ That's it. No Docker, no image build, no upload.
 
 ### Sign in
 
-Go to <https://staging.chipzen.ai>, sign in via Clerk. If this is your
+Go to <https://chipzen.ai>, sign in via Clerk. If this is your
 first visit, the redirect-to-root rule applies: navigate to the apex,
 then go to `/bots/dashboard`. Deep-linking to `/bots/dashboard` before
 the Clerk session is established can land you on a sign-in loop —
@@ -72,7 +72,7 @@ it — you need it for steps 2 and 3.
 
 ### Issue a token
 
-Open `https://staging.chipzen.ai/bots/<bot_id>` (the bot detail page).
+Open `https://chipzen.ai/bots/<bot_id>` (the bot detail page).
 There's an **API tokens** section near the top. Click **Create token**.
 
 You'll see a modal with the **plaintext token**, format:
@@ -90,7 +90,7 @@ with your Clerk session JWT (the platform's HTTP surface is documented in
 [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../EXTERNAL-API-BOT-PROTOCOL.md) §2):
 
 ```bash
-curl -X POST https://staging.chipzen.ai/api/external-api/bots/<bot_id>/tokens \
+curl -X POST https://chipzen.ai/api/external-api/bots/<bot_id>/tokens \
   -H "Authorization: Bearer <your-clerk-session-jwt>"
 # -> {"token": "cz_extbot_...", ...}   (shown exactly once)
 ```
@@ -119,7 +119,7 @@ command line (or via an environment variable) in the next section.
 
 ---
 
-## 10-20 min — Run the reference bot against staging
+## 10-20 min — Run the reference bot against Chipzen
 
 ### Look at the strategy
 
@@ -177,7 +177,7 @@ the `cz_extbot_` token:
 ```bash
 cd examples/external-api-bot
 python run.py \
-    --base-url wss://staging.chipzen.ai \
+    --base-url wss://chipzen.ai \
     --bot-id <bot-uuid> \
     --token cz_extbot_...
 ```
@@ -186,7 +186,7 @@ You can pass the same three values via environment variables instead
 (CLI flags take precedence):
 
 ```bash
-export CHIPZEN_BASE_URL=wss://staging.chipzen.ai
+export CHIPZEN_BASE_URL=wss://chipzen.ai
 export CHIPZEN_BOT_ID=<bot-uuid>
 export CHIPZEN_EXTBOT_TOKEN=cz_extbot_...
 python run.py
@@ -195,7 +195,7 @@ python run.py
 Expected first lines (default `INFO` logging):
 
 ```
-INFO extapi_reference_bot: lobby: connecting to wss://staging.chipzen.ai/ws/external/bot/<bot-uuid>
+INFO extapi_reference_bot: lobby: connecting to wss://chipzen.ai/ws/external/bot/<bot-uuid>
 INFO extapi_reference_bot: lobby: connected (endpoint=lobby)
 ```
 
@@ -237,7 +237,7 @@ next step.
 
 ### Challenge a house bot
 
-Open <https://staging.chipzen.ai/challenges> and click **New
+Open <https://chipzen.ai/challenges> and click **New
 challenge**. Pick your `external_api` bot as the challenger and a
 house bot — typically the platform sentinel — as the challenged
 bot. **Important:** pick an **unranked exhibition** match. Ranked
@@ -280,7 +280,7 @@ Once the first match lands, here's where to push:
 
 External-API bots compete in the **external-API division** — sandboxed
 and external bots have parallel ladders. Find an open external-API
-tournament from <https://staging.chipzen.ai/tournaments> and click
+tournament from <https://chipzen.ai/tournaments> and click
 **Join**. The matchmaker filters entrants by `bot_kind`, so you don't
 have to worry about ending up in a mixed bracket by accident. Keep the
 `run` process online (use `--loop` so it stays up across the bracket's

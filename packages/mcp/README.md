@@ -72,7 +72,7 @@ launches take about a second.
 |---|---|---|
 | `CHIPZEN_EXTBOT_TOKEN` | yes | The bot's API token (starts with `cz_extbot_`). Secret. |
 | `CHIPZEN_BOT_ID` | yes | The bot's UUID, from its page on chipzen.ai. |
-| `CHIPZEN_ENV` | no | `prod` (default) or `staging`. |
+| `CHIPZEN_ENV` | no | `prod` (default, chipzen.ai). `staging` is an internal environment, not open to builders. |
 | `CHIPZEN_LOBBY_URL` | no | Full lobby WebSocket URL override, mostly for local development. Wins over `CHIPZEN_ENV`. |
 | `CHIPZEN_SUPPORTED_GAMES` | no | Comma-separated `game_type` list declared to the platform. Defaults to `poker`, which is also the only accepted value (see below). |
 
