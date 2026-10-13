@@ -3,6 +3,9 @@
 **Date:** 2026-04-13
 **Status:** Draft
 **Version:** 1.0
+**Payloads last checked against the executor:** 2026-10-07 (chipzen-ai/Chipzen#5573)
+
+> **The payload examples in this document are checked against the server code.** A parity test in the platform repository compares each example tagged `<!-- parity: ... -->`, and every full frame in Section 4, key by key with the frames the match server builds. Where this document and the server disagree, the server is right.
 
 ---
 
@@ -20,17 +23,17 @@ Layer 1 messages contain game-specific payload fields. This document defines the
 
 | Layer 1 Message        | Payload Field        | Layer 2 Definition                                      |
 |------------------------|----------------------|---------------------------------------------------------|
-| `match_start`          | `game_config`        | Match configuration (blinds, stacks, hand count)        |
+| `match_start`          | `game_config`        | Match configuration (variant, stacks, blinds, ante, seats) |
 | `round_start`          | `state`              | Hand start info (hand number, dealer, hole cards)       |
 | `turn_request`         | `state`              | Current game state (phase, board, pot, stacks, actions)  |
 | `turn_request`         | `valid_actions`      | Legal action strings from the poker action vocabulary   |
 | `turn_action`          | `action`             | Chosen action string                                    |
 | `turn_action`          | `params`             | Action parameters (e.g., raise amount)                  |
-| `turn_result`          | `details`            | What happened (action, seat, amount)                    |
+| `turn_result`          | `details`            | What happened (action, amount, pot and stacks after it, is_timeout) |
 | `phase_change`         | `state`              | New board state after community cards dealt              |
-| `round_result`         | `result`             | Hand outcome (winner, pot, payouts, showdown, history)  |
+| `round_result`         | `result`             | Hand outcome (winners, pot, payouts, showdown, history, stacks, deck commitment) |
 
-Layer 1 fields such as `server_ts`, `match_id`, `round_id`, `seq`, and timeout metadata are not defined here. They are present on every message and handled entirely by Layer 1. Note that `round_id` (a UUID) appears on `round_start` and `round_result` messages to correlate the start and end of each hand.
+Layer 1 fields such as `server_ts`, `match_id`, `round_id`, `seq`, and timeout metadata are not defined here. They are present on every message and handled entirely by Layer 1. Note that `round_id` (`r_` followed by a UUID) appears on `round_start` and `round_result` messages to correlate the start and end of each hand.
 
 ---
 
@@ -123,6 +126,7 @@ Synthetic actions always appear at the **start** of `action_history` for each ha
 
 Sent once at the start of a match. Defines the rules for all hands in the match.
 
+<!-- parity: match_start.game_config -->
 ```json
 {
   "variant": "nlhe",
@@ -140,13 +144,14 @@ Sent once at the start of a match. Defines the rules for all hands in the match.
 | `starting_stack` | integer | Yes      | Chips each player starts with. Must be > 0.                   |
 | `small_blind`    | integer | Yes      | Small blind amount. Must be > 0.                               |
 | `big_blind`      | integer | Yes      | Big blind amount. Must be >= `small_blind`.                    |
-| `ante`           | integer | No       | Per-player ante posted each hand. Default `0`.                 |
+| `ante`           | integer | Yes      | Per-player ante posted each hand. `0` when there are no antes. |
 | `num_players`    | integer | Yes      | Seat count N for the table (`2` for heads-up, up to `6`). Added in the multiplayer work (#3527); see Section 5.9 for using it to derive table position. |
 
 ### 3.2 Round Start State (`round_start.state`)
 
 Sent at the beginning of each hand, before any actions.
 
+<!-- parity: round_start.state -->
 ```json
 {
   "hand_number": 1,
@@ -155,7 +160,7 @@ Sent at the beginning of each hand, before any actions.
   "pot": 15,
   "post_blind_stacks": [995, 990],
   "stacks": [1000, 1000],
-  "deck_commitment": ""
+  "deck_commitment": "5c1f0e8a9b2d4c6e8f0a1b3c5d7e9f1a2b4c6d8e0f1a3b5c7d9e1f2a4b6c8d0e"
 }
 ```
 
@@ -164,15 +169,16 @@ Sent at the beginning of each hand, before any actions.
 | `hand_number`       | integer         | Yes      | 1-indexed hand number within the match.                 |
 | `dealer_seat`       | integer         | Yes      | Seat index of the dealer (button). 0-indexed.           |
 | `your_hole_cards`   | array of string | Yes      | Exactly 2 card strings dealt to the receiving player.   |
-| `pot`               | integer         | No       | Chips already in the pot at hand start — the posted blinds (possibly all-in-capped). Added in #3835; older streams omit it. |
-| `post_blind_stacks` | array of integer| No       | Chip stacks indexed by seat AFTER blinds are posted. `stacks[i] - post_blind_stacks[i]` is seat i's posted blind. Added in #3835; older streams omit it. |
+| `pot`               | integer         | Yes      | Chips already in the pot at hand start — the posted blinds (possibly all-in-capped). Added in #3835; streams from before it omit it. |
+| `post_blind_stacks` | array of integer| Yes      | Chip stacks indexed by seat AFTER blinds are posted. `stacks[i] - post_blind_stacks[i]` is seat i's posted blind. Added in #3835; streams from before it omit it. |
 | `stacks`            | array of integer| Yes      | Chip stacks indexed by seat, before blinds are posted.  |
-| `deck_commitment`   | string          | Yes      | `SHA-256(deck_seed \|\| deck_order)` where `deck_order` is the full 52-card sequence as a joined string. Empty string `""` if RNG verification is not enabled for this competition. See Section 6. |
+| `deck_commitment`   | string          | Yes      | `SHA-256(deck_seed \|\| deck_order)` as 64 hex characters, where `deck_order` is the full 52-card sequence as a joined string. The server commits to every hand's deck. See Section 6. |
 
 ### 3.3 Turn Request State (`turn_request.state`)
 
 The core decision payload. Contains everything a bot needs to choose an action.
 
+<!-- parity: turn_request.state -->
 ```json
 {
   "hand_number": 1,
@@ -189,7 +195,7 @@ The core decision payload. Contains everything a bot needs to choose an action.
     {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
     {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
     {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false},
-    {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false},
+    {"seat": 1, "action": "call", "amount": 20, "phase": "preflop", "is_timeout": false},
     {"seat": 1, "action": "raise", "amount": 20, "phase": "flop", "is_timeout": false}
   ]
 }
@@ -215,6 +221,7 @@ The core decision payload. Contains everything a bot needs to choose an action.
 
 Used in `action_history` arrays throughout the protocol. The `action_history` in `round_result.result` is the **canonical source** for the complete action history of a hand. Layer 1 does not carry action history — it lives exclusively in Layer 2.
 
+<!-- parity: turn_request.state.action_history[] -->
 ```json
 {
   "seat": 0,
@@ -229,9 +236,9 @@ Used in `action_history` arrays throughout the protocol. The `action_history` in
 |--------------|---------|----------|----------------------------------------------------------------------------|
 | `seat`       | integer | Yes      | 0-indexed seat of the player who acted.                                    |
 | `action`     | string  | Yes      | One of the action vocabulary strings (see Section 2).                      |
-| `amount`     | integer | Yes      | Chips committed for this action. `0` for `fold` and `check`.              |
+| `amount`     | integer | Yes      | For `raise`, the raise-to total; for `call`, the chips added to call; for a blind or ante, the chips posted. `0` for `fold` and `check`. |
 | `phase`      | string  | Yes      | The betting phase during which the action occurred.                        |
-| `is_timeout` | boolean | Yes      | `true` if this action was auto-applied by the server due to timeout. Makes timeout-forced actions distinguishable without cross-referencing Layer 1 timeout messages. |
+| `is_timeout` | boolean | Yes      | `true` if the server applied this action for the seat (timeout, disconnect or unparseable reply). There is no separate Layer 1 timeout message; this flag is the only record. |
 
 ### 3.5 Turn Action Params (`turn_action.params`)
 
@@ -262,11 +269,11 @@ Parameters accompanying the chosen action in `turn_action.action`.
 
 ### 3.6 Turn Result Details (`turn_result.details`)
 
-Broadcast to all participants after each action. Reveals what a player did (but not their hole cards).
+Sent to all participants after each action. Reveals what a player did (but not their hole cards). The acting seat is the Layer 1 `turn_result.seat`, outside `details`.
 
+<!-- parity: turn_result.details -->
 ```json
 {
-  "seat": 1,
   "action": "raise",
   "amount": 1200,
   "pot": 2000,
@@ -277,12 +284,11 @@ Broadcast to all participants after each action. Reveals what a player did (but 
 
 | Field        | Type             | Required | Description                                                                                              |
 |--------------|------------------|----------|--------------------------------------------------------------------------------------------------------|
-| `seat`       | integer          | Yes      | Seat of the player who acted.                                                                           |
 | `action`     | string           | Yes      | The action taken.                                                                                       |
 | `amount`     | integer          | Yes      | For `raise`, the raise-"to" total; for `call` the call amount. `0` for `fold` and `check`.              |
 | `pot`        | integer          | Yes      | **POST-action** pot — the total pot AFTER the acting seat's chips for this action are committed (#3102). |
 | `stacks`     | array of integer | Yes      | **POST-action** per-seat chip stacks, indexed by seat (`stacks[seat]`). Only the acting seat's stack changes; others carry their current live stack (#3102). |
-| `is_timeout` | boolean          | Yes      | `true` if the action was a server-substituted default after a timeout/disconnect.                       |
+| `is_timeout` | boolean          | Yes      | `true` if the action was a server-substituted default (timeout, disconnect or unparseable reply). Always present. |
 
 **`pot` is the post-action pot, not the pre-action pot (#3102).** It equals the
 pot *entering* the action plus the acting seat's incremental contribution for
@@ -298,6 +304,7 @@ then raises-to 1200 on the flop with no prior flop contribution → `pot` is
 
 Sent when the betting round completes and new community cards are dealt.
 
+<!-- parity: phase_change.state -->
 ```json
 {
   "phase": "turn",
@@ -319,6 +326,7 @@ Phase transitions and card counts:
 
 Sent at the conclusion of each hand. Provides the complete audit trail.
 
+<!-- parity: round_result.result -->
 ```json
 {
   "hand_number": 1,
@@ -328,23 +336,23 @@ Sent at the conclusion of each hand. Provides the complete audit trail.
     {"seat": 0, "amount": 60}
   ],
   "showdown": [
-    {"seat": 0, "hole_cards": ["Ah", "Kd"], "hand_rank": "pair"},
-    {"seat": 1, "hole_cards": ["Jc", "Tc"], "hand_rank": "high_card"}
+    {"seat": 0, "hole_cards": ["Ah", "Kd"], "hand_rank": "Pair", "best_hand": ["Kd", "Ks", "Ah", "Qc", "9d"]},
+    {"seat": 1, "hole_cards": ["Jc", "8c"], "hand_rank": "High Card", "best_hand": ["Ks", "Qc", "Jc", "9d", "8c"]}
   ],
   "action_history": [
     {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
     {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
     {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false},
-    {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false},
-    {"seat": 0, "action": "check", "amount": 0, "phase": "flop", "is_timeout": false},
+    {"seat": 1, "action": "call", "amount": 20, "phase": "preflop", "is_timeout": false},
     {"seat": 1, "action": "check", "amount": 0, "phase": "flop", "is_timeout": false},
-    {"seat": 0, "action": "check", "amount": 0, "phase": "turn", "is_timeout": false},
+    {"seat": 0, "action": "check", "amount": 0, "phase": "flop", "is_timeout": false},
     {"seat": 1, "action": "check", "amount": 0, "phase": "turn", "is_timeout": false},
-    {"seat": 0, "action": "check", "amount": 0, "phase": "river", "is_timeout": false},
-    {"seat": 1, "action": "check", "amount": 0, "phase": "river", "is_timeout": false}
+    {"seat": 0, "action": "check", "amount": 0, "phase": "turn", "is_timeout": false},
+    {"seat": 1, "action": "check", "amount": 0, "phase": "river", "is_timeout": false},
+    {"seat": 0, "action": "check", "amount": 0, "phase": "river", "is_timeout": false}
   ],
   "stacks": [1030, 970],
-  "deck_commitment": "",
+  "deck_commitment": "5c1f0e8a9b2d4c6e8f0a1b3c5d7e9f1a2b4c6d8e0f1a3b5c7d9e1f2a4b6c8d0e",
   "deck_reveal": null
 }
 ```
@@ -355,19 +363,21 @@ Sent at the conclusion of each hand. Provides the complete audit trail.
 | `winner_seats`   | array of integer       | Yes      | Seat(s) that won. Multiple entries for split pots.                                          |
 | `pot`            | integer                | Yes      | Total pot size for the hand.                                                                |
 | `payouts`          | array of PayoutEntry   | Yes      | Array of `{"seat": <int>, "amount": <int>}` objects. All seats in `winner_seats` appear here. Consistent with other seat-indexed structures in the protocol. |
-| `showdown`         | array of ShowdownEntry | Yes      | Players who reached showdown. Empty array `[]` if hand ended before showdown (e.g., fold).  |
+| `showdown`         | array of ShowdownEntry | Yes      | The hands revealed at showdown. Entries appear only when two or more seats were still contesting the hand at its end (including an all-in run-out); each such seat is listed with its hole cards. **When the hand was won by a fold, players receive `showdown: []`:** no hole cards are revealed. |
 | `action_history`   | array of ActionEntry   | Yes      | Complete ordered list of every action in the hand, including synthetic blind/ante entries. This is the **canonical source** for the hand's action history. Full audit trail. |
 | `stacks`           | array of integer       | Yes      | Updated chip stacks after payouts, indexed by seat.                                         |
-| `deck_commitment`  | string                 | Yes      | `SHA-256(deck_seed \|\| deck_order)` commitment from `round_start`. Empty string `""` if RNG verification is not enabled. See Section 6. |
-| `deck_reveal`      | object or null         | Yes      | When RNG verification is enabled: `{"seed": "<hex>", "deck_order": ["Ah", "Kd", ...]}`. When not enabled: `null`. Participants verify: `SHA-256(seed \|\| join(deck_order)) == deck_commitment`. See Section 6. |
+| `deck_commitment`  | string                 | Yes      | The `SHA-256(deck_seed \|\| deck_order)` commitment from `round_start`. See Section 6. |
+| `deck_reveal`      | null                   | Yes      | Always `null` for participants: the deal order would reveal opponents' folded hole cards, so the reveal is withheld from players (chipzen-ai/Chipzen#3575). Spectators receive `{"seed": "<hex>", "deck_order": [...]}`. See Section 6. |
 
 ### 3.9 Showdown Entry Schema
 
+<!-- parity: round_result.result.showdown[] -->
 ```json
 {
   "seat": 0,
   "hole_cards": ["Ah", "Kd"],
-  "hand_rank": "pair"
+  "hand_rank": "Pair",
+  "best_hand": ["Kd", "Ks", "Ah", "Qc", "9d"]
 }
 ```
 
@@ -375,28 +385,30 @@ Sent at the conclusion of each hand. Provides the complete audit trail.
 |-------------|-----------------|----------|---------------------------------------------------------|
 | `seat`      | integer         | Yes      | Seat of the player at showdown.                         |
 | `hole_cards`| array of string | Yes      | The player's 2 hole cards.                              |
-| `hand_rank` | string          | Yes      | Winning hand classification (see hand rank values).     |
+| `hand_rank` | string          | Yes      | The seat's hand class (see hand rank values). `""` if the hand ended before the river. |
+| `best_hand` | array of string | Yes      | The five cards making that hand. `[]` if the hand ended before the river. |
 
 ### Hand Rank Values
 
-| Value              | Hand                |
-|--------------------|---------------------|
-| `high_card`        | High card           |
-| `pair`             | One pair            |
-| `two_pair`         | Two pair            |
-| `three_of_a_kind`  | Three of a kind     |
-| `straight`         | Straight            |
-| `flush`            | Flush               |
-| `full_house`       | Full house          |
-| `four_of_a_kind`   | Four of a kind      |
-| `straight_flush`   | Straight flush      |
-| `royal_flush`      | Royal flush         |
+The values are display strings, not `snake_case` codes, and are sent exactly as shown (spaces and capitals included). A royal flush is reported as `Straight Flush`.
+
+| Value               | Hand                |
+|---------------------|---------------------|
+| `High Card`         | High card           |
+| `Pair`              | One pair            |
+| `Two Pair`          | Two pair            |
+| `Three of a Kind`   | Three of a kind     |
+| `Straight`          | Straight            |
+| `Flush`             | Flush               |
+| `Full House`        | Full house          |
+| `Four of a Kind`    | Four of a kind      |
+| `Straight Flush`    | Straight flush (including a royal flush) |
 
 ---
 
 ## 4. Full Hand Example
 
-This section shows a complete hand played through the protocol, demonstrating how Layer 2 payloads nest inside Layer 1 messages. Layer 1 envelope fields (`type`, `match_id`, `seq`, `server_ts`, `timeout_ms`) are shown for context.
+This section shows a complete hand played through the protocol, demonstrating how Layer 2 payloads nest inside Layer 1 messages. Layer 1 fields are shown in full. Each seat has its own `seq` counter, so a frame both seats receive can carry a different `seq` for each; the headings say which seat a frame is shown for.
 
 ### Setup
 
@@ -405,14 +417,18 @@ This section shows a complete hand played through the protocol, demonstrating ho
 - Blinds: 5/10
 - Seat 0 is the dealer (and small blind in heads-up)
 
-### Message 1: match_start
+### Message 1: match_start (to Seat 0; Seat 1 receives the same with `is_self` and `your_seat` for seat 1)
 
 ```json
 {
   "type": "match_start",
-  "match_id": "m_abc123",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "seq": 1,
   "server_ts": "2026-04-13T14:00:00.000Z",
+  "seats": [
+    {"seat": 0, "display_name": "Bot A", "participant_id": "p_abc123", "is_self": true},
+    {"seat": 1, "display_name": "Bot B", "participant_id": "p_def456", "is_self": false}
+  ],
   "game_config": {
     "variant": "nlhe",
     "starting_stack": 1000,
@@ -420,7 +436,9 @@ This section shows a complete hand played through the protocol, demonstrating ho
     "big_blind": 10,
     "ante": 0,
     "num_players": 2
-  }
+  },
+  "turn_timeout_ms": 5000,
+  "your_seat": 0
 }
 ```
 
@@ -429,16 +447,19 @@ This section shows a complete hand played through the protocol, demonstrating ho
 ```json
 {
   "type": "round_start",
-  "match_id": "m_abc123",
-  "round_id": "r_550e8400-e29b-41d4-a716-446655440000",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "seq": 2,
-  "server_ts": "2026-04-13T14:00:00.100Z",
+  "server_ts": "2026-04-13T14:00:00.000Z",
+  "round_id": "r_550e8400-e29b-41d4-a716-446655440000",
+  "round_number": 1,
   "state": {
     "hand_number": 1,
     "dealer_seat": 0,
     "your_hole_cards": ["As", "Kh"],
+    "pot": 15,
+    "post_blind_stacks": [995, 990],
     "stacks": [1000, 1000],
-    "deck_commitment": ""
+    "deck_commitment": "5c1f0e8a9b2d4c6e8f0a1b3c5d7e9f1a2b4c6d8e0f1a3b5c7d9e1f2a4b6c8d0e"
   }
 }
 ```
@@ -448,16 +469,19 @@ This section shows a complete hand played through the protocol, demonstrating ho
 ```json
 {
   "type": "round_start",
-  "match_id": "m_abc123",
-  "round_id": "r_550e8400-e29b-41d4-a716-446655440000",
-  "seq": 3,
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 2,
   "server_ts": "2026-04-13T14:00:00.100Z",
+  "round_id": "r_550e8400-e29b-41d4-a716-446655440000",
+  "round_number": 1,
   "state": {
     "hand_number": 1,
     "dealer_seat": 0,
     "your_hole_cards": ["Jd", "Tc"],
+    "pot": 15,
+    "post_blind_stacks": [995, 990],
     "stacks": [1000, 1000],
-    "deck_commitment": ""
+    "deck_commitment": "5c1f0e8a9b2d4c6e8f0a1b3c5d7e9f1a2b4c6d8e0f1a3b5c7d9e1f2a4b6c8d0e"
   }
 }
 ```
@@ -469,11 +493,15 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_request",
-  "match_id": "m_abc123",
-  "seq": 4,
-  "server_ts": "2026-04-13T14:00:00.200Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 3,
+  "server_ts": "2026-04-13T14:00:00.100Z",
   "seat": 0,
-  "timeout_ms": 10000,
+  "request_id": "req_1a2b3c4d5e6f",
+  "timeout_ms": 5000,
+  "turn_duration_ms": 5000,
+  "deadline_ts": 1776088805200,
+  "valid_actions": ["fold", "call", "raise"],
   "state": {
     "hand_number": 1,
     "phase": "preflop",
@@ -484,13 +512,12 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
     "opponent_stacks": [990],
     "to_call": 5,
     "min_raise": 20,
-    "max_raise": 995,
+    "max_raise": 1000,
     "action_history": [
       {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false}
     ]
-  },
-  "valid_actions": ["fold", "call", "raise"]
+  }
 }
 ```
 
@@ -499,25 +526,30 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_action",
-  "match_id": "m_abc123",
-  "seq": 5,
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "request_id": "req_1a2b3c4d5e6f",
   "action": "raise",
-  "params": {"amount": 30}
+  "params": {
+    "amount": 30
+  }
 }
 ```
 
-### Message 6: turn_result (broadcast)
+### Message 6: turn_result (Seat 0 receives it at once; Seat 1 after the jitter, as its seq 3)
 
 ```json
 {
   "type": "turn_result",
-  "match_id": "m_abc123",
-  "seq": 6,
-  "server_ts": "2026-04-13T14:00:01.500Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 4,
+  "server_ts": "2026-04-13T14:00:00.200Z",
+  "seat": 0,
   "details": {
-    "seat": 0,
     "action": "raise",
-    "amount": 30
+    "amount": 30,
+    "pot": 40,
+    "stacks": [970, 990],
+    "is_timeout": false
   }
 }
 ```
@@ -527,11 +559,15 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_request",
-  "match_id": "m_abc123",
-  "seq": 7,
-  "server_ts": "2026-04-13T14:00:01.600Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 4,
+  "server_ts": "2026-04-13T14:00:01.500Z",
   "seat": 1,
-  "timeout_ms": 10000,
+  "request_id": "req_2b3c4d5e6f7a",
+  "timeout_ms": 5000,
+  "turn_duration_ms": 5000,
+  "deadline_ts": 1776088806600,
+  "valid_actions": ["fold", "call", "raise"],
   "state": {
     "hand_number": 1,
     "phase": "preflop",
@@ -542,14 +578,13 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
     "opponent_stacks": [970],
     "to_call": 20,
     "min_raise": 50,
-    "max_raise": 990,
+    "max_raise": 1000,
     "action_history": [
       {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
       {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false}
     ]
-  },
-  "valid_actions": ["fold", "call", "raise"]
+  }
 }
 ```
 
@@ -558,37 +593,40 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_action",
-  "match_id": "m_abc123",
-  "seq": 8,
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "request_id": "req_2b3c4d5e6f7a",
   "action": "call",
   "params": {}
 }
 ```
 
-### Message 9: turn_result (broadcast)
+### Message 9: turn_result (to Seat 1; Seat 0 receives it as its seq 5)
 
 ```json
 {
   "type": "turn_result",
-  "match_id": "m_abc123",
-  "seq": 9,
-  "server_ts": "2026-04-13T14:00:02.800Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 5,
+  "server_ts": "2026-04-13T14:00:01.500Z",
+  "seat": 1,
   "details": {
-    "seat": 1,
     "action": "call",
-    "amount": 20
+    "amount": 20,
+    "pot": 60,
+    "stacks": [970, 970],
+    "is_timeout": false
   }
 }
 ```
 
-### Message 10: phase_change (flop dealt)
+### Message 10: phase_change (flop dealt; seq 6 for both seats)
 
 ```json
 {
   "type": "phase_change",
-  "match_id": "m_abc123",
-  "seq": 10,
-  "server_ts": "2026-04-13T14:00:03.000Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 6,
+  "server_ts": "2026-04-13T14:00:01.600Z",
   "state": {
     "phase": "flop",
     "board": ["Qs", "7h", "3d"]
@@ -601,11 +639,15 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_request",
-  "match_id": "m_abc123",
-  "seq": 11,
-  "server_ts": "2026-04-13T14:00:03.100Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 7,
+  "server_ts": "2026-04-13T14:00:02.800Z",
   "seat": 1,
-  "timeout_ms": 10000,
+  "request_id": "req_3c4d5e6f7a8b",
+  "timeout_ms": 5000,
+  "turn_duration_ms": 5000,
+  "deadline_ts": 1776088808100,
+  "valid_actions": ["check", "raise"],
   "state": {
     "hand_number": 1,
     "phase": "flop",
@@ -621,10 +663,9 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
       {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
       {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false},
-      {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false}
+      {"seat": 1, "action": "call", "amount": 20, "phase": "preflop", "is_timeout": false}
     ]
-  },
-  "valid_actions": ["check", "raise"]
+  }
 }
 ```
 
@@ -633,25 +674,28 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_action",
-  "match_id": "m_abc123",
-  "seq": 12,
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "request_id": "req_3c4d5e6f7a8b",
   "action": "check",
   "params": {}
 }
 ```
 
-### Message 13: turn_result (broadcast)
+### Message 13: turn_result (to Seat 1; Seat 0 receives it as its seq 7)
 
 ```json
 {
   "type": "turn_result",
-  "match_id": "m_abc123",
-  "seq": 13,
-  "server_ts": "2026-04-13T14:00:04.000Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 8,
+  "server_ts": "2026-04-13T14:00:02.800Z",
+  "seat": 1,
   "details": {
-    "seat": 1,
     "action": "check",
-    "amount": 0
+    "amount": 0,
+    "pot": 60,
+    "stacks": [970, 970],
+    "is_timeout": false
   }
 }
 ```
@@ -661,11 +705,15 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_request",
-  "match_id": "m_abc123",
-  "seq": 14,
-  "server_ts": "2026-04-13T14:00:04.100Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 8,
+  "server_ts": "2026-04-13T14:00:03.000Z",
   "seat": 0,
-  "timeout_ms": 10000,
+  "request_id": "req_4d5e6f7a8b9c",
+  "timeout_ms": 5000,
+  "turn_duration_ms": 5000,
+  "deadline_ts": 1776088809100,
+  "valid_actions": ["check", "raise"],
   "state": {
     "hand_number": 1,
     "phase": "flop",
@@ -681,11 +729,10 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
       {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
       {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false},
-      {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false},
+      {"seat": 1, "action": "call", "amount": 20, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "check", "amount": 0, "phase": "flop", "is_timeout": false}
     ]
-  },
-  "valid_actions": ["check", "raise"]
+  }
 }
 ```
 
@@ -694,25 +741,30 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_action",
-  "match_id": "m_abc123",
-  "seq": 15,
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "request_id": "req_4d5e6f7a8b9c",
   "action": "raise",
-  "params": {"amount": 40}
+  "params": {
+    "amount": 40
+  }
 }
 ```
 
-### Message 16: turn_result (broadcast)
+### Message 16: turn_result (to Seat 0; Seat 1 receives it as its seq 9)
 
 ```json
 {
   "type": "turn_result",
-  "match_id": "m_abc123",
-  "seq": 16,
-  "server_ts": "2026-04-13T14:00:05.200Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 9,
+  "server_ts": "2026-04-13T14:00:03.100Z",
+  "seat": 0,
   "details": {
-    "seat": 0,
     "action": "raise",
-    "amount": 40
+    "amount": 40,
+    "pot": 100,
+    "stacks": [930, 970],
+    "is_timeout": false
   }
 }
 ```
@@ -722,11 +774,15 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_request",
-  "match_id": "m_abc123",
-  "seq": 17,
-  "server_ts": "2026-04-13T14:00:05.300Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 10,
+  "server_ts": "2026-04-13T14:00:04.000Z",
   "seat": 1,
-  "timeout_ms": 10000,
+  "request_id": "req_5e6f7a8b9c0d",
+  "timeout_ms": 5000,
+  "turn_duration_ms": 5000,
+  "deadline_ts": 1776088810300,
+  "valid_actions": ["fold", "call", "raise"],
   "state": {
     "hand_number": 1,
     "phase": "flop",
@@ -742,12 +798,11 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
       {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
       {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false},
-      {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false},
+      {"seat": 1, "action": "call", "amount": 20, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "check", "amount": 0, "phase": "flop", "is_timeout": false},
       {"seat": 0, "action": "raise", "amount": 40, "phase": "flop", "is_timeout": false}
     ]
-  },
-  "valid_actions": ["fold", "call", "raise"]
+  }
 }
 ```
 
@@ -756,40 +811,44 @@ Blinds have been posted: Seat 0 posted SB (5), Seat 1 posted BB (10). These are 
 ```json
 {
   "type": "turn_action",
-  "match_id": "m_abc123",
-  "seq": 18,
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "request_id": "req_5e6f7a8b9c0d",
   "action": "fold",
   "params": {}
 }
 ```
 
-### Message 19: turn_result (broadcast)
+### Message 19: turn_result (to Seat 1; Seat 0 receives it as its seq 10)
 
 ```json
 {
   "type": "turn_result",
-  "match_id": "m_abc123",
-  "seq": 19,
-  "server_ts": "2026-04-13T14:00:06.000Z",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 11,
+  "server_ts": "2026-04-13T14:00:04.100Z",
+  "seat": 1,
   "details": {
-    "seat": 1,
     "action": "fold",
-    "amount": 0
+    "amount": 0,
+    "pot": 100,
+    "stacks": [930, 970],
+    "is_timeout": false
   }
 }
 ```
 
-### Message 20: round_result
+### Message 20: round_result (to Seat 0, seq 11; Seat 1 receives the same as its seq 12)
 
-No showdown (Seat 1 folded). Seat 0 wins the pot. Hole cards are not revealed.
+No showdown: Seat 1 folded and Seat 0 wins the pot. Because the hand was won by a fold, `showdown` is `[]` and no hole cards are revealed (see Section 3.8).
 
 ```json
 {
   "type": "round_result",
-  "match_id": "m_abc123",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "seq": 11,
+  "server_ts": "2026-04-13T14:00:05.200Z",
   "round_id": "r_550e8400-e29b-41d4-a716-446655440000",
-  "seq": 20,
-  "server_ts": "2026-04-13T14:00:06.100Z",
+  "round_number": 1,
   "result": {
     "hand_number": 1,
     "winner_seats": [0],
@@ -802,13 +861,13 @@ No showdown (Seat 1 folded). Seat 0 wins the pot. Hole cards are not revealed.
       {"seat": 0, "action": "post_small_blind", "amount": 5, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "post_big_blind", "amount": 10, "phase": "preflop", "is_timeout": false},
       {"seat": 0, "action": "raise", "amount": 30, "phase": "preflop", "is_timeout": false},
-      {"seat": 1, "action": "call", "amount": 30, "phase": "preflop", "is_timeout": false},
+      {"seat": 1, "action": "call", "amount": 20, "phase": "preflop", "is_timeout": false},
       {"seat": 1, "action": "check", "amount": 0, "phase": "flop", "is_timeout": false},
       {"seat": 0, "action": "raise", "amount": 40, "phase": "flop", "is_timeout": false},
       {"seat": 1, "action": "fold", "amount": 0, "phase": "flop", "is_timeout": false}
     ],
     "stacks": [1030, 970],
-    "deck_commitment": "",
+    "deck_commitment": "5c1f0e8a9b2d4c6e8f0a1b3c5d7e9f1a2b4c6d8e0f1a3b5c7d9e1f2a4b6c8d0e",
     "deck_reveal": null
   }
 }
@@ -858,7 +917,7 @@ In multi-player scenarios where players are all-in for different amounts, the se
 
 ### 5.8 Timeout Behavior
 
-Timeouts are handled by Layer 1. When a player times out, the server substitutes a default action: `check` if checking is free, otherwise `fold`. This substituted action flows through `turn_result` and `action_history` normally. The `is_timeout` field on the action entry is set to `true` for timeout-forced actions, making them distinguishable from player-chosen actions without cross-referencing Layer 1 timeout messages.
+Timeouts are handled by Layer 1. When a player times out, the server substitutes a default action: `check` if checking is free, otherwise `fold`. This substituted action flows through `turn_result` and `action_history` normally. `is_timeout` is set to `true` on both `turn_result.details` and the action entry. There is no separate timeout message, so this flag is how a client tells a substituted action from a chosen one.
 
 ### 5.9 Multi-Player Tables and Position Derivation
 
@@ -893,7 +952,7 @@ The protocol includes fields to support fair play verification:
 |------------------------|--------------------------------------------------------------------------------|
 | Complete action history | `round_result.action_history` contains every action by every player per hand, including synthetic blind/ante entries and `is_timeout` flags. |
 | Timestamps             | Layer 1 `server_ts` on every message provides a tamper-evident timeline.      |
-| Deck verification      | Commit-reveal scheme via `deck_commitment` and `deck_reveal` fields.          |
+| Deck verification      | Commit-reveal scheme via `deck_commitment` and `deck_reveal` fields (the reveal goes to spectators only). |
 | Card retention          | Server retains all dealt cards (including mucked hands) for dispute resolution.|
 | Deterministic replay   | Complete action history + deck reveal enables full hand reconstruction.        |
 
@@ -901,7 +960,7 @@ The protocol includes fields to support fair play verification:
 
 The protocol defines a commit-reveal scheme for RNG verification. This allows participants to verify that the deck was not altered mid-hand.
 
-**Commitment phase** (`round_start.state.deck_commitment`):
+**Commitment phase** (`round_start.state.deck_commitment`, sent for every hand):
 
 Before dealing, the server generates a random `deck_seed` and shuffles the deck to produce `deck_order` (the full 52-card sequence). The commitment is:
 
@@ -913,7 +972,7 @@ Where `join(deck_order)` concatenates the 52 two-character card strings (e.g., `
 
 **Reveal phase** (`round_result.result.deck_reveal`):
 
-After the hand completes, the server reveals the seed and full deck order:
+After the hand completes, the server reveals the seed and full deck order **to spectators only**. Participants always receive `deck_reveal: null`, because the deal order would expose opponents' folded hole cards (chipzen-ai/Chipzen#3575). A spectator's reveal looks like this:
 
 ```json
 {
@@ -922,9 +981,9 @@ After the hand completes, the server reveals the seed and full deck order:
 }
 ```
 
-**Verification**: Participants verify that `SHA-256(seed || join(deck_order)) == deck_commitment` from the corresponding `round_start`. They can also verify that the dealt cards (hole cards, board) match the expected positions in `deck_order`.
+**Verification**: A holder of the reveal verifies that `SHA-256(seed || join(deck_order)) == deck_commitment` from the corresponding `round_start`. They can also verify that the dealt cards (hole cards, board) match the expected positions in `deck_order`.
 
-**v1 note**: v1 implementations MAY leave `deck_commitment` as an empty string `""` and `deck_reveal` as `null`. The schema is defined and ready for when RNG verification is enabled for a competition.
+**v1 note**: the server sends a real `deck_commitment` for every hand. A participant can keep it for a later audit but cannot check it during play, since its own `deck_reveal` is `null`.
 
 ---
 

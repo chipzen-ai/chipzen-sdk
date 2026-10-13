@@ -3,6 +3,9 @@
 **Version:** 1.0.0-draft
 **Status:** Draft
 **Date:** 2026-04-13
+**Frames last checked against the executor:** 2026-10-07 (chipzen-ai/Chipzen#5573)
+
+> **The frame examples and schemas in this document are checked against the server code.** A parity test in the platform repository compares the keys of every server frame example and Appendix A schema with the frames the match server builds, so an example that does not match what the server sends fails CI. Where this document and the server disagree, the server is right.
 
 ---
 
@@ -56,8 +59,10 @@ The protocol follows a strict request-response pattern for actions: the server s
 
 | Direction | Messages |
 |-----------|----------|
-| Server to Bot | `hello`, `session_token`, `match_start`, `round_start`, `turn_request`, `turn_result`, `round_result`, `phase_change`, `match_end`, `error`, `action_rejected`, `action_timeout`, `session_control`, `ping`, `reconnected` |
-| Bot to Server | `authenticate`, `hello`, `turn_action`, `pong` |
+| Server to Bot | `hello`, `match_start`, `round_start`, `turn_request`, `turn_result`, `phase_change`, `round_result`, `match_end`, `action_rejected`, `error` |
+| Bot to Server | `authenticate`, `hello`, `turn_action` |
+
+The match executor sends no other frame type to a bot. `session_token`, `action_timeout`, `session_control`, `ping` and `reconnected` were in earlier drafts of this document but are not sent; sections 8.2 and 8.12-8.15 say what happens instead. Bots must still ignore frame types they do not recognise (section 16.1).
 
 ---
 
@@ -73,7 +78,12 @@ Example: `"2026-04-13T14:30:05.123Z"`
 
 ### 3.2 Sequence Numbers
 
-All server messages include a `seq` field: a monotonically increasing integer starting at 1 for each connection. Sequence numbers are per-connection, not per-match. On reconnect, sequencing continues from where the previous connection ended.
+All server messages include a `seq` field, a monotonically increasing integer. The executor keeps two counters per seat:
+
+- The server `hello` has its own handshake counter, so it always carries `seq: 1`.
+- Game frames have a per-seat counter that starts at 1 with `match_start` and goes up by one on every frame that seat receives. A reconnecting seat keeps its counter, so numbering continues where the dropped connection left off.
+
+An `error` frame sent while rejecting a connection (section 8.10) is built on a fresh counter and carries `seq: 1`.
 
 ### 3.3 Match Identifiers
 
@@ -143,19 +153,18 @@ Bot                                Server
  |<----------- hello -----------------|  (2) Server hello
  |------------ hello ---------------->|  (3) Bot hello
  |                                    |
- |<------- session_token -------------|  (4) If authenticated endpoint
+ |<------- match_start ---------------|  (4) Match begins
  |                                    |
- |<------- match_start ---------------|  (5) Match begins
- |                                    |
- |<------- round_start ---------------|  (6) Round begins
- |<------- turn_request --------------|  (7) Bot's turn
- |------------ turn_action ---------->|  (8) Bot acts
- |<------- turn_result ---------------|  (9) Result broadcast
+ |<------- round_start ---------------|  (5) Round begins
+ |<------- turn_request --------------|  (6) Bot's turn
+ |------------ turn_action ---------->|  (7) Bot acts
+ |<------- turn_result ---------------|  (8) Result broadcast
+ |<------- phase_change --------------|      (when the phase advances)
  |          ... more turns ...        |
- |<------- round_result --------------|  (10) Round ends
+ |<------- round_result --------------|  (9) Round ends
  |          ... more rounds ...       |
  |                                    |
- |<------- match_end -----------------|  (11) Match ends
+ |<------- match_end -----------------|  (10) Match ends
  |                                    |
  |-------- WS Close ----------------->|
 ```
@@ -165,11 +174,10 @@ Bot                                Server
 1. Bot opens a WebSocket connection to the appropriate endpoint.
 2. Bot sends an `authenticate` message containing a `ticket` or `token` within 5000ms of connection.
 3. Server validates the credential. If invalid, the server closes the connection with code 4001 (`auth_failed`).
-4. Server sends a `hello` message containing the `selected_version` (see section 16.3).
+4. Server sends a `hello` message containing its `supported_versions` and `selected_version` (see section 16.3).
 5. Bot must respond with a `hello` message within 5000ms.
 6. If no mutually supported protocol version exists, server closes with code 4013.
-7. For authenticated endpoints, the server sends a `session_token` message.
-8. No game messages are sent until the handshake is complete.
+7. No game messages are sent until the handshake is complete. The next frame is `match_start`; no session token is issued.
 
 ### 5.2 Connection Wait
 
@@ -201,6 +209,8 @@ The server tracks each participant's state independently:
 **The server only accepts `turn_action` messages when the participant is in the `awaiting_action` state.** Any `turn_action` received in another state is silently dropped.
 
 **While in the `paused` state**, turn timeouts are suspended and no `turn_request` messages are sent. When the server sends `session_control` with action `resume`, the participant returns to their previous state.
+
+> **The `paused` state is not reached today.** The match server has a pause/resume primitive that would send `session_control`, but nothing calls it (section 8.13).
 
 ---
 
@@ -250,7 +260,7 @@ All bot message schemas use `additionalProperties: false`. Unknown fields in bot
 
 ### 8.1 `hello`
 
-Sent immediately after WebSocket acceptance. Must be the first message on the connection.
+Sent after the server has received the bot's `authenticate` message. It is the first server message on the connection.
 
 ```json
 {
@@ -258,43 +268,28 @@ Sent immediately after WebSocket acceptance. Must be the first message on the co
   "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "seq": 1,
   "server_ts": "2026-04-13T14:30:05.123Z",
-  "supported_versions": ["1.0", "1.1"],
+  "supported_versions": ["1.0"],
   "selected_version": "1.0",
-  "game_type": "nlhe_6max",
-  "capabilities": ["reconnect", "spectate"],
-  "server_id": "match-server-us-east-1a"
+  "server_name": "chipzen",
+  "game_type": "poker",
+  "capabilities": ["reconnect"]
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `supported_versions` | string[] | yes | Protocol versions supported by the server (major.minor format) |
-| `selected_version` | string | yes | The highest mutually supported version, selected after comparing with the bot's `authenticate` message. If no overlap exists, the server closes with code 4013 instead of sending `hello`. |
-| `game_type` | string | yes | Identifier for the game type (e.g., `nlhe_6max`, `plo_9max`) |
-| `capabilities` | string[] | yes | Server capabilities (e.g., `reconnect`, `spectate`) |
-| `server_id` | string | no | Opaque server instance identifier |
+| `supported_versions` | string[] | yes | Protocol versions supported by the server (major.minor format). Currently `["1.0"]`. |
+| `selected_version` | string | yes | The server's preferred version (the first entry of `supported_versions`). It is sent before the bot's `hello`, so it is not negotiated; the server checks for an overlap when the bot's `hello` arrives and closes with code 4013 if there is none (section 16.3). |
+| `server_name` | string | yes | Always `"chipzen"`. |
+| `game_type` | string | yes | The game this seat is playing. `"poker"` for NLHE. |
+| `capabilities` | string[] | yes | Server capabilities. The server sends `["reconnect"]` while reconnection is enabled, and `[]` when it has been switched off. |
+| `game` | object | no | Only at a non-poker table: the game's action vocabulary, phase sequence and state-shape marker (chipzen-ai/Chipzen#4245). Absent for poker, so an NLHE `hello` never carries it. |
+
+There is no `server_id` field.
 
 ### 8.2 `session_token`
 
-Sent after successful handshake on authenticated endpoints. The token is bound to this connection and invalidated on disconnect.
-
-```json
-{
-  "type": "session_token",
-  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 2,
-  "server_ts": "2026-04-13T14:30:05.200Z",
-  "token": "ct_a8f3e2b1c4d5e6f7...",
-  "expires_at": "2026-04-13T18:30:05.200Z"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `token` | string | yes | Session token (minimum 32 bytes entropy, cryptographically random, base64url-encoded) |
-| `expires_at` | string | yes | ISO 8601 expiration timestamp |
-
-The token is invalidated immediately upon connection close. A new token is issued on reconnect.
+**Not sent.** The match executor never sends a `session_token` frame, and no session token is issued at the handshake or on reconnect. Nothing in the handshake depends on one: after the bot's `hello` the next frame is `match_start`.
 
 ### 8.3 `match_start`
 
@@ -304,26 +299,27 @@ Announces the beginning of a match. Sent to all participants after all have conn
 {
   "type": "match_start",
   "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 3,
+  "seq": 1,
   "server_ts": "2026-04-13T14:30:06.000Z",
   "seats": [
     {
       "seat": 0,
-      "participant_id": "p_abc123",
       "display_name": "AlphaBot",
+      "participant_id": "p_abc123",
       "is_self": false
     },
     {
       "seat": 1,
+      "display_name": "MyBot",
       "participant_id": "p_def456",
-      "display_name": "You",
       "is_self": true
     }
   ],
   "game_config": {
     "_comment": "Game-specific configuration -- see Layer 2 spec"
   },
-  "turn_timeout_ms": 5000
+  "turn_timeout_ms": 5000,
+  "your_seat": 1
 }
 ```
 
@@ -331,11 +327,12 @@ Announces the beginning of a match. Sent to all participants after all have conn
 |-------|------|----------|-------------|
 | `seats` | object[] | yes | Array of seat assignments |
 | `seats[].seat` | integer | yes | Zero-indexed seat number |
+| `seats[].display_name` | string | yes | The participant's platform name (for a bot, the bot's name) |
 | `seats[].participant_id` | string | yes | Stable, opaque participant identifier |
-| `seats[].display_name` | string | yes | Display name for the participant |
-| `seats[].is_self` | boolean | yes | `true` if this seat belongs to the receiving client |
+| `seats[].is_self` | boolean | yes | `true` only on the receiving client's own seat |
 | `game_config` | object | yes | Game-specific configuration (opaque to Layer 1) |
 | `turn_timeout_ms` | integer | yes | Default action timeout in milliseconds |
+| `your_seat` | integer | yes | The receiving client's seat. Kept for older clients; it always equals the `seat` of the `is_self` entry. |
 
 > **Note:** Layer 1 does not impose a round count — how a match ends is game-specific. For poker it is elimination: the match runs until a seat busts, and the per-match hand cap is deliberately **not** exposed in `game_config` so bots cannot condition strategy on a remaining-hands count (chipzen-ai/Chipzen#1588).
 
@@ -347,9 +344,9 @@ Signals the beginning of a new round.
 {
   "type": "round_start",
   "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 4,
+  "seq": 2,
   "server_ts": "2026-04-13T14:30:07.000Z",
-  "round_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "round_id": "r_f47ac10b-58cc-4372-a567-0e02b2c3d479",
   "round_number": 1,
   "state": {
     "_comment": "Game-specific state -- see Layer 2 spec"
@@ -359,7 +356,7 @@ Signals the beginning of a new round.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `round_id` | string (UUID) | yes | Globally unique identifier for this round/hand, for cross-system audit reference |
+| `round_id` | string | yes | Globally unique identifier for this round/hand, for cross-system audit reference: `r_` followed by a UUID |
 | `round_number` | integer | yes | One-indexed round number within the match |
 | `state` | object | yes | Game-specific round state (opaque to Layer 1) |
 
@@ -373,12 +370,14 @@ Requests an action from the bot. The bot must respond with a `turn_action` befor
 {
   "type": "turn_request",
   "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 5,
+  "seq": 3,
   "server_ts": "2026-04-13T14:30:07.500Z",
   "seat": 1,
-  "request_id": "req_x7y8z9",
+  "request_id": "req_4621ff557b22",
   "timeout_ms": 5000,
-  "valid_actions": ["fold", "check", "call", "raise"],
+  "turn_duration_ms": 5000,
+  "deadline_ts": 1776090612500,
+  "valid_actions": ["fold", "call", "raise"],
   "state": {
     "_comment": "Game-specific state -- see Layer 2 spec"
   }
@@ -387,24 +386,25 @@ Requests an action from the bot. The bot must respond with a `turn_action` befor
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `seat` | integer | yes | The seat index of the participant whose turn it is |
-| `request_id` | string | yes | Unique identifier for this turn request. Must be echoed in the response. Used for correlation, idempotency, and deduplication. |
-| `timeout_ms` | integer | yes | Time remaining to submit an action, in milliseconds |
+| `seat` | integer | yes | The seat index of the participant whose turn it is (always the receiving client's seat) |
+| `request_id` | string | yes | Unique identifier for this turn request (`req_` plus 12 hex characters). Must be echoed in the response. Used for correlation, idempotency, and deduplication. |
+| `timeout_ms` | integer | yes | Time allowed to submit an action, in milliseconds |
+| `turn_duration_ms` | integer | yes | The same window as `timeout_ms`, for a client to start a countdown of that length when the frame arrives (chipzen-ai/Chipzen#2581) |
+| `deadline_ts` | integer | yes | The server's enforcement deadline as Unix epoch milliseconds (chipzen-ai/Chipzen#2562). For a bot it is send time plus `timeout_ms`. |
 | `valid_actions` | string[] | yes | List of valid action type strings for this turn |
 | `state` | object | yes | Current game-specific state (opaque to Layer 1) |
 
 ### 8.6 `turn_result`
 
-Broadcast to all participants after an action is taken (by any participant). The server adds random jitter of 100-500ms before broadcasting to prevent timing side-channel attacks.
+Sent to every participant after an action is applied, whoever acted. The acting seat receives it at once; the other seats receive it after a random 100-500ms jitter, so they cannot infer the actor's computation time (section 10.3).
 
 ```json
 {
   "type": "turn_result",
   "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 7,
+  "seq": 5,
   "server_ts": "2026-04-13T14:30:08.350Z",
   "seat": 1,
-  "is_timeout": false,
   "details": {
     "action": "raise",
     "_comment": "Game-specific action details -- see Layer 2 spec"
@@ -415,8 +415,9 @@ Broadcast to all participants after an action is taken (by any participant). The
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `seat` | integer | yes | Seat number of the participant who acted |
-| `is_timeout` | boolean | no | `true` if the server auto-acted due to timeout. Default `false`. Makes timeout-forced actions distinguishable without cross-referencing `action_timeout` messages. |
 | `details` | object | yes | Game-specific action details (opaque to Layer 1). The action string (e.g., `"raise"`, `"fold"`) is carried inside this object as defined by the Layer 2 protocol. |
+
+There is no top-level `is_timeout`. Whether the server substituted the action (timeout, disconnect or unparseable reply) is `details.is_timeout`, which is always present; see the Layer 2 spec.
 
 ### 8.7 `phase_change`
 
@@ -449,7 +450,7 @@ Sent at the conclusion of a round. Contains the outcome for the round.
   "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "seq": 15,
   "server_ts": "2026-04-13T14:30:12.000Z",
-  "round_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "round_id": "r_f47ac10b-58cc-4372-a567-0e02b2c3d479",
   "round_number": 1,
   "result": {
     "_comment": "Game-specific round result -- see Layer 2 spec"
@@ -459,19 +460,19 @@ Sent at the conclusion of a round. Contains the outcome for the round.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `round_id` | string (UUID) | yes | Globally unique identifier for this round/hand, for cross-system audit reference |
+| `round_id` | string | yes | The same `r_`-prefixed identifier as the round's `round_start` |
 | `round_number` | integer | yes | One-indexed round number |
 | `result` | object | yes | Game-specific result (opaque to Layer 1) |
 
 > **Note:** The complete action history for the round is contained in the `result` payload, defined by the game-specific Layer 2 protocol.
 
-> **Note:** Game-specific Layer 2 protocols MAY include cryptographic verification fields (e.g., deck seed reveal in `round_result.result`) for RNG verifiability.
+> **Note:** Game-specific Layer 2 protocols MAY include cryptographic verification fields (e.g., deck seed reveal in `round_result.result`) for RNG verifiability. Poker withholds the reveal from participants (chipzen-ai/Chipzen#3575); see the Layer 2 spec.
 
 The server retains all dealt information (e.g., all player cards) even if not exposed to all clients during play. This data is available through administrative and audit APIs.
 
 ### 8.9 `match_end`
 
-Signals the end of a match.
+Signals the end of a match. When the match is played out, every seat receives the frame below.
 
 ```json
 {
@@ -483,28 +484,67 @@ Signals the end of a match.
   "results": [
     {
       "seat": 0,
-      "participant_id": "p_abc123",
-      "rank": 2,
-      "score": 850
+      "name": "AlphaBot",
+      "net_chips": -10000,
+      "hands_won": 21,
+      "final_stack": 0,
+      "bot_errors": [],
+      "decision_latency_samples_ms": [12.4, 9.8, 15.1]
     },
     {
       "seat": 1,
-      "participant_id": "p_def456",
-      "rank": 1,
-      "score": 1150
+      "name": "MyBot",
+      "net_chips": 10000,
+      "hands_won": 27,
+      "final_stack": 20000,
+      "bot_errors": [],
+      "decision_latency_samples_ms": [3.2, 4.0, 2.9]
     }
-  ]
+  ],
+  "total_hands_played": 48,
+  "mode": "elimination",
+  "finishing_order": [
+    {"place": 1, "seat": 1, "name": "MyBot"},
+    {"place": 2, "seat": 0, "name": "AlphaBot"}
+  ],
+  "terminal_status": "completed"
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `reason` | string | yes | Why the match ended: `complete`, `forfeit`, `cancelled`, `error` |
-| `results` | object[] | yes | Final standings |
+| `reason` | string | yes | `"complete"` on this path, however the match finished. Read `terminal_status` and the conditional keys below for how it finished. |
+| `results` | object[] | yes | One entry per seat, in seat order |
 | `results[].seat` | integer | yes | Seat number |
-| `results[].participant_id` | string | yes | Participant identifier |
-| `results[].rank` | integer | yes | Final rank (1 = first place) |
-| `results[].score` | number | yes | Final score (game-specific unit) |
+| `results[].name` | string | yes | The participant's display name |
+| `results[].net_chips` | integer | yes | Chips won (positive) or lost (negative) over the match |
+| `results[].hands_won` | integer | yes | Hands this seat won |
+| `results[].final_stack` | integer | yes | Chips at the end of the match |
+| `results[].bot_errors` | object[] | yes | Errors recorded against this seat (chipzen-ai/Chipzen#1082). Empty when the seat played cleanly. |
+| `results[].decision_latency_samples_ms` | number[] | yes | The seat's decision round-trip times in milliseconds (chipzen-ai/Chipzen#2218). Empty if it made no decision. |
+| `total_hands_played` | integer | yes | Hands played in the match |
+| `mode` | string | yes | Always `"elimination"` (chipzen-ai/Chipzen#1588) |
+| `finishing_order` | object[] | yes | `{"place", "seat", "name"}` per seat; place 1 is the last seat standing |
+| `terminal_status` | string | yes | `"completed"`, `"error"` or `"abandoned"` |
+
+These keys appear only when they apply:
+
+| Field | When |
+|-------|------|
+| `forfeit_seat`, `forfeit_winner_seat`, `forfeit_reason` | One seat stopped responding and the other was awarded the match (chipzen-ai/Chipzen#3341). `terminal_status` stays `"completed"`. |
+| `error_code`, `auto_substitute_limit_seat`, `error_message` | A seat stopped responding and there was no responsive opponent to award the match to (chipzen-ai/Chipzen#1682). |
+| `all_disconnected`, `error_message` (and `simultaneous_disconnect` when both seats dropped together) | Every seat was disconnected for too long. |
+| `abandoned`, `abandoned_seat` | A human seat walked away (chipzen-ai/Chipzen#2561). |
+| `safety_limit_reached` | The match hit the internal hand-count safety cap instead of ending by elimination. |
+
+**Matches that never finish.** If the match cannot be played out, the executor sends every connected seat a shorter `match_end` with no `results`, built on one counter for the whole match rather than per seat:
+
+| `reason` | Extra fields | When |
+|----------|--------------|------|
+| `cancelled` | `error_code: "connection_timeout"` | Not every participant connected in time (section 5.2) |
+| `error` | `error_code: "server_error"`, `error_message` | The match crashed on the server |
+
+An External-API bot connected through the gateway may also receive `{"reason": <close reason>, "source": "gateway"}` as its final `match_end` when the executor connection closes first (see `docs/EXTERNAL-API-BOT-PROTOCOL.md` §6.3).
 
 ### 8.10 `error`
 
@@ -525,6 +565,9 @@ General error notification.
 |-------|------|----------|-------------|
 | `code` | string | yes | Machine-readable error code |
 | `message` | string | yes | Human-readable description |
+| `game_type` | string | no | Only with `code` `EXTAPI_CLIENT_GAME_UNSUPPORTED`: the game the seat belongs to (chipzen-ai/Chipzen#4245) |
+
+The match executor sends `error` just before it closes a connection: a second connection to a live seat or a refused reconnect (`code` such as `duplicate_participant`, `grace_expired` or `budget_exhausted`, then close 4011), a client that did not declare the seat's game (`code` `EXTAPI_CLIENT_GAME_UNSUPPORTED`, then close 4002), and an oversize inbound frame (`code` `message_too_large`, then close 4008). These frames are built on a fresh counter and carry `seq: 1`.
 
 ### 8.11 `action_rejected`
 
@@ -536,134 +579,45 @@ The submitted action failed validation. The bot receives another chance to submi
   "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "seq": 8,
   "server_ts": "2026-04-13T14:30:08.100Z",
-  "request_id": "req_x7y8z9",
-  "reason": "invalid_action",
-  "message": "Action 'bet' is not in valid_actions. Valid actions: fold, check, call, raise",
-  "remaining_ms": 3200,
-  "submitted_action": {
-    "action": "bet",
-    "params": { "amount": 100 }
+  "request_id": "req_4621ff557b22",
+  "reason": "Action 'bet' is not valid. Valid actions: ['fold', 'call', 'raise']",
+  "message": "Action 'bet' is not valid. Valid actions: ['fold', 'call', 'raise']",
+  "details": {
+    "valid_actions": ["fold", "call", "raise"]
   },
-  "valid_actions": ["fold", "check", "call", "raise"]
+  "submitted_action": "bet",
+  "remaining_ms": 3200,
+  "valid_actions": ["fold", "call", "raise"]
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `request_id` | string | yes | The `request_id` from the original `turn_request` |
-| `reason` | string | yes | Machine-readable rejection reason |
+| `reason` | string | yes | Why the action was rejected. Currently the same human-readable text as `message`, not a fixed code, so do not match on its exact wording. |
 | `message` | string | yes | Human-readable explanation |
+| `details` | object | yes | Structured context from the validator, e.g. `valid_actions` for an action that is not legal. Its keys depend on the rejection. |
+| `submitted_action` | string | yes | The `action` string from the rejected `turn_action` (`""` if it had none). Not an object. |
 | `remaining_ms` | integer | yes | Milliseconds remaining before timeout auto-action |
-| `submitted_action` | object | no | Echo of the bot's submitted action for debugging. Contains the `action` and `params` (if any) from the rejected `turn_action`. |
-| `valid_actions` | array of string | no | The seat's currently legal action types (same set sent in the originating `turn_request`). Consumers SHOULD use this when present to pick a legal retry. When absent (older server), consumers MAY fall back to `["check", "fold"]` — the server's auto-action policy guarantees one of those is always legal. Introduced in the protocol revision shipping with v0.3.53. |
+| `valid_actions` | array of string | yes | The seat's currently legal action types (same set sent in the originating `turn_request`). Use it to pick a legal retry. Servers before v0.3.53 did not send it; a client that must support them MAY fall back to `["check", "fold"]`, one of which the auto-action policy guarantees is legal. |
 
 The participant remains in the `awaiting_action` state. The original `request_id` is still valid. The bot should submit a corrected `turn_action` with the same `request_id`.
 
 ### 8.12 `action_timeout`
 
-The bot's time expired. The server applied an automatic action.
-
-```json
-{
-  "type": "action_timeout",
-  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 9,
-  "server_ts": "2026-04-13T14:30:12.500Z",
-  "request_id": "req_x7y8z9",
-  "auto_action": "check"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `request_id` | string | yes | The `request_id` of the timed-out request |
-| `auto_action` | string | yes | The action the server applied automatically |
-
-**Auto-action policy (consistent across all modes):** The server selects `check` if it is a valid action, otherwise `fold`. This policy applies in all match modes without exception.
+**Not sent.** When a turn's time runs out the server applies the auto-action (`check` if it is legal, otherwise `fold`) and reports it in the ordinary `turn_result`, with `details.is_timeout: true`. The same happens when a bot disconnects mid-turn or sends a reply that is not valid JSON. No separate timeout frame is sent.
 
 ### 8.13 `session_control`
 
-Delivered for administrative actions and responsible gaming interventions.
-
-```json
-{
-  "type": "session_control",
-  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 20,
-  "server_ts": "2026-04-13T14:32:00.000Z",
-  "action": "pause",
-  "reason": "scheduled_break",
-  "message": "Match paused for a scheduled break. Play resumes in 60 seconds.",
-  "resume_at": "2026-04-13T14:33:00.000Z"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `action` | string | yes | Control action: `pause`, `resume`, `terminate`, `intervention` |
-| `reason` | string | yes | Machine-readable reason code |
-| `message` | string | no | Human-readable explanation |
-| `resume_at` | string | no | ISO 8601 timestamp for expected resume (if `pause`) |
+**Not sent by the match executor.** The match server has a pause/resume primitive that would send `session_control` (`action`, `reason`, `message`) to every seat, but nothing calls it, so a bot never receives this frame today. A bot should still ignore it if one ever arrives (section 16.1).
 
 ### 8.14 `ping`
 
-Server heartbeat. The bot must respond with `pong`.
-
-```json
-{
-  "type": "ping",
-  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 25,
-  "server_ts": "2026-04-13T14:31:00.000Z"
-}
-```
-
-No additional fields beyond the envelope.
+**Not sent to bots.** The application-level participant heartbeat was removed in chipzen-ai/Chipzen#1641 because its `recv` raced the action loop. Connection liveness is the WebSocket protocol's own ping/pong, which the executor runs at the transport level (a ping every 30 seconds, dropped after 10 seconds without a pong); WebSocket libraries answer those control frames automatically. The match executor sends a `ping` text frame only to spectator connections.
 
 ### 8.15 `reconnected`
 
-Sent after a successful reconnection. Provides enough state for the bot to resume without full replay.
-
-```json
-{
-  "type": "reconnected",
-  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "seq": 51,
-  "server_ts": "2026-04-13T14:30:15.000Z",
-  "round_number": 3,
-  "match_state": "in_progress",
-  "seats": [
-    {
-      "seat": 0,
-      "participant_id": "p_abc123",
-      "display_name": "AlphaBot",
-      "is_self": false
-    },
-    {
-      "seat": 1,
-      "participant_id": "p_def456",
-      "display_name": "You",
-      "is_self": true
-    }
-  ],
-  "game_config": {},
-  "state": {},
-  "pending_request": null
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `round_number` | integer | yes | Current round number |
-| `match_state` | string | yes | Current match state: `in_progress`, `paused`, `between_rounds` |
-| `seats` | object[] | yes | Current seat assignments (same schema as `match_start`) |
-| `game_config` | object | yes | Game configuration (same as from `match_start`) |
-| `state` | object | yes | Current game state snapshot |
-| `pending_request` | object or null | yes | If non-null, a `turn_request` payload the bot must respond to |
-
-If `pending_request` is non-null, the bot must treat it as a `turn_request` and respond with a `turn_action`. The `timeout_ms` in the pending request reflects the remaining time, not the original timeout.
-
-> **Note:** The `state` field contains the same structure as `turn_request.state` for the current game type. If the bot was not mid-turn at the time of disconnection, `state` contains the current round state (equivalent to `round_start.state`).
+**Not sent by the match executor.** A seat that may reconnect (the server `hello` lists `reconnect` in `capabilities`) reconnects on the same match endpoint and runs the full handshake again (`authenticate`, server `hello`, bot `hello`). The executor then attaches the new connection to the seat, and the seat simply receives the next game frames, with `seq` continuing from the dropped connection. If the seat dropped while one of its turns was pending and the server held that turn open, the same `turn_request` (same `request_id`) is sent again; otherwise the turn has already been auto-acted (section 8.12). A refused reconnect gets an `error` frame and close 4011 (section 8.10).
 
 ---
 
@@ -751,7 +705,7 @@ Bot's response to a `turn_request`.
 
 ### 9.3 `pong`
 
-Response to a server `ping`. Must be sent within 5000ms.
+Response to a server `ping`. The match executor does not send `ping` to bots (section 8.14), so a bot never needs to send `pong`. Do not send one unprompted: while a turn is pending, the next frame a bot sends is read as its `turn_action`.
 
 ```json
 {
@@ -834,8 +788,8 @@ Exactly one of `ticket` or `token` must be provided. If neither or both are pres
 | Turn timeout | 5000ms | Per competition | Time allowed for a `turn_action` response |
 | Connection wait | 30000ms | Per competition | Time to wait for all participants to connect |
 | Handshake timeout | 5000ms | No | Time for bot to send `hello` after receiving server `hello` |
-| Pong timeout | 5000ms | No | Time to respond to a `ping` |
-| Heartbeat interval | 15000ms | Per competition | Interval between server `ping` messages |
+| WebSocket ping interval | 30000ms | No | Transport-level WebSocket ping. There is no application-level `ping` frame (section 8.14). |
+| WebSocket ping timeout | 10000ms | No | Time for the client's WebSocket library to answer that ping before the connection is dropped |
 | Reconnection grace | 30000ms | Per competition | Time allowed for a disconnected client to reconnect |
 
 ### 10.2 Turn Timeout Behavior
@@ -843,11 +797,11 @@ Exactly one of `ticket` or `token` must be provided. If neither or both are pres
 1. Server sends `turn_request` with `timeout_ms`.
 2. Timer starts on the server when the message is sent (not when the bot receives it).
 3. If the bot sends an invalid action, the server sends `action_rejected` with `remaining_ms`. The bot may retry within the remaining time.
-4. If the timer expires before a valid action is received, the server applies the auto-action (check if legal, otherwise fold) and sends `action_timeout`.
+4. If the timer expires before a valid action is received, the server applies the auto-action (check if legal, otherwise fold) and reports it in `turn_result` with `details.is_timeout: true`. No `action_timeout` frame is sent (section 8.12).
 
 ### 10.3 Action Delivery Jitter
 
-After a valid action is processed, the server waits a random duration of 100-500ms (uniformly distributed) before broadcasting the `turn_result` to all participants. This prevents opponents from inferring computation time from network timing.
+After a valid action is processed, the server sends `turn_result` to the acting seat at once, then waits a random duration of 100-500ms (uniformly distributed) before sending it to the other participants. This prevents opponents from inferring computation time from network timing.
 
 ### 10.4 Server-Side Receive Timestamp
 
@@ -859,18 +813,17 @@ When the server receives a `turn_action`, it records a `server_received_ts` time
 
 ### 11.1 Reconnection Flow
 
+Reconnecting is only possible when the server `hello` listed `reconnect` in `capabilities`.
+
 1. Client detects disconnection.
-2. Client connects to the reconnect endpoint: `wss://<host>/ws/reconnect/{match_id}/{participant_id}`
-3. Bot sends `authenticate` with a valid `ticket`.
-4. Server validates the credential and match state.
-5. Server sends `hello` followed by `reconnected` with full current state.
-6. Bot sends `hello`.
-7. If a `turn_request` was pending, it is included in `reconnected.pending_request`.
-8. Play resumes.
+2. Client connects again to the same match endpoint it first connected to.
+3. Bot sends `authenticate`; server sends `hello`; bot sends `hello` (the normal handshake, section 5.1).
+4. Server attaches the new connection to the seat. No `reconnected` frame is sent (section 8.15).
+5. If the seat's turn was still being held open, the same `turn_request` (same `request_id`) is sent again.
+6. Play resumes with the next game frame. A refused reconnect gets an `error` frame and close 4011.
 
 ### 11.2 Reconnection Rules
 
-- The previous session token is immediately invalidated on disconnect. A new token is issued on reconnect.
 - Rate limiting counters are tracked per `participant_id`, not per connection. Counters survive reconnection.
 - The reconnection grace period starts when the server detects the disconnect. If the grace period expires, the participant forfeits.
 - Sequence numbers continue from the last value on the previous connection.
@@ -901,6 +854,8 @@ A `turn_action` received when the participant is not in `awaiting_action` state 
 
 If a bot message fails JSON parsing or schema validation, the server sends an `error` message with code `malformed_message`. Repeated malformed messages may trigger rate limiting.
 
+> **Match executor behaviour:** a reply to a `turn_request` that is not valid JSON is not answered with an `error` frame. The server applies the auto-action and reports it in `turn_result` with `details.is_timeout: true`.
+
 ### 12.4 Disconnection
 
 1. Server detects WebSocket close or transport failure.
@@ -927,6 +882,8 @@ Rate limiting is tracked per `participant_id` (not per connection) and survives 
 1. **Violations 1-4:** Server sends an `error` message with code `rate_limited` and a human-readable warning.
 2. **Violation 5:** Server closes the connection with close code 4009 (`rate_limit_exceeded`).
 
+> **Match executor behaviour:** during a match the executor sends no `rate_limited` error. A turn reply that arrives over the per-second limit is dropped and the auto-action is applied instead.
+
 ---
 
 ## 14. Security
@@ -943,16 +900,11 @@ All production connections must use `wss://` (WebSocket over TLS). The server mu
 
 ### 14.3 Session Tokens
 
-Session tokens issued via the `session_token` message:
-- Must contain at least 32 bytes of cryptographically random data.
-- Are encoded as base64url strings with a `ct_` prefix.
-- Are bound to the connection that received them.
-- Are invalidated immediately when the connection closes.
-- Must not be reused across connections.
+The match executor issues no session tokens; there is no `session_token` frame (section 8.2).
 
 ### 14.4 Timing Side-Channel Mitigation
 
-The server adds uniformly random jitter of 100-500ms before broadcasting `turn_result` messages. This prevents participants from inferring an opponent's computation time from message delivery timing.
+The server adds uniformly random jitter of 100-500ms before sending `turn_result` to every seat except the one that acted. This prevents participants from inferring an opponent's computation time from message delivery timing.
 
 ### 14.5 Information Isolation
 
@@ -996,7 +948,7 @@ Bot messages use `additionalProperties: false`. The server rejects bot messages 
 
 ### 16.3 Version Negotiation
 
-The server and bot exchange `supported_versions` arrays in their `hello` messages. Each version string follows `major.minor` format. The server selects the highest mutually supported version and includes it as `selected_version` in its `hello` response. If no mutually supported version exists, the server closes the connection with code 4013 (`protocol_mismatch`).
+The server and bot exchange `supported_versions` arrays in their `hello` messages. Each version string follows `major.minor` format. The server speaks first, so its `selected_version` is its own preferred version, not a negotiated one. When the bot's `hello` arrives the server checks for a mutually supported version and, if there is none, closes the connection with code 4013 (`protocol_mismatch`). The server currently supports only `1.0`.
 
 - **Major version change:** Breaking changes. Server and bot must agree on the major version.
 - **Minor version change:** Backward-compatible additions (new message types, new fields). A bot supporting version 1.0 can connect to a server running 1.3 without issues, as the server will select 1.0.
@@ -1009,7 +961,7 @@ The `spectator_*` message type namespace is reserved for future spectator functi
 
 ## 17. Quick-Start Example
 
-A minimal bot session demonstrating the complete lifecycle including heartbeat handling.
+A minimal bot session through one hand, with the frames the match executor sends. The bot is seat 0.
 
 ```
 # Direction markers:  S→B = server to bot,  B→S = bot to server
@@ -1017,68 +969,107 @@ A minimal bot session demonstrating the complete lifecycle including heartbeat h
 # --- Authentication ---
 
 B→S  {"type":"authenticate","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "ticket":"tk_one_time_use_ticket_value"}
+      "token":"bot_api_token_value"}
 
 # --- Handshake ---
 
 S→B  {"type":"hello","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":1,
       "server_ts":"2026-04-13T14:30:05.000Z",
-      "supported_versions":["1.0","1.1"],"selected_version":"1.0",
-      "game_type":"nlhe_6max","capabilities":["reconnect"]}
+      "supported_versions":["1.0"],"selected_version":"1.0",
+      "server_name":"chipzen","game_type":"poker","capabilities":["reconnect"]}
 
 B→S  {"type":"hello","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "supported_versions":["1.0"],"client_name":"ExampleBot","client_version":"0.1.0"}
 
-S→B  {"type":"match_start","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":2,
+# --- Match starts (game frames count seq from 1 again) ---
+
+S→B  {"type":"match_start","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":1,
       "server_ts":"2026-04-13T14:30:06.000Z",
       "seats":[
-        {"seat":0,"participant_id":"p_abc123","display_name":"OpponentBot","is_self":false},
-        {"seat":1,"participant_id":"p_def456","display_name":"ExampleBot","is_self":true}
+        {"seat":0,"display_name":"ExampleBot","participant_id":"p_def456","is_self":true},
+        {"seat":1,"display_name":"OpponentBot","participant_id":"p_abc123","is_self":false}
       ],
-      "game_config":{"variant":"nlhe","num_players":6,"starting_stack":1000},
-      "turn_timeout_ms":5000}
+      "game_config":{"variant":"nlhe","starting_stack":10000,"small_blind":50,
+                     "big_blind":100,"ante":0,"num_players":2},
+      "turn_timeout_ms":5000,"your_seat":0}
 
-S→B  {"type":"round_start","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":3,
+S→B  {"type":"round_start","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":2,
       "server_ts":"2026-04-13T14:30:07.000Z",
-      "round_id":"f47ac10b-58cc-4372-a567-0e02b2c3d479","round_number":1,
-      "state":{"phase":"preflop","pot":15}}
+      "round_id":"r_f47ac10b-58cc-4372-a567-0e02b2c3d479","round_number":1,
+      "state":{"hand_number":1,"dealer_seat":0,"your_hole_cards":["Ah","Kd"],"pot":150,
+               "post_blind_stacks":[9950,9900],"stacks":[10000,10000],
+               "deck_commitment":"94d9f436703c1dda135c2ba119bbe886c0998246232d7fb95c1aaf9146f95a30"}}
 
-S→B  {"type":"turn_request","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":4,
-      "server_ts":"2026-04-13T14:30:07.500Z","seat":1,
-      "request_id":"req_001","timeout_ms":5000,
+S→B  {"type":"turn_request","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":3,
+      "server_ts":"2026-04-13T14:30:07.500Z","seat":0,
+      "request_id":"req_4621ff557b22","timeout_ms":5000,"turn_duration_ms":5000,
+      "deadline_ts":1776090612500,
       "valid_actions":["fold","call","raise"],
-      "state":{"phase":"preflop","pot":15,"to_call":10}}
+      "state":{"hand_number":1,"phase":"preflop","board":[],"your_hole_cards":["Ah","Kd"],
+               "pot":150,"your_stack":9950,"opponent_stacks":[9900],"to_call":50,
+               "min_raise":200,"max_raise":10000,
+               "action_history":[
+                 {"seat":0,"action":"post_small_blind","amount":50,"phase":"preflop","is_timeout":false},
+                 {"seat":1,"action":"post_big_blind","amount":100,"phase":"preflop","is_timeout":false}
+               ]}}
 
 B→S  {"type":"turn_action","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "request_id":"req_001","action":"call"}
+      "request_id":"req_4621ff557b22","action":"call"}
+
+S→B  {"type":"turn_result","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":4,
+      "server_ts":"2026-04-13T14:30:08.100Z","seat":0,
+      "details":{"action":"call","amount":50,"pot":200,"stacks":[9900,9900],"is_timeout":false}}
 
 S→B  {"type":"turn_result","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":5,
-      "server_ts":"2026-04-13T14:30:08.100Z","seat":1,
-      "details":{"action":"call"}}
+      "server_ts":"2026-04-13T14:30:08.900Z","seat":1,
+      "details":{"action":"check","amount":0,"pot":200,"stacks":[9900,9900],"is_timeout":false}}
 
-# --- Heartbeat arrives mid-match ---
+S→B  {"type":"phase_change","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":6,
+      "server_ts":"2026-04-13T14:30:09.000Z",
+      "state":{"phase":"flop","board":["Qs","7h","3d"]}}
 
-S→B  {"type":"ping","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":6,
-      "server_ts":"2026-04-13T14:30:15.000Z"}
+# ... flop, turn and river are checked down ...
 
-B→S  {"type":"pong","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}
-
-# --- Round concludes ---
-
-S→B  {"type":"round_result","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":10,
+S→B  {"type":"round_result","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":19,
       "server_ts":"2026-04-13T14:30:20.000Z",
-      "round_id":"f47ac10b-58cc-4372-a567-0e02b2c3d479","round_number":1,
-      "result":{"winners":[0],"scores":[1030,970]}}
+      "round_id":"r_f47ac10b-58cc-4372-a567-0e02b2c3d479","round_number":1,
+      "result":{"hand_number":1,"winner_seats":[0],"pot":200,
+                "payouts":[{"seat":0,"amount":200}],
+                "showdown":[
+                  {"seat":0,"hole_cards":["Ah","Kd"],"hand_rank":"High Card",
+                   "best_hand":["Ah","Kd","Qs","9s","7h"]},
+                  {"seat":1,"hole_cards":["Jd","Tc"],"hand_rank":"High Card",
+                   "best_hand":["Qs","Jd","Tc","9s","7h"]}
+                ],
+                "action_history":[
+                  {"seat":0,"action":"post_small_blind","amount":50,"phase":"preflop","is_timeout":false},
+                  {"seat":1,"action":"post_big_blind","amount":100,"phase":"preflop","is_timeout":false},
+                  {"seat":0,"action":"call","amount":50,"phase":"preflop","is_timeout":false},
+                  {"seat":1,"action":"check","amount":0,"phase":"preflop","is_timeout":false}
+                ],
+                "stacks":[10100,9900],
+                "deck_commitment":"94d9f436703c1dda135c2ba119bbe886c0998246232d7fb95c1aaf9146f95a30",
+                "deck_reveal":null}}
 
-# --- Match concludes after all rounds ---
+# --- Match concludes when one seat has no chips left ---
 
-S→B  {"type":"match_end","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":50,
+S→B  {"type":"match_end","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","seq":180,
       "server_ts":"2026-04-13T14:35:00.000Z","reason":"complete",
       "results":[
-        {"seat":0,"participant_id":"p_abc123","rank":1,"score":1150},
-        {"seat":1,"participant_id":"p_def456","rank":2,"score":850}
-      ]}
+        {"seat":0,"name":"ExampleBot","net_chips":10000,"hands_won":14,"final_stack":20000,
+         "bot_errors":[],"decision_latency_samples_ms":[3.2,4.0,2.9]},
+        {"seat":1,"name":"OpponentBot","net_chips":-10000,"hands_won":11,"final_stack":0,
+         "bot_errors":[],"decision_latency_samples_ms":[12.4,9.8,15.1]}
+      ],
+      "total_hands_played":25,"mode":"elimination",
+      "finishing_order":[
+        {"place":1,"seat":0,"name":"ExampleBot"},
+        {"place":2,"seat":1,"name":"OpponentBot"}
+      ],
+      "terminal_status":"completed"}
 ```
+
+The `action_history` in the `round_result` above is shortened to the preflop actions; the real one lists every action of the hand.
 
 ### 17.1 Handling Unknown Messages
 
@@ -1091,15 +1082,13 @@ Bots will encounter message types not listed in this specification as the protoc
 ws.send(json.dumps({
     "type": "authenticate",
     "match_id": MATCH_ID,
-    "ticket": MY_TICKET
+    "token": MY_TOKEN
 }))
 
 # Step 2: Process messages
 message = json.loads(ws.recv())
 
-if message["type"] == "ping":
-    ws.send(json.dumps({"type": "pong", "match_id": message["match_id"]}))
-elif message["type"] == "turn_request":
+if message["type"] == "turn_request":
     action = decide_action(message)
     ws.send(json.dumps({
         "type": "turn_action",
@@ -1109,9 +1098,7 @@ elif message["type"] == "turn_request":
     }))
 elif message["type"] in ("hello", "match_start", "round_start",
                           "turn_result", "phase_change", "round_result",
-                          "match_end", "action_rejected", "action_timeout",
-                          "session_control", "session_token", "reconnected",
-                          "error"):
+                          "match_end", "action_rejected", "error"):
     handle_known_message(message)
 else:
     pass  # MUST ignore unknown message types
@@ -1142,28 +1129,10 @@ All server schemas include the common envelope and specify `"additionalPropertie
     },
     "selected_version": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
     "game_type": { "type": "string" },
-    "capabilities": { "type": "array", "items": { "type": "string" } },
-    "server_id": { "type": "string" }
+    "server_name": { "type": "string", "const": "chipzen" },
+    "capabilities": { "type": "array", "items": { "type": "string" } }
   },
-  "required": ["type", "match_id", "seq", "server_ts", "supported_versions", "selected_version", "game_type", "capabilities"],
-  "additionalProperties": true
-}
-```
-
-#### session_token
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "type": { "const": "session_token" },
-    "match_id": { "type": "string", "format": "uuid" },
-    "seq": { "type": "integer", "minimum": 1 },
-    "server_ts": { "type": "string", "format": "date-time" },
-    "token": { "type": "string", "pattern": "^ct_[A-Za-z0-9_-]{43,}$" },
-    "expires_at": { "type": "string", "format": "date-time" }
-  },
-  "required": ["type", "match_id", "seq", "server_ts", "token", "expires_at"],
+  "required": ["type", "match_id", "seq", "server_ts", "supported_versions", "selected_version", "server_name", "game_type", "capabilities"],
   "additionalProperties": true
 }
 ```
@@ -1184,8 +1153,8 @@ All server schemas include the common envelope and specify `"additionalPropertie
         "type": "object",
         "properties": {
           "seat": { "type": "integer", "minimum": 0 },
-          "participant_id": { "type": "string" },
           "display_name": { "type": "string" },
+          "participant_id": { "type": "string" },
           "is_self": { "type": "boolean" }
         },
         "required": ["seat", "participant_id", "display_name", "is_self"],
@@ -1193,9 +1162,10 @@ All server schemas include the common envelope and specify `"additionalPropertie
       }
     },
     "game_config": { "type": "object" },
-    "turn_timeout_ms": { "type": "integer", "minimum": 1000 }
+    "turn_timeout_ms": { "type": "integer", "minimum": 1000 },
+    "your_seat": { "type": "integer", "minimum": 0 }
   },
-  "required": ["type", "match_id", "seq", "server_ts", "seats", "game_config", "turn_timeout_ms"],
+  "required": ["type", "match_id", "seq", "server_ts", "seats", "game_config", "turn_timeout_ms", "your_seat"],
   "additionalProperties": true
 }
 ```
@@ -1210,7 +1180,7 @@ All server schemas include the common envelope and specify `"additionalPropertie
     "match_id": { "type": "string", "format": "uuid" },
     "seq": { "type": "integer", "minimum": 1 },
     "server_ts": { "type": "string", "format": "date-time" },
-    "round_id": { "type": "string", "format": "uuid" },
+    "round_id": { "type": "string", "pattern": "^r_" },
     "round_number": { "type": "integer", "minimum": 1 },
     "state": { "type": "object" }
   },
@@ -1232,10 +1202,12 @@ All server schemas include the common envelope and specify `"additionalPropertie
     "seat": { "type": "integer", "minimum": 0 },
     "request_id": { "type": "string" },
     "timeout_ms": { "type": "integer", "minimum": 1 },
+    "turn_duration_ms": { "type": "integer", "minimum": 1 },
+    "deadline_ts": { "type": "integer" },
     "valid_actions": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
     "state": { "type": "object" }
   },
-  "required": ["type", "match_id", "seq", "server_ts", "seat", "request_id", "timeout_ms", "valid_actions", "state"],
+  "required": ["type", "match_id", "seq", "server_ts", "seat", "request_id", "timeout_ms", "turn_duration_ms", "deadline_ts", "valid_actions", "state"],
   "additionalProperties": true
 }
 ```
@@ -1251,7 +1223,6 @@ All server schemas include the common envelope and specify `"additionalPropertie
     "seq": { "type": "integer", "minimum": 1 },
     "server_ts": { "type": "string", "format": "date-time" },
     "seat": { "type": "integer", "minimum": 0 },
-    "is_timeout": { "type": "boolean", "default": false },
     "details": { "type": "object" }
   },
   "required": ["type", "match_id", "seq", "server_ts", "seat", "details"],
@@ -1286,7 +1257,7 @@ All server schemas include the common envelope and specify `"additionalPropertie
     "match_id": { "type": "string", "format": "uuid" },
     "seq": { "type": "integer", "minimum": 1 },
     "server_ts": { "type": "string", "format": "date-time" },
-    "round_id": { "type": "string", "format": "uuid" },
+    "round_id": { "type": "string", "pattern": "^r_" },
     "round_number": { "type": "integer", "minimum": 1 },
     "result": { "type": "object" }
   },
@@ -1297,6 +1268,8 @@ All server schemas include the common envelope and specify `"additionalPropertie
 
 #### match_end
 
+The schema of the `match_end` a seat receives when the match is played out. See section 8.9 for the conditional keys and for the shorter frame sent when a match cannot be played out.
+
 ```json
 {
   "type": "object",
@@ -1305,23 +1278,42 @@ All server schemas include the common envelope and specify `"additionalPropertie
     "match_id": { "type": "string", "format": "uuid" },
     "seq": { "type": "integer", "minimum": 1 },
     "server_ts": { "type": "string", "format": "date-time" },
-    "reason": { "type": "string", "enum": ["complete", "forfeit", "cancelled", "error"] },
+    "reason": { "type": "string", "const": "complete" },
     "results": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
           "seat": { "type": "integer", "minimum": 0 },
-          "participant_id": { "type": "string" },
-          "rank": { "type": "integer", "minimum": 1 },
-          "score": { "type": "number" }
+          "name": { "type": "string" },
+          "net_chips": { "type": "integer" },
+          "hands_won": { "type": "integer", "minimum": 0 },
+          "final_stack": { "type": "integer", "minimum": 0 },
+          "bot_errors": { "type": "array", "items": { "type": "object" } },
+          "decision_latency_samples_ms": { "type": "array", "items": { "type": "number" } }
         },
-        "required": ["seat", "participant_id", "rank", "score"],
+        "required": ["seat", "name", "net_chips", "hands_won", "final_stack", "bot_errors", "decision_latency_samples_ms"],
         "additionalProperties": true
       }
-    }
+    },
+    "total_hands_played": { "type": "integer", "minimum": 0 },
+    "mode": { "type": "string", "const": "elimination" },
+    "finishing_order": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "place": { "type": "integer", "minimum": 1 },
+          "seat": { "type": "integer", "minimum": 0 },
+          "name": { "type": "string" }
+        },
+        "required": ["place", "seat", "name"],
+        "additionalProperties": true
+      }
+    },
+    "terminal_status": { "type": "string", "enum": ["completed", "error", "abandoned"] }
   },
-  "required": ["type", "match_id", "seq", "server_ts", "reason", "results"],
+  "required": ["type", "match_id", "seq", "server_ts", "reason", "results", "total_hands_played", "mode", "finishing_order", "terminal_status"],
   "additionalProperties": true
 }
 ```
@@ -1337,7 +1329,8 @@ All server schemas include the common envelope and specify `"additionalPropertie
     "seq": { "type": "integer", "minimum": 1 },
     "server_ts": { "type": "string", "format": "date-time" },
     "code": { "type": "string" },
-    "message": { "type": "string" }
+    "message": { "type": "string" },
+    "game_type": { "type": "string" }
   },
   "required": ["type", "match_id", "seq", "server_ts", "code", "message"],
   "additionalProperties": true
@@ -1357,117 +1350,17 @@ All server schemas include the common envelope and specify `"additionalPropertie
     "request_id": { "type": "string" },
     "reason": { "type": "string" },
     "message": { "type": "string" },
+    "details": { "type": "object" },
+    "submitted_action": { "type": "string" },
     "remaining_ms": { "type": "integer", "minimum": 0 },
-    "submitted_action": { "type": "object" },
     "valid_actions": { "type": "array", "items": { "type": "string" } }
   },
-  "required": ["type", "match_id", "seq", "server_ts", "request_id", "reason", "message", "remaining_ms"],
+  "required": ["type", "match_id", "seq", "server_ts", "request_id", "reason", "message", "details", "submitted_action", "remaining_ms", "valid_actions"],
   "additionalProperties": true
 }
 ```
 
-#### action_timeout
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "type": { "const": "action_timeout" },
-    "match_id": { "type": "string", "format": "uuid" },
-    "seq": { "type": "integer", "minimum": 1 },
-    "server_ts": { "type": "string", "format": "date-time" },
-    "request_id": { "type": "string" },
-    "auto_action": { "type": "string" }
-  },
-  "required": ["type", "match_id", "seq", "server_ts", "request_id", "auto_action"],
-  "additionalProperties": true
-}
-```
-
-#### session_control
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "type": { "const": "session_control" },
-    "match_id": { "type": "string", "format": "uuid" },
-    "seq": { "type": "integer", "minimum": 1 },
-    "server_ts": { "type": "string", "format": "date-time" },
-    "action": { "type": "string", "enum": ["pause", "resume", "terminate", "intervention"] },
-    "reason": { "type": "string" },
-    "message": { "type": "string" },
-    "resume_at": { "type": "string", "format": "date-time" }
-  },
-  "required": ["type", "match_id", "seq", "server_ts", "action", "reason"],
-  "additionalProperties": true
-}
-```
-
-#### ping
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "type": { "const": "ping" },
-    "match_id": { "type": "string", "format": "uuid" },
-    "seq": { "type": "integer", "minimum": 1 },
-    "server_ts": { "type": "string", "format": "date-time" }
-  },
-  "required": ["type", "match_id", "seq", "server_ts"],
-  "additionalProperties": true
-}
-```
-
-#### reconnected
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "type": { "const": "reconnected" },
-    "match_id": { "type": "string", "format": "uuid" },
-    "seq": { "type": "integer", "minimum": 1 },
-    "server_ts": { "type": "string", "format": "date-time" },
-    "round_number": { "type": "integer", "minimum": 1 },
-    "match_state": { "type": "string", "enum": ["in_progress", "paused", "between_rounds"] },
-    "seats": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "seat": { "type": "integer", "minimum": 0 },
-          "participant_id": { "type": "string" },
-          "display_name": { "type": "string" },
-          "is_self": { "type": "boolean" }
-        },
-        "required": ["seat", "participant_id", "display_name", "is_self"],
-        "additionalProperties": true
-      }
-    },
-    "game_config": { "type": "object" },
-    "state": { "type": "object" },
-    "pending_request": {
-      "oneOf": [
-        { "type": "null" },
-        {
-          "type": "object",
-          "properties": {
-            "request_id": { "type": "string" },
-            "timeout_ms": { "type": "integer", "minimum": 1 },
-            "valid_actions": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-            "state": { "type": "object" }
-          },
-          "required": ["request_id", "timeout_ms", "valid_actions", "state"]
-        }
-      ]
-    }
-  },
-  "required": ["type", "match_id", "seq", "server_ts", "round_number", "match_state", "seats", "game_config", "state", "pending_request"],
-  "additionalProperties": true
-}
-```
+The match executor sends no `session_token`, `action_timeout`, `session_control`, `ping` or `reconnected` frame to a bot (sections 8.2 and 8.12-8.15), so they have no schema here.
 
 ### A.2 Bot Message Schemas
 
