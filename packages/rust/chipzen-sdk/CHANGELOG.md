@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-10-18
+
+Released in lockstep with `chipzen-bot` 0.3.2 (the reconnect seat fix and the
+`on_reconnected` hook, #121). No change to the CLI itself.
+
 ## [0.3.1] — 2026-08-14
 
 Released in lockstep with `chipzen-bot` 0.3.1, which is where the substantive
@@ -117,6 +122,7 @@ template.
 
 Apache-2.0.
 
+[0.3.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.2
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.1
 [0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.0
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.2.0

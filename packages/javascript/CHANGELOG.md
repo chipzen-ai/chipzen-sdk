@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-18
+
 ### Added
 
 - **`Bot.onReconnected(message)` lifecycle hook.** Fired when the server
@@ -258,5 +260,6 @@ and
 
 Apache-2.0.
 
+[0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.3.1
 [0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.3.0
 [0.2.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.2.0
