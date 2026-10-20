@@ -68,9 +68,10 @@ The SDK does three things and nothing else:
    shipping your `.ts`/`.js` source.
 
 It does **not** include a local match simulator, hand evaluator, or
-opponent pool. Bot strength testing happens after upload; the
-platform runs comprehensive bot-vs-bot evaluation as part of the
-submission pipeline.
+opponent pool. Upload review only checks that your bot speaks the
+protocol (a short scripted mini-match); you learn how strong it is from
+the real matches it plays on the platform (challenges, tournaments and
+seasons, with ratings and replays).
 
 ## Reference
 

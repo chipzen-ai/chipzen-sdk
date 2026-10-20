@@ -63,7 +63,18 @@ endpoints. Local sidecar / dev endpoints may accept an empty token.
 
 ## Docker
 
-Each starter includes a Dockerfile:
+Each starter includes a Dockerfile, and each one runs the bot as a
+non-root user (`USER 10001`). Keep that line when you adapt a starter:
+review rejects an image that runs as root. If you write your own
+Dockerfile, add a user in the final stage and switch to it before the
+`ENTRYPOINT`:
+
+```dockerfile
+RUN useradd -u 10001 -m bot
+USER 10001
+```
+
+See [`docs/DEV-MANUAL.md`](../docs/DEV-MANUAL.md) §7.1 item 4.
 
 ```bash
 # Python example

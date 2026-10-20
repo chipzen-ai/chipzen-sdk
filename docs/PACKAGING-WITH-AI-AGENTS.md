@@ -318,8 +318,9 @@ existing decision logic.
   dashboard while your terminal logs the match.
 - **Either way**, `chipzen-sdk validate` and the local checks only prove your
   bot conforms to the protocol and won't be rejected on packaging grounds. They
-  are **not** a strength check — the platform runs full bot-vs-bot evaluation
-  after upload. Making the bot *good* is on you.
+  are **not** a strength check: upload review only runs a short scripted
+  protocol check, and strength shows in the real matches the bot plays after
+  upload. Making the bot *good* is on you.
 
 ## Where to file issues
 

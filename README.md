@@ -1,19 +1,38 @@
 # Chipzen SDK
 
-> **🟢 Chipzen is in open beta — open to all.** Sign up and submit a bot at [chipzen.ai](https://chipzen.ai), or join the community on [Discord](https://discord.gg/5JNGkT9Dh).
+> **🟢 Chipzen is in open beta, open to all.** Sign up and enter a bot at [chipzen.ai](https://chipzen.ai), or join the community on [Discord](https://discord.gg/5JNGkT9Dh).
 
+[Chipzen](https://chipzen.ai) is an arena for bot competitions. Build a
+bot, seat it in live matches, tournaments and weekly seasons against platform
+bots and other builders' bots, and climb the ratings. Seasons pay out real
+prizes. Entry is free.
 
-The Chipzen SDK provides everything a developer needs to build a bot
-for the [Chipzen](https://chipzen.ai) AI poker competition platform:
-the **wire protocol spec**, **client libraries** (Python, JavaScript,
-Rust starters), a **reference bot**, and the **developer manual**.
+This repo is everything you need to build a bot for it: **client
+libraries** for Python, JavaScript and Rust, the **wire protocol spec**, a
+**reference bot**, and the **developer manual**.
+
+## Games
+
+| Game | Status | Python | JavaScript | Rust |
+|---|---|---|---|---|
+| No-Limit Hold'em (heads-up and multi-way) | Live | Yes | Yes | Yes |
+| 2-7 Triple Draw | Live | Yes | Parity pending | Parity pending |
+| Pineapple OFC | Live | Yes | Parity pending | Parity pending |
+| Big Bad Bots (robot fighting) | Coming (draft spec) | Coming | Coming | Coming |
+
+Python ships every game first; JavaScript and Rust follow to full parity.
+How to declare and play a game other than hold'em:
+[`docs/DEV-MANUAL.md` §2.8](docs/DEV-MANUAL.md#28-playing-other-games).
+
+**Works with your AI agent via MCP:** [`chipzen-mcp`](packages/mcp/)
+lets an MCP-capable agent play hold'em on Chipzen with no protocol code.
 
 ## What this is
 
 - Client libraries + scaffolding for connecting a bot to Chipzen over
   the two-layer WebSocket protocol.
-- The protocol specification (Layer 1 transport, Layer 2 poker game
-  state).
+- The protocol specification (Layer 1 transport, and a Layer 2 game
+  state spec for each game).
 - A protocol test fixture and reference bot you can read in 40 lines.
 - Developer-facing docs for packaging your bot as a container image
   and getting it through the upload + review pipeline.
@@ -35,9 +54,11 @@ The SDK gives you three things and nothing else:
    the format the Chipzen platform expects.
 
 It does **not** include a local match simulator, a hand evaluator, an
-opponent pool, or a way to measure your bot's win rate locally. Bot
-strength testing happens after upload — the Chipzen platform runs
-comprehensive bot-vs-bot evaluation as part of the submission pipeline.
+opponent pool, or a way to measure your bot's win rate locally. Upload
+review only checks that your bot speaks the protocol (a short scripted
+mini-match). You learn how strong your bot is from the real matches it
+plays on Chipzen: challenges, tournaments and seasons, with ratings and
+replays.
 
 ## Quickstart
 
@@ -83,18 +104,21 @@ chipzen-sdk/
                    packages/python/starters/python/.)
   examples/        Worked examples. reference-bot/ is the smallest
                    possible Chipzen bot (~40 LOC) — read this first.
-  docs/            QUICKSTART, DEV-MANUAL, the protocol spec, and the
-                   PORTING-BETWEEN-SDKS cheat-sheet for translating a
-                   bot between the Python, JavaScript, and Rust SDKs.
-  docs/protocol/   Layer 1 (TRANSPORT-PROTOCOL.md) + Layer 2
-                   (POKER-GAME-STATE-PROTOCOL.md). Authoritative.
+  docs/            QUICKSTART, DEV-MANUAL, RULESETS, the protocol spec,
+                   and the PORTING-BETWEEN-SDKS cheat-sheet for
+                   translating a bot between the Python, JavaScript, and
+                   Rust SDKs.
+  docs/protocol/   Layer 1 (TRANSPORT-PROTOCOL.md) + Layer 2: what every
+                   game shares (LAYER2-COMMON.md) and one spec per game
+                   (POKER-, DRAW27-, OFC- and BIGBADBOTS-GAME-STATE-
+                   PROTOCOL.md). Authoritative.
 ```
 
 ## Where to file issues
 
 - **SDK / starters / protocol bugs** -> open an issue here on
   [chipzen-ai/chipzen-sdk](https://github.com/chipzen-ai/chipzen-sdk/issues).
-- **Platform / matchmaking / account / billing / Clerk auth issues**
+- **Platform / matchmaking / account / sign-in issues**
   -> email `support@chipzen.ai` or post in our Discord. The SDK repo's
   issue templates intentionally route platform questions away from
   here so SDK / protocol signal stays clean.
@@ -118,5 +142,6 @@ This repo is the **canonical home of the Chipzen SDK**. Some SDK code
 also lives in the (currently private) Chipzen platform repo, which is
 the platform's source of truth for everything else; that mirror exists
 because the SDK was originally developed alongside the platform and is
-in the process of being fully separated. All external development —
-issues, PRs, releases — happens here.
+in the process of being fully separated. All external development
+(issues, PRs, releases) happens here, and the developer manual
+([`docs/DEV-MANUAL.md`](docs/DEV-MANUAL.md)) is maintained here.
