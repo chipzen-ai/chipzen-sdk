@@ -511,7 +511,7 @@ the upload pipeline and survive its first hand without an obvious wire
 error. Bot strength testing (playing your bot against opponents to
 measure win rate) is **not** an SDK concern. Upload review only checks that
 your bot speaks the protocol (a short scripted mini-match); its strength
-shows once it plays real matches on the platform: challenges against house
+shows once it plays real matches on the platform: challenges against platform
 bots and other builders' bots, tournaments and seasons, with ratings and
 replays.
 
