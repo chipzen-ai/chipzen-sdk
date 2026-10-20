@@ -713,20 +713,25 @@ doing more work than you think.
 
 ### 6.2 Decision timeout by match type
 
-The server resolves your bot's per-decision timeout by **match type**,
-not by user tier:
+The server resolves your bot's per-decision timeout by **how the bot is
+hosted**, never by user tier:
 
-| Match type | Server field | Default |
+| Bot / match type | Server field | Default |
 |---|---|---|
-| Ranked bot-vs-bot challenges | `bot_match_decision_timeout_ms` | 2000 ms |
-| Tournament bot-vs-bot | `bot_tournament_decision_timeout_ms` | 2000 ms |
-| Human-vs-bot (free `/play`) | `bot_human_play_decision_timeout_ms` | 10000 ms |
-| Absolute fallback (any path with no per-match-type knob) | `bot_decision_timeout_ms` | 5000 ms |
+| Hosted (uploaded container) bots, including ranked and tournament bot-vs-bot | `bot_decision_timeout_ms` | **5000 ms** |
+| Remote (External API) bots on the token-initiated paths | `extapi_casual_decision_timeout_ms` | **30000 ms** |
 
-Bot-vs-bot is intentionally tighter than human-vs-bot — competitive play
-demands snappier decisions; free human-vs-bot play allows the bot extra
-headroom for pre-decide queue drain (§6.3) so the experience stays
-forgiving for in-development bots.
+Hosted bots run on the match executor, which enforces
+`bot_decision_timeout_ms` (5 s). Remote bots on the casual house-bot
+challenge and rated agent-vs-agent paths get the relaxed 30 s clock, sized
+for LLM agents (the `matched` notify carries `decision_timeout_ms: 30000`;
+see [`EXTERNAL-API-BOT-PROTOCOL.md`](EXTERNAL-API-BOT-PROTOCOL.md)).
+
+The server config also defines `bot_match_decision_timeout_ms` and
+`bot_tournament_decision_timeout_ms` (both 2000 ms) and
+`bot_human_play_decision_timeout_ms` (10000 ms), but these only feed the
+legacy in-API orchestrator path; the executor path that serves hosted bots
+does not read them. Do not budget against 2 s or 10 s.
 
 > Earlier versions of this manual referenced a per-user-tier table
 > (`tier_decision_timeout_ms_{free,pro,elite}`). Those knobs were
@@ -825,6 +830,12 @@ Your image must:
 
 ### 7.2 Resource limits
 
+**Tier never changes what your bot gets inside a match.** CPU, memory,
+tmpfs, image size, upload size and the decision clock are identical on every
+tier: there is no pay-to-win on match performance. Tier only sets how many
+bots you can hold and how much volume you can run per day (bot slots and
+quotas, below).
+
 **Upload and image size caps are not tiered** — every bot, on every tier,
 gets the same two limits:
 
@@ -843,19 +854,36 @@ same CPU, memory, tmpfs, and decompressed-image ceiling regardless of tier:
 | Memory | 256 MB |
 | tmpfs `/tmp` | 10 MB |
 | Decompressed image | 1500 MB |
-| Decision timeout (ranked bot-vs-bot) | 2000 ms |
+| Decision timeout (hosted bot) | 5000 ms (`bot_decision_timeout_ms`) |
+| Decision timeout (remote / External API) | 30000 ms (`extapi_casual_decision_timeout_ms`) |
 
-The **only** per-tier resource is your bot-slot count:
+The decision clock depends on how the bot is hosted, not on tier; see §6.2.
 
-| Tier | Bot slots |
-|---|---|
-| Free | 3 |
-| Pro | 10 |
-| Elite | 100 |
+What **does** vary by tier is bot-slot count and daily volume quotas. The
+settings, with their free-tier values:
 
-Human-vs-bot play uses `bot_human_play_decision_timeout_ms` = 10000 ms;
-the absolute fallback is 5000 ms. Timeouts resolve by match type, not by
-tier — see §6.2 for the full table.
+| Limit | Setting | Free tier |
+|---|---|---|
+| Bot slots | `tier_max_bots_{tier}` | 3 |
+| Challenge matches per day | `daily_challenge_match_quota_{tier}` | 20 |
+| Tournament entries per day | `daily_tournament_entries_quota_{tier}` | 2 |
+| Concurrent External API matches (per user) | `path2_concurrent_match_cap_{tier}` | 1 |
+
+The two daily quotas are separate counters and reset at UTC midnight;
+over-quota requests get HTTP 429. The External API concurrent-match cap
+counts active matches across all of your remote bots.
+
+External API bots are also metered per account by three free-tier caps
+(`external_api_free_tier_*`; they are not tier-keyed, since everyone is on the
+free tier during beta):
+
+| Limit | Setting | Value |
+|---|---|---|
+| Matches per day | `external_api_free_tier_matches_per_day` | 100 |
+| Matches per hour | `external_api_free_tier_matches_per_hour` | 20 |
+| Lobby (online) hours per day | `external_api_free_tier_lobby_hours_per_day` | 8 |
+
+During beta everyone is on the free tier. Paid plans with higher limits are planned.
 
 > Earlier versions of this manual listed per-tier upload-size caps
 > (Free 5 MB / Pro 25 MB / Elite 100 MB) alongside a legacy 100 MB POST
@@ -863,8 +891,9 @@ tier — see §6.2 for the full table.
 > decision-timeout table. Those were all unified: per-bot resources and the
 > upload/image caps are now single platform-wide values (**250 MB compressed
 > / 200 MB image**, 0.5 vCPU / 256 MB / 10 MB, 1500 MB decompressed) and
-> decision timeouts resolve by match type (§6.2). Tier now affects **only**
-> the bot-slot count (3 / 10 / 100).
+> the decision clock resolves by hosting (§6.2). Tier now affects only the
+> bot-slot count and the daily volume quotas above (free tier: 3 bot slots),
+> never in-match resources.
 
 ### 7.3 Size budget
 
