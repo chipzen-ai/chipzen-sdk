@@ -76,8 +76,8 @@ agent's work.
   before your code runs (`docker logs` shows nothing) — see
   [`DEV-MANUAL.md` §7.4](DEV-MANUAL.md#74-seccomp) and
   [§9.5](DEV-MANUAL.md#95-container-dies-immediately-with-no-logs).
-- **`decide()` timeout is end-to-end.** Default **10000 ms** for human-vs-bot
-  (`/play`); **bot-vs-bot ranked and tournament play is tighter — 2000 ms**
+- **`decide()` timeout is end-to-end.** **5000 ms** for a hosted bot (ranked,
+  tournament and `/play` alike); remote External API bots get 30000 ms
   ([`DEV-MANUAL.md` §6.2](DEV-MANUAL.md#62-decision-timeout-by-match-type)).
   The budget covers the network hop, SDK queue drain, and your `decide()` body.
   Blow it and the server safe-defaults to fold — the bot looks like it's
@@ -149,8 +149,8 @@ STEPS
    extensions crash the container silently on startup. Do not add a native dep
    without telling me.
 4. Respect these hard constraints — treat them as acceptance criteria:
-   - decide() must return within the decision timeout: 10000 ms human-vs-bot,
-     but only 2000 ms for ranked bot-vs-bot / tournaments. Keep decide() fast
+   - decide() must return within the decision timeout: 5000 ms for a hosted
+     bot (30000 ms for a remote External API bot). Keep decide() fast
      and synchronous; cache expensive tables at on_match_start, not per hand.
    - Cold start < 15 s. If my bot loads a model or a big table, LAZY-LOAD it
      inside on_match_start (or first use), NOT at module import — otherwise the

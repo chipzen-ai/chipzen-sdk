@@ -104,8 +104,8 @@ STEPS
    - Action.raise_to(n) takes a TOTAL bet size, not an increment, and n must be
      within [state.min_raise, state.max_raise]. Both are 0 when raising is not
      legal, so guard on that before computing a raise.
-   - decide() must be fast and synchronous. The end-to-end budget is 10000 ms
-     for human-vs-bot and only 2000 ms for ranked bot-vs-bot and tournaments.
+   - decide() must be fast and synchronous. The end-to-end budget is 5000 ms
+     for a hosted bot (30000 ms for a remote External API bot).
    - Do not load anything heavy at module import. Cold start budget is ~15 s.
      If you need a table or a model, build it in on_match_start.
 4. Write a local test that drives decide() through the situations it branches

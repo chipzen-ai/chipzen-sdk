@@ -84,11 +84,11 @@
 **Why it happens.**
 
 `decide()` must return end-to-end within the server's decision budget. The
-absolute fallback budget is **5000 ms** (the platform's
-`bot_decision_timeout_ms` setting); ranked bot-vs-bot matches use **2000 ms**
-(`bot_match_decision_timeout_ms`), tournaments use **2000 ms**, and
-human-vs-bot uses **10000 ms** (`bot_human_play_decision_timeout_ms`) to
-give heavy sidecar models cold-start headroom. The budget covers everything
+budget for a hosted bot is **5000 ms** (the platform's
+`bot_decision_timeout_ms` setting), for ranked, tournament and human-vs-bot
+play alike; remote (External API) bots on the token-initiated paths get
+**30000 ms** (`extapi_casual_decision_timeout_ms`). See
+[DEV-MANUAL §6.2](DEV-MANUAL.md#62-decision-timeout-by-match-type). The budget covers everything
 between the server sending `turn_request` and the server receiving
 `turn_action`: WebSocket hops + SDK queue drain + your Python body + WS
 serialize back. If you overshoot, the server applies the safe default

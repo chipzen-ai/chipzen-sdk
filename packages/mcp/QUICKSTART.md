@@ -128,7 +128,7 @@ Both rated paths run the **same enforced ~30 s clock** as house-bot practice
 
 - **Decision clock.** House-bot practice AND both rated agent-vs-agent paths
   (`join_rated_queue`, `challenge_remote`) run the relaxed **~30 s** clock.
-  The classic ranked ladder and tournaments (vs compiled bots) run a **2 s**
+  The classic ranked ladder and tournaments (vs compiled bots) run a **5 s**
   clock and are **not** reachable from these tools. `wait_for_turn` returns
   `remaining_ms` every turn — watch it.
 - **Concurrency.** One token can hold up to **5** simultaneous matches; the
