@@ -28,8 +28,8 @@ everything beyond the one-page quickstart.
 ## 1. Quickstart pointer
 
 If you have not yet built your first bot, stop here and do the quickstart
-first. It takes roughly 10 minutes and produces a working upload on a local
-Chipzen stack. This manual assumes you have already worked through it at
+first. It takes roughly 10 minutes and produces a working bot uploaded to
+[chipzen.ai](https://chipzen.ai). This manual assumes you have already worked through it at
 least once.
 
 - **[`QUICKSTART.md`](QUICKSTART.md)** — build the reference
@@ -355,6 +355,70 @@ protocol is in
 step-by-step walkthrough is
 [`docs/external-api/FIRST-30-MINUTES.md`](external-api/FIRST-30-MINUTES.md).
 
+### 2.8 Playing other games
+
+Chipzen runs more than one game. A bot plays No-Limit Hold'em unless it
+declares otherwise.
+
+| Game | `game_type` | Status | Layer 2 spec |
+|---|---|---|---|
+| No-Limit Hold'em (heads-up and multi-way) | `poker` | Live | [`POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md) |
+| 2-7 Triple Draw | `draw27` | Live | [`DRAW27-GAME-STATE-PROTOCOL.md`](protocol/DRAW27-GAME-STATE-PROTOCOL.md) |
+| Pineapple OFC | `ofc` | Live | [`OFC-GAME-STATE-PROTOCOL.md`](protocol/OFC-GAME-STATE-PROTOCOL.md) |
+| Big Bad Bots (robot fighting) | `bigbadbots` | Coming. Draft spec; launch rule set `bigbadbots-1.2` ([`RULESETS.md`](RULESETS.md)) | [`BIGBADBOTS-GAME-STATE-PROTOCOL.md`](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md) |
+
+[`LAYER2-COMMON.md`](protocol/LAYER2-COMMON.md) covers what every game
+shares.
+
+**Declare a game in both places:**
+
+1. **On the connection:** `run_bot(..., supported_games=["poker", "draw27"])`
+   or `run_external_bot(..., supported_games=[...])`. The list goes on the
+   client `hello` and is checked when the match socket opens.
+2. **On the bot:** its supported game types (`supported_game_types`) when you
+   upload or create it. This decides which tables the bot is offered and
+   seated at.
+
+A bot that declares neither is treated as poker only. Declaring a game
+means you implement everything in that game's Layer 2 spec: a bot that
+declares a game it cannot play is seated, then timed out and substituted
+every turn.
+
+**Route each turn from `decide()`.** `decide()` stays the one required
+method. The SDK adds two optional hooks that it never calls on its own:
+`decide_draw(state)` for a 2-7 Triple Draw draw turn and
+`decide_placement(state)` for a Pineapple OFC placement turn. Call them from
+`decide()`:
+
+```python
+from chipzen import Action, Bot, GameState
+
+class MyBot(Bot):
+    def decide(self, state: GameState) -> Action:
+        if "draw" in state.valid_actions:    # 2-7 Triple Draw: draw turn
+            return self.decide_draw(state)   # discard up to state.max_discard
+        if "place" in state.valid_actions:   # Pineapple OFC: placement turn
+            return self.decide_placement(state)
+        return self.decide_betting(state)    # your betting logic (any game)
+```
+
+The variant fields on `GameState` (`max_discard`, `your_rows`,
+`cards_to_place` and the rest) are optional with defaults, so a hold'em-only
+bot never sees them.
+
+**Support by language.** Python ships every feature first; the JavaScript and
+Rust SDKs follow to full parity. Until a row is done, a JavaScript or Rust bot
+can still play a game by speaking its Layer 2 spec directly.
+
+| Feature | Python `chipzen-bot` | JavaScript `@chipzen-ai/bot` | Rust `chipzen-bot` |
+|---|---|---|---|
+| No-Limit Hold'em, heads-up and multi-way | Yes | Yes | Yes |
+| Remote play (external API) | Yes | Yes | Yes |
+| `supported_games` declaration | Yes (0.4.0) | Parity pending | Parity pending |
+| 2-7 Triple Draw | Yes (0.4.0) | Parity pending | Parity pending |
+| Pineapple OFC | Yes (0.4.0) | Parity pending | Parity pending |
+| Big Bad Bots | Coming | Coming after Python | Coming after Python |
+
 ---
 
 ## 3. Protocol
@@ -444,9 +508,12 @@ them from a bot.
 The SDK's job here is narrow and explicit: give you a fast **go/no-go
 conformance check** so you can be confident your bot will be accepted by
 the upload pipeline and survive its first hand without an obvious wire
-error. Bot strength testing — playing your bot against opponents to
-measure win rate — is **not** an SDK concern. The platform runs
-comprehensive bot-vs-bot evaluation after upload.
+error. Bot strength testing (playing your bot against opponents to
+measure win rate) is **not** an SDK concern. Upload review only checks that
+your bot speaks the protocol (a short scripted mini-match); its strength
+shows once it plays real matches on the platform: challenges against house
+bots and other builders' bots, tournaments and seasons, with ratings and
+replays.
 
 ### 4.1 What `validate` checks
 
@@ -731,9 +798,24 @@ Your image must:
 3. **Connect within the attach budget.** The server waits up to ~15 s for
    your container to send its `hello`. Images loading large models can
    trip this — see §9.
-4. **Run as non-root if possible.** The executor layers `--user 10001:10001`,
-   `--read-only`, `--cap-drop=ALL`, `--security-opt seccomp=…` on top,
-   but a non-root `USER` in your Dockerfile is defense in depth.
+4. **Run as a non-root user (required).** Review rejects a new upload
+   whose image runs as root: no `USER` at all, `USER root`, `USER 0`, or
+   `USER 0:<gid>`, or a named user whose uid in the image's `/etc/passwd`
+   is 0. Create a user in the final stage of your Dockerfile and switch to
+   it before the `ENTRYPOINT`:
+   ```dockerfile
+   RUN useradd -u 10001 -m bot      # Alpine: RUN adduser -D -u 10001 bot
+   USER 10001
+   ENTRYPOINT ["python", "-u", "/bot/bot.py"]
+   ```
+   On a distroless or scratch image, `USER 65534` (nobody) is enough; the
+   distroless `:nonroot` tags already run as uid 65532. A numeric uid is
+   the safest choice because review does not have to look it up. Check
+   before you upload: `docker run --rm --entrypoint id <image>` must not
+   print `uid=0`. Every starter under `packages/<lang>/starters/` and the
+   reference bot already do this. Bots that were already active before
+   this rule are not re-reviewed. The platform still layers `--read-only`,
+   `--cap-drop=ALL` and seccomp on top (§7.4).
 5. **Treat `/tmp` as your only writable path.** The bot-match container
    runtime runs with a read-only root filesystem. `/tmp` is mounted on a
    small ephemeral tmpfs scratch volume — it's the only place your bot
@@ -838,11 +920,12 @@ uploading. Summary of the sections most relevant to bot authors:
   Credit third-party solvers / models in your bot description.
 - **§3.2 Code standards.** No sandbox escapes, no attacks on other bots
   or platform infra, no miners, no exfiltration.
-- **§3.3 Resource limits.** Exceeding your tier's CPU / memory / decision
-  timeout means the server applies a safe default. Repeat crashes can
-  trigger submission throttling.
+- **§3.3 Resource limits.** Exceeding the platform-wide CPU / memory /
+  decision timeout (see §7.2) means the server applies a safe default.
+  Repeat crashes can trigger submission throttling.
 - **§4.1 Match format.** Bot-vs-bot is elimination: you play until one
-  bot has all chips. Bot-vs-bot matches can have stakes and entry fees.
+  bot has all chips. Bot-vs-bot matches are free to enter: no stakes and
+  no entry fees (see §8.1).
 - **§8.2 License to Chipzen.** By submitting a container image, you grant
   Chipzen a non-exclusive license to run it for platform purposes
   (matches, testing, promotional demos). You retain ownership of the
@@ -855,8 +938,10 @@ This boundary is hard-coded in the platform:
 - **Human-vs-bot** matches (the `/play` routes) are **always free**. No
   stakes, no entry fees, no prizes. Used for spectators, training, and
   human engagement.
-- **Bot-vs-bot** matches (the `/challenges` routes, tournaments) **can**
-  have stakes and entry fees.
+- **Bot-vs-bot** matches (challenges, tournaments and seasons) are **also
+  free to enter**: there are no player stakes, entry fees or wagers. Some
+  events, such as the weekly seasons, pay out real prizes. Prizes are funded
+  by Chipzen and are never a stake put up by players.
 
 These are separate systems with separate APIs. Your bot doesn't need to
 care which one it's in — the WebSocket protocol is the same.
@@ -869,6 +954,35 @@ config). Pro: **10**. Elite: **100**.
 Uploads are not versioned: each upload creates a new independent bot.
 To upload a fourth bot on the free tier, delete one first. The backend
 enforces the cap with HTTP 409.
+
+### 8.2.1 WebSocket frame-rate and connection limits
+
+Every WebSocket you open to the platform is held to two limits. A bot that
+answers each `turn_request` once and replies to pings sends a few frames a
+second at most and never reaches either of them.
+
+| Limit | Value | What happens over it |
+|---|---|---|
+| Frames you send on one socket | 20 per second sustained, with a burst of 40 | The socket is closed with code `1008`, reason `message rate limit exceeded` |
+| Sockets open at once for one bot (lobby, match and conformance sockets together) | 24 | The new socket is accepted and then closed with code `1008`, reason `too many concurrent connections`. Your open sockets are not affected |
+| Sockets open at once for one signed-in user (browser play and spectating) | 10 | Same as above |
+
+Notes for bot authors:
+
+- `1008` is the standard WebSocket "policy violation" code, and the platform
+  also uses it for the per-IP connect limit. The close **reason** tells the
+  three apart.
+- The frame limit counts every frame, including `pong` and frames the
+  server would otherwise ignore. It is per socket, so one socket's traffic
+  does not use up another's allowance.
+- This limit sits in front of the in-match limit of 10 messages per second
+  (close code `4009` after five violations, see
+  [`ERROR-CODES.md`](ERROR-CODES.md)). A client that sends in a tight
+  loop can therefore see `1008` before it sees `4009`.
+- Do not reconnect in a loop after a `1008`. Fix the send loop, or close the
+  sockets you no longer need, then reconnect once. The match treats a match
+  socket closed this way as that seat disconnecting.
+- A well-behaved client needs no change, and there is nothing to negotiate.
 
 ### 8.3 Lifecycle in one glance
 
@@ -923,6 +1037,12 @@ the Developer UI. Click "Show rejection reason" — it's in
 
 **Common reasons:**
 
+- `Your bot image runs as root (...)`: the image has no `USER`, or its
+  `USER` is root / uid 0. Add `RUN useradd -u 10001 -m bot` and
+  `USER 10001` before the `ENTRYPOINT` (§7.1 item 4), rebuild, and
+  re-upload. `... could not find that user in the image's /etc/passwd`
+  means a named `USER` that review cannot resolve; switch to a numeric
+  uid.
 - `Image exceeds <N> MB compressed` — you're over the 250 MB compressed
   upload cap (§7.2). Use Alpine + wheels-only + strip pycache.
 - `Smoke test failed: no hello within 10s` — the bot never completed the

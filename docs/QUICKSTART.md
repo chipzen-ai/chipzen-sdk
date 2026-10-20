@@ -111,6 +111,13 @@ Expected tail: `naming to docker.io/library/my-first-bot:v1`. The
 Dockerfile installs `chipzen-bot` from PyPI, so no extra build context
 is required beyond this directory.
 
+The image must run as a non-root user, or review rejects it. The reference
+bot's Dockerfile already sets one. Check it:
+
+```bash
+docker run --rm --entrypoint id my-first-bot:v1   # must NOT print uid=0
+```
+
 ## 6. Export the tarball
 
 ```bash
@@ -125,8 +132,12 @@ faster, so trim where you can. Non-trivial bots with numpy/scipy + a
 model checkpoint typically run 100–250 MB — trim caches/tests, drop
 unused deps, or use `python:3.11-alpine` if you're brushing the cap.
 
-**Common failure:** Windows PowerShell mangles the pipe and produces a
-corrupt archive. Use Git Bash or WSL.
+**Common failures:** Windows PowerShell mangles the pipe and produces a
+corrupt archive; use Git Bash or WSL. `Your bot image runs as root` at
+upload means your Dockerfile has no non-root `USER` (the reference bot
+already sets one, so this only happens with your own Dockerfile). Add
+`RUN useradd -u 10001 -m bot` and `USER 10001` before the `ENTRYPOINT`
+([`DEV-MANUAL.md`](DEV-MANUAL.md) §7.1 item 4).
 
 ## 7. Validate locally
 
@@ -150,8 +161,10 @@ chipzen-sdk validate ./examples/reference-bot/ --check-connectivity
 ```
 
 A clean pass here means "your bot will not be rejected on protocol
-grounds at upload time". It is **not** a strategy-strength check — the
-platform runs comprehensive bot-vs-bot evaluation after upload.
+grounds at upload time". It is **not** a strategy-strength check. Upload
+review only runs a short scripted protocol check; you learn how strong your
+bot is from the real matches it plays (challenges, tournaments and seasons,
+with ratings and replays).
 
 ## 8. Upload, play, debug
 

@@ -1,7 +1,7 @@
 # Rule Sets
 
 **Date:** 2026-09-29
-**Status:** Draft (chipzen-ai/chipzen-sdk#138). The first game to use rule sets is **Big Bad Bots** (B3), the robot-fighting game, whose game type id is `bigbadbots`. Its first rule set, `bigbadbots-1.0`, was frozen with engine `1.0.0` and is in `preview` (§7). The id was `fighter` until 2026-10-01, when it was renamed before any match was played (chipzen-ai/Chipzen#5291); the one rule set released under the old name, `fighter-1.0`, is retired (§7).
+**Status:** Draft (chipzen-ai/chipzen-sdk#138). The first game to use rule sets is **Big Bad Bots** (B3), the robot-fighting game, whose game type id is `bigbadbots`. Three rule sets are released, all in `preview` (§7): `bigbadbots-1.0` (engine `1.0.0`), `bigbadbots-1.1` (engine `1.1.0`) and `bigbadbots-1.2` (engine `1.2.0`), the one chosen for launch. The id was `fighter` until 2026-10-01, when it was renamed before any match was played (chipzen-ai/Chipzen#5291); the one rule set released under the old name, `fighter-1.0`, is retired (§7).
 
 > **Provisional values.** These are placeholders pending a rules decision (D-13), and may change
 > before the first rule set is released:
@@ -155,6 +155,35 @@ The simulator plays a rule set exactly as the platform does, so a bot tuned loca
 ## 7. Changelog
 
 One entry per rule set, newest first. Each entry gives the id, its lifecycle dates, a summary of what changed from its predecessor, and the full parameter table (§4).
+
+### `bigbadbots-1.2`
+
+- **State:** `preview`. Frozen with engine `1.2.0` (chipzen-ai/bigbadbots-engine tag `v1.2.0`, engine line `v1`) on 2026-10-08. This is the rule set chosen for launch.
+- **sha256** (canonical JSON, as in every log header): `5e1f453c8f02dc3196cdf6a262e30a6147a1b5d4f472d4ec117e87bab42ac3ca`.
+- **Live date:** not set. Its `deadline` and `forfeit` sections are the same as 1.0's, so it stays in `preview` until D-01, D-03 and D-16 are confirmed (chipzen-ai/Chipzen#5089). The notice period (§3.1) starts when a live date is announced.
+- **Parameter table:** to be generated from the released file and published here (#138).
+- **Changes from `bigbadbots-1.1`** (6 changes, 7 values):
+  - **No closing walls.** The three closing-wall keys (`rounds.stall_close_after`, `stall_close_rate`, `stall_min_width`) are left out, so the arena never narrows. `rounds.timeout_tiebreak` stays `"damage"` and a round is still 600 ticks (60 s): a round that reaches the time limit goes to the side that dealt more damage.
+  - `combat.damage_scale` 2.0 to 2.3, so rounds end on damage without walls forcing contact.
+  - `special_effects.counter_return` 1.25 to 1.0: Warden's Counter returns a cancelled strike at its own damage.
+  - Warden health 45 to 40.
+  - Mantis reach 58 to 52.
+  - Everything else is as in 1.1, including `combat.intent_reveal` `"after_hit"` and `combat.block_chip` 0.40.
+
+### `bigbadbots-1.1`
+
+- **State:** `preview`. Frozen with engine `1.1.0` (chipzen-ai/bigbadbots-engine tag `v1.1.0`, engine line `v1`) on 2026-10-07. Superseded for launch by `bigbadbots-1.2`.
+- **sha256** (canonical JSON, as in every log header): `436e579ffbbff971c53957d6dcf8d0c1c2cf1da9096d9dbabf255c4e24e17789`.
+- **Live date:** not set (same reasons as 1.2).
+- **Parameter table:** to be generated from the released file and published here (#138).
+- **Changes from `bigbadbots-1.0`** (29 changes):
+  - **Mechanics** (optional rule-set keys, set for the first time):
+    - `combat.intent_reveal` `"after_hit"`: what happens on a tick is not visible to the opponent until the next tick, so a strike can no longer be blocked on sight on the tick it lands.
+    - **Closing walls:** `rounds.stall_close_after` 50, `stall_close_rate` 0.06, `stall_min_width` 2.0. After 5 s with no damage the walls close in at 0.06 units a tick, down to 2.0 units apart. `FightState` carries the wall positions.
+    - **Damage tiebreak:** `rounds.timeout_tiebreak` `"damage"`. A round that reaches the time limit goes to the side that dealt more damage in it; equal damage is a drawn round.
+  - **Blocking and the fight:** `blocked_extra_recovery` 3 to 0; `block_chip` 0.25 to 0.40; `damage_scale` 1.8 to 2.0; `strike_range_per_reach` 0.009 to 0.007; `counter_return` 1.5 to 1.25.
+  - **Bodies:** slot counts now scale with frame size (2 to 4, Scrapper 5), and several costs changed: Golem 550 to 580, Mantis 450 to 530, Warden 450 to 560, Scrapper 370 to 330, Viper 360 to 340, Brawler 410 to 360.
+  - **Parts:** Whip reach +25 to +20; Long arm reach +20 to +16; Targeting reach +15 to +12; Anchor speed -5 to 0; Juggernaut speed -15 to -6; Regenerator `regen_mult` 0.5 to 0.35.
 
 ### `bigbadbots-1.0`
 
