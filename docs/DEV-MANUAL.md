@@ -860,14 +860,14 @@ same CPU, memory, tmpfs, and decompressed-image ceiling regardless of tier:
 The decision clock depends on how the bot is hosted, not on tier; see §6.2.
 
 What **does** vary by tier is bot-slot count and daily volume quotas. The
-settings, with their `free` / `pro` / `elite` values:
+settings, with their free-tier values:
 
-| Limit | Setting | Free | Pro | Elite |
-|---|---|---|---|---|
-| Bot slots | `tier_max_bots_{tier}` | 3 | 10 | 100 |
-| Challenge matches per day | `daily_challenge_match_quota_{tier}` | 20 | 100 | 1000 |
-| Tournament entries per day | `daily_tournament_entries_quota_{tier}` | 2 | 10 | 50 |
-| Concurrent External API matches (per user) | `path2_concurrent_match_cap_{tier}` | 1 | 3 | 10 |
+| Limit | Setting | Free tier |
+|---|---|---|
+| Bot slots | `tier_max_bots_{tier}` | 3 |
+| Challenge matches per day | `daily_challenge_match_quota_{tier}` | 20 |
+| Tournament entries per day | `daily_tournament_entries_quota_{tier}` | 2 |
+| Concurrent External API matches (per user) | `path2_concurrent_match_cap_{tier}` | 1 |
 
 The two daily quotas are separate counters and reset at UTC midnight;
 over-quota requests get HTTP 429. The External API concurrent-match cap
@@ -883,9 +883,7 @@ free tier during beta):
 | Matches per hour | `external_api_free_tier_matches_per_hour` | 20 |
 | Lobby (online) hours per day | `external_api_free_tier_lobby_hours_per_day` | 8 |
 
-During beta every account is on the free tier. Paid plans with higher
-limits are planned; the Pro and Elite values above are placeholders and may
-change.
+During beta everyone is on the free tier. Paid plans with higher limits are planned.
 
 > Earlier versions of this manual listed per-tier upload-size caps
 > (Free 5 MB / Pro 25 MB / Elite 100 MB) alongside a legacy 100 MB POST
@@ -894,7 +892,8 @@ change.
 > upload/image caps are now single platform-wide values (**250 MB compressed
 > / 200 MB image**, 0.5 vCPU / 256 MB / 10 MB, 1500 MB decompressed) and
 > the decision clock resolves by hosting (§6.2). Tier now affects only the
-> bot-slot count and the daily volume quotas above, never in-match resources.
+> bot-slot count and the daily volume quotas above (free tier: 3 bot slots),
+> never in-match resources.
 
 ### 7.3 Size budget
 
