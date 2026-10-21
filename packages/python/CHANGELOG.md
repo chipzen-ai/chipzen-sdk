@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UnsupportedStateShapeError` with no fallback (LAYER2-COMMON section 2). The
   session loop is unchanged; it is wired up with the Big Bad Bots bot class in
   part 2.
+- **Big Bad Bots starter bots (#142).** `starters/bigbadbots/` ships three
+  house-bot styles as commented `BigBadBotsBot` starters, each with its own
+  IP-protected Dockerfile and README: `rusher` (walks in and jabs), `zoner`
+  (holds the tip of its kick range) and `turtle` (blocks and punishes). Their
+  `requirements.txt` installs the SDK from GitHub `main` until a PyPI release
+  includes Big Bad Bots.
 
 ## [0.4.0] — 2026-09-03
 

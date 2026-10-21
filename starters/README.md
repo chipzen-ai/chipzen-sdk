@@ -1,17 +1,31 @@
 # Chipzen Starter Bots
 
-Ready-to-run bot templates for the Chipzen poker platform. Each implements the
-same tight-aggressive strategy (raise strong hands preflop, check-call postflop)
-against the Chipzen **two-layer protocol**:
+Ready-to-run bot templates for the Chipzen AI competition platform, where
+bots play poker and Big Bad Bots. Every starter speaks the Chipzen
+**two-layer protocol**:
 
 - **Layer 1 (Transport):** connection, authentication, turn sequencing, timing.
   See [`../docs/protocol/TRANSPORT-PROTOCOL.md`](../docs/protocol/TRANSPORT-PROTOCOL.md).
-- **Layer 2 (Poker):** NLHE-specific game state, action vocabulary, payloads.
-  See [`../docs/protocol/POKER-GAME-STATE-PROTOCOL.md`](../docs/protocol/POKER-GAME-STATE-PROTOCOL.md).
+- **Layer 2 (the game):** each game's state, action vocabulary and payloads.
+  Poker: [`../docs/protocol/POKER-GAME-STATE-PROTOCOL.md`](../docs/protocol/POKER-GAME-STATE-PROTOCOL.md).
+  Big Bad Bots: [`../docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md`](../docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md).
 
-Pick your language and start hacking.
+The poker starters implement the same tight-aggressive strategy (raise strong
+hands preflop, check-call postflop). Pick your game and language and start
+hacking.
 
-## Quick Start
+## Big Bad Bots (Python)
+
+Three starters, each a Chipzen house bot rewritten as a short, commented
+`chipzen.BigBadBotsBot`, live in
+[`../packages/python/starters/bigbadbots/`](../packages/python/starters/bigbadbots/):
+[Rusher](../packages/python/starters/bigbadbots/rusher/) (walks in and jabs),
+[Zoner](../packages/python/starters/bigbadbots/zoner/) (holds the tip of its
+kick range) and [Turtle](../packages/python/starters/bigbadbots/turtle/)
+(blocks and punishes). Each folder has its own Dockerfile and a README that
+covers the per-tick time budget and running against prod or staging.
+
+## Quick Start (poker)
 
 ### Python
 
@@ -48,7 +62,7 @@ chipzen-sdk init my-bot   # scaffold a project that uses the SDK
 
 ## Environment Variables
 
-All three starters accept the same configuration via env vars (useful for
+All the starters accept the same configuration via env vars (useful for
 Docker / CI):
 
 | Variable            | Description                                                 |
@@ -93,7 +107,7 @@ docker build -t my-bot .
 docker run --rm -e CHIPZEN_TOKEN=... my-bot ws://host.docker.internal:8001/ws/match/{match_id}/bot
 ```
 
-## Protocol at a Glance
+## Protocol at a Glance (poker)
 
 1. Bot connects via WebSocket.
 2. Bot sends `authenticate` (with `token` or `ticket`).
@@ -120,7 +134,7 @@ See [`../docs/protocol/TRANSPORT-PROTOCOL.md`](../docs/protocol/TRANSPORT-PROTOC
 and [`../docs/protocol/POKER-GAME-STATE-PROTOCOL.md`](../docs/protocol/POKER-GAME-STATE-PROTOCOL.md)
 for the authoritative specification.
 
-## Customizing
+## Customizing (poker)
 
 These starters are intentionally simple. Ideas to improve:
 
