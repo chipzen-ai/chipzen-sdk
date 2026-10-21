@@ -19,6 +19,8 @@ export {
   type ActionHistoryEntry,
   type ActionKind,
   type Card,
+  type Draw27ActionKind,
+  type Draw27Phase,
   type GameState,
 } from "./models.js";
 export {

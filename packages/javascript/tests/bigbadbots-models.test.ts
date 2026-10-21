@@ -478,7 +478,20 @@ describe("state_shape router", () => {
     expect("holeCards" in state && state.holeCards).toHaveLength(2);
   });
 
-  it.each(["fighter", "chess", "nlhe-v2", "", "BIGBADBOTS", "27tripledraw", "pineapple"])(
+  it("the 2-7 Triple Draw shape routes to the poker parser", () => {
+    const state = parseTurnRequest(
+      {
+        request_id: "r1",
+        valid_actions: ["draw"],
+        state: { phase: "draw1", board: [], your_hole_cards: ["Ah", "Kd", "9s", "7c", "3h"], max_discard: 5 },
+      },
+      "27tripledraw",
+    );
+    expect("maxDiscard" in state && state.maxDiscard).toBe(5);
+  });
+
+  // Pineapple OFC is not parsed by this release yet (chipzen-sdk#175).
+  it.each(["fighter", "chess", "nlhe-v2", "", "BIGBADBOTS", "pineapple"])(
     "unknown state_shape %j fails loudly with no fallback",
     (shape) => {
       expect(() => parseTurnRequest(request("act"), shape)).toThrow(UnsupportedStateShapeError);

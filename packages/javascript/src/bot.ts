@@ -9,7 +9,7 @@
  * at the right point.
  */
 
-import type { Action, GameState } from "./models.js";
+import { Action, type GameState } from "./models.js";
 
 export abstract class Bot {
   /**
@@ -26,6 +26,37 @@ export abstract class Bot {
    * `bot_error` event to the human's UI.
    */
   abstract decide(state: GameState): Action;
+
+  // ------------------------------------------------------------------
+  // Optional variant hooks
+  //
+  // DEFAULTED, and never called by the SDK on their own: `decide()` stays
+  // the single required method and the only one the session loop invokes.
+  // They exist so a bot that plays a variant table can split its logic
+  // without inventing its own dispatch. The dispatch is yours, in decide():
+  //
+  //     decide(state: GameState): Action {
+  //       if (state.isDrawPhase) return this.decideDraw(state); // 2-7 Triple Draw
+  //       ...                                                  // your betting logic
+  //     }
+  // ------------------------------------------------------------------
+
+  /**
+   * 2-7 Triple Draw: return your `draw` action for a draw turn. Called only
+   * if your own `decide()` delegates to it.
+   *
+   * The default is a **stand pat** (`Action.standPat()`), which is also
+   * what the server substitutes for a seat that times out in a draw phase.
+   * It is legal in every draw phase, so the default is never rejected; it
+   * is simply not a strategy.
+   *
+   * Discard at most `state.maxDiscard` cards with `Action.discard(...)`.
+   * The bound lives in the state, not in `state.validActions` (which is
+   * exactly `["draw"]` on a draw turn).
+   */
+  decideDraw(_state: GameState): Action {
+    return Action.standPat();
+  }
 
   /** Called once when the `match_start` message arrives. */
   onMatchStart(_matchInfo: Record<string, unknown>): void {

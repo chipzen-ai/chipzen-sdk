@@ -377,7 +377,7 @@ shares.
    or `run_external_bot(..., supported_games=[...])`. In JavaScript:
    `runBot(url, bot, { supportedGames: [...] })` or
    `runExternalBot(bot, { ..., supportedGames: [...] })` (the JavaScript SDK
-   cannot play 2-7 Triple Draw or OFC yet; see the support table below). The
+   cannot play Pineapple OFC yet; see the support table below). The
    list goes on the client `hello` and is checked when the match socket
    opens.
 2. **On the bot:** its supported game types (`supported_game_types`) when you
@@ -393,7 +393,8 @@ every turn.
 method. The SDK adds two optional hooks that it never calls on its own:
 `decide_draw(state)` for a 2-7 Triple Draw draw turn and
 `decide_placement(state)` for a Pineapple OFC placement turn. Call them from
-`decide()`:
+`decide()` (in JavaScript: `decideDraw(state)`, branching on
+`state.isDrawPhase`):
 
 ```python
 from chipzen import Action, Bot, GameState
@@ -426,9 +427,9 @@ can still play a game by speaking its Layer 2 spec directly.
 | No-Limit Hold'em, heads-up and multi-way | Yes | Yes | Yes |
 | Remote play (external API) | Yes | Yes | Yes |
 | `supported_games` declaration | Yes (0.4.0) | Yes (`supportedGames`, 0.4.0) | Parity pending |
-| 2-7 Triple Draw | Yes (0.4.0) | Parity pending | Parity pending |
+| 2-7 Triple Draw | Yes (0.4.0) | Yes, in `main` (`decideDraw`); not yet in an npm release | Parity pending |
 | Pineapple OFC | Yes (0.4.0) | Parity pending | Parity pending |
-| Big Bad Bots | Yes, in `main` (`BigBadBotsBot`, §10); not yet in a PyPI release | Coming after Python | Coming after Python |
+| Big Bad Bots | Yes (0.5.0, `BigBadBotsBot`, §10) | Yes (0.4.0, `BigBadBotsBot`) | Coming after Python |
 
 ---
 
