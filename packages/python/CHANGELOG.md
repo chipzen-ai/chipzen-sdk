@@ -29,6 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (holds the tip of its kick range) and `turtle` (blocks and punishes). Their
   `requirements.txt` installs the SDK from GitHub `main` until a PyPI release
   includes Big Bad Bots.
+- **`chipzen validate` checks Big Bad Bots bots (#143).** A `BigBadBotsBot`
+  subclass (or any bot, with `--game bigbadbots`) answers every request in the
+  new conformance fixtures, real `turn_request` messages for `choose_body`,
+  `bid`, `fit` and `act`, and each answer is judged as the server judges it:
+  a malformed answer fails, a corrected (illegal) one warns. It also fails a
+  handler that raises (including `SystemExit`) or crashes on every fight tick,
+  warns on one that mutates its state or runs past the per-tick deadline, and
+  checks `act()` in place of `decide()`. `chipzen.bigbadbots_validate` exposes
+  the answer checker. Poker bots are validated exactly as before.
+
+### Fixed
+
+- **`validate` read a PEP 508 direct reference (`chipzen-bot @ https://...`)
+  or an environment marker in `requirements.txt` as part of the package name**
+  and failed the allow-list check. It now checks the package name only.
 
 ## [0.4.0] — 2026-09-03
 

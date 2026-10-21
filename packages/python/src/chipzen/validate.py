@@ -13,7 +13,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 # Severity levels for validation results
 Severity = Literal["pass", "warn", "fail"]
@@ -101,6 +101,19 @@ ALLOWED_PACKAGES = frozenset(
 # Allowed entry point filenames
 ALLOWED_ENTRY_POINTS = ("main.py", "bot.py")
 
+# The games ``validate`` knows. ``nlhe`` is every poker table (the checks
+# that predate Big Bad Bots); ``bigbadbots`` runs the Big Bad Bots checks.
+GAMES = ("nlhe", "bigbadbots")
+
+# Base classes that make a bot class, and the game each one implies (None:
+# the base does not say, so the bot is a poker bot unless told otherwise).
+_BOT_BASES = {
+    "ChipzenBot": None,
+    "Bot": None,
+    "TiltBot": None,  # kept for legacy SDK compat
+    "BigBadBotsBot": "bigbadbots",
+}
+
 
 def validate_bot(
     bot_path: str | Path,
@@ -109,6 +122,7 @@ def validate_bot(
     timeout_warn_ms: int = DEFAULT_TIMEOUT_WARN_MS,
     entry_point: str | None = None,
     check_connectivity: bool = False,
+    game: str | None = None,
 ) -> list[tuple[Severity, str, str]]:
     """Run all validation checks on a bot artifact.
 
@@ -122,6 +136,13 @@ def validate_bot(
             (handshake + one full hand + match_end) using an in-process mock
             WebSocket. Reports protocol-conformance failures as additional
             check entries. Pure connectivity — does not judge bot strength.
+            Poker only.
+        game: ``"nlhe"`` or ``"bigbadbots"``. ``None`` (the default) picks
+            ``bigbadbots`` for a :class:`chipzen.BigBadBotsBot` subclass and
+            ``nlhe`` otherwise. A Big Bad Bots bot gets the Big Bad Bots
+            checks in place of the poker smoke test: every conformance
+            fixture request of the four calls, each answer judged as the
+            server judges it (``chipzen.bigbadbots_validate``).
 
     Returns:
         List of (severity, check_name, message) tuples.
@@ -129,6 +150,8 @@ def validate_bot(
     """
     bot_path = Path(bot_path)
     results: list[tuple[Severity, str, str]] = []
+    if game is not None and game not in GAMES:
+        return [("fail", "game", f"Unknown game {game!r}; expected one of: {', '.join(GAMES)}")]
 
     # Determine working directory
     is_zip = bot_path.suffix.lower() == ".zip"
@@ -150,14 +173,16 @@ def validate_bot(
             else:
                 bot_dir = Path(tmpdir)
             results.extend(
-                _check_directory(bot_dir, entry_point, timeout_warn_ms, check_connectivity)
+                _check_directory(bot_dir, entry_point, timeout_warn_ms, check_connectivity, game)
             )
         finally:
             _shutil.rmtree(tmpdir, ignore_errors=True)
     elif bot_path.is_dir():
         # Check what the zip size would be
         results.extend(_check_dir_size(bot_path, max_upload_bytes))
-        results.extend(_check_directory(bot_path, entry_point, timeout_warn_ms, check_connectivity))
+        results.extend(
+            _check_directory(bot_path, entry_point, timeout_warn_ms, check_connectivity, game)
+        )
     else:
         results.append(
             ("fail", "file_structure", f"Path not found or not a directory/zip: {bot_path}")
@@ -200,6 +225,7 @@ def _check_directory(
     entry_point: str | None,
     timeout_warn_ms: int,
     check_connectivity: bool = False,
+    game: str | None = None,
 ) -> list[tuple[Severity, str, str]]:
     """Run all directory-level checks."""
     results: list[tuple[Severity, str, str]] = []
@@ -237,11 +263,17 @@ def _check_directory(
             (
                 "fail",
                 "bot_class",
-                "No class inheriting from ChipzenBot or Bot found in entry point",
+                "No class inheriting from ChipzenBot, Bot or BigBadBotsBot found in entry point",
             )
         )
         return results
     results.append(("pass", "bot_class", f"Found bot class: {bot_class_name}"))
+
+    if game is None:
+        game = _bot_game(tree, bot_class_name) or "nlhe"
+    if game == "bigbadbots":
+        results.extend(_check_bigbadbots(bot_dir, ep, tree, bot_class_name, check_connectivity))
+        return results
 
     # 5. Decide method check
     has_decide = _has_decide_method(tree, bot_class_name)
@@ -286,6 +318,91 @@ def _check_directory(
             )
 
     return results
+
+
+def _check_bigbadbots(
+    bot_dir: Path,
+    entry_point: Path,
+    tree: ast.Module,
+    class_name: str,
+    check_connectivity: bool,
+) -> list[tuple[Severity, str, str]]:
+    """The Big Bad Bots half of ``_check_directory``, after the bot class is found."""
+    results: list[tuple[Severity, str, str]] = []
+
+    # A BigBadBotsBot needs act() (its one method with no default); any other
+    # bot playing Big Bad Bots answers through decide().
+    method = "act" if _bot_game(tree, class_name) == "bigbadbots" else "decide"
+    if not _has_method(tree, class_name, method):
+        results.append(("fail", f"{method}_method", f"{class_name} does not implement {method}()"))
+        return results
+    results.append(("pass", f"{method}_method", f"{class_name}.{method}() implemented"))
+
+    req_file = bot_dir / "requirements.txt"
+    if req_file.exists():
+        results.extend(_check_requirements(req_file))
+    else:
+        results.append(
+            ("pass", "requirements", "No requirements.txt (only stdlib + SDK will be available)")
+        )
+
+    results.extend(_with_bot(bot_dir, entry_point, class_name, _run_bigbadbots))
+    if check_connectivity:
+        results.append(
+            (
+                "warn",
+                "connectivity",
+                "skipped: the --check-connectivity scenarios are poker sessions; the "
+                "bigbadbots_* checks above already drive all four Big Bad Bots calls",
+            )
+        )
+    return results
+
+
+def _run_bigbadbots(bot: object) -> list[tuple[Severity, str, str]]:
+    """Instantiate-check ``bot`` and run the Big Bad Bots fixture checks on it."""
+    from chipzen.bigbadbots_validate import run_bigbadbots_checks
+    from chipzen.bot import ChipzenBot
+
+    if not isinstance(bot, ChipzenBot):
+        return [("fail", "smoke_test", f"{type(bot).__name__} is not a chipzen Bot")]
+    return [
+        ("pass", "smoke_test", f"{type(bot).__name__} instantiated"),
+        *run_bigbadbots_checks(bot),
+    ]
+
+
+def _with_bot(
+    bot_dir: Path,
+    entry_point: Path,
+    class_name: str,
+    run: Callable[[object], list[tuple[Severity, str, str]]],
+) -> list[tuple[Severity, str, str]]:
+    """Import the entry point fresh, instantiate ``class_name`` and ``run`` it."""
+    bot_dir_str = str(bot_dir)
+    added_to_path = False
+    if bot_dir_str not in sys.path:
+        sys.path.insert(0, bot_dir_str)
+        added_to_path = True
+
+    module_name = entry_point.stem
+    if module_name in sys.modules:
+        del sys.modules[module_name]
+
+    try:
+        try:
+            module = importlib.import_module(module_name)
+            bot = getattr(module, class_name)()
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - SystemExit at import included
+            return [("fail", "smoke_test", f"Failed to run bot: {type(exc).__name__}: {exc}")]
+        return run(bot)
+    finally:
+        if added_to_path and bot_dir_str in sys.path:
+            sys.path.remove(bot_dir_str)
+        if module_name in sys.modules:
+            del sys.modules[module_name]
 
 
 def _connectivity_check(
@@ -390,34 +507,49 @@ def _check_imports(tree: ast.AST, filename: str) -> list[tuple[Severity, str, st
     return results
 
 
+def _base_names(node: ast.ClassDef) -> list[str]:
+    names = []
+    for base in node.bases:
+        if isinstance(base, ast.Name):
+            names.append(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.append(base.attr)
+    return names
+
+
 def _find_bot_class(tree: ast.Module) -> str | None:
-    """Find a class that inherits from ChipzenBot/Bot in the AST."""
+    """Find a class that inherits from ChipzenBot/Bot/BigBadBotsBot in the AST."""
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
-            for base in node.bases:
-                base_name = None
-                if isinstance(base, ast.Name):
-                    base_name = base.id
-                elif isinstance(base, ast.Attribute):
-                    base_name = base.attr
-                if base_name in (
-                    "ChipzenBot",
-                    "Bot",
-                    "TiltBot",
-                ):  # TiltBot kept for legacy SDK compat
-                    return node.name
+            if any(name in _BOT_BASES for name in _base_names(node)):
+                return node.name
     return None
 
 
-def _has_decide_method(tree: ast.Module, class_name: str) -> bool:
-    """Check if the named class has a decide() method."""
+def _bot_game(tree: ast.Module, class_name: str) -> str | None:
+    """The game the named class's base implies, or None when the base does not say."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            for name in _base_names(node):
+                if _BOT_BASES.get(name):
+                    return _BOT_BASES[name]
+    return None
+
+
+def _has_method(tree: ast.Module, class_name: str, method: str) -> bool:
+    """Check if the named class defines ``method``."""
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if item.name == "decide":
+                    if item.name == method:
                         return True
     return False
+
+
+def _has_decide_method(tree: ast.Module, class_name: str) -> bool:
+    """Check if the named class has a decide() method."""
+    return _has_method(tree, class_name, "decide")
 
 
 def _check_requirements(
@@ -431,9 +563,12 @@ def _check_requirements(
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
-        # Extract package name (strip version specifiers)
+        # Extract package name (strip environment markers, a PEP 508
+        # direct reference ``name @ url``, and version specifiers)
         pkg = (
-            line.split(">=")[0]
+            line.split(";")[0]
+            .split("@")[0]
+            .split(">=")[0]
             .split("<=")[0]
             .split("==")[0]
             .split("~=")[0]
@@ -615,6 +750,20 @@ def validate_cli(args: list[str] | None = None) -> None:
             "                             responds reactively to 3 back-to-back\n"
             "                             action_rejected messages without hanging\n"
             "\n"
+            "A Big Bad Bots bot (a BigBadBotsBot subclass, or --game bigbadbots)\n"
+            "gets these in place of decide_method, smoke_test and timeout:\n"
+            "  act_method                 BigBadBotsBot subclass implements act()\n"
+            "  bigbadbots_choose_body     Every conformance request of each call is\n"
+            "  bigbadbots_bid             answered, and each answer is judged as the\n"
+            "  bigbadbots_fit             server judges it: a malformed answer fails,\n"
+            "  bigbadbots_act             a corrected (illegal) one warns\n"
+            "  bigbadbots_state_mutation  No handler changes the state it is handed\n"
+            "  bigbadbots_timing          Answers within timeout_ms and the per-tick\n"
+            "                             deadline\n"
+            "  bigbadbots_exit            No handler raises SystemExit or another\n"
+            "                             BaseException\n"
+            "  bigbadbots_crash_every_tick  act() does not crash on every tick\n"
+            "\n"
             "The validator is a courtesy linter: it catches the most common\n"
             "upload-blocking issues before you ship. The authoritative gate is\n"
             "server-side -- the platform runs its own seccomp + cap-drop sandbox\n"
@@ -655,6 +804,15 @@ def validate_cli(args: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--game",
+        choices=("auto", *GAMES),
+        default="auto",
+        help=(
+            "Which game's checks to run (default: auto, which picks bigbadbots for a "
+            "BigBadBotsBot subclass and nlhe otherwise)"
+        ),
+    )
+    parser.add_argument(
         "--no-color",
         action="store_true",
         help="Disable colored output",
@@ -668,6 +826,7 @@ def validate_cli(args: list[str] | None = None) -> None:
         timeout_warn_ms=parsed.timeout_warn_ms,
         entry_point=parsed.entry_point,
         check_connectivity=parsed.check_connectivity,
+        game=None if parsed.game == "auto" else parsed.game,
     )
 
     _print_results(results, color=not parsed.no_color)
