@@ -45,9 +45,12 @@ fn safe_fallback_degrades_to_first_valid_action() {
     // Answering check/fold here is rejected, retried, rejected again —
     // the reject/retry loop of chipzen-ai/Chipzen#4244. Echo the first
     // valid action instead (matches the Python SDK).
+    // (A 2-7 Triple Draw `["draw"]` turn is modelled since
+    // chipzen-sdk#174: its fallback is a typed stand pat, see
+    // tests/draw27.rs.)
     assert_eq!(
         _safe_fallback_action(&strings(&["draw"])).unwrap(),
-        FallbackAction::Raw("draw".to_string())
+        FallbackAction::Typed(Action::stand_pat())
     );
     assert_eq!(
         _safe_fallback_action(&strings(&["place", "pass"])).unwrap(),
@@ -66,10 +69,10 @@ fn safe_fallback_degrades_to_first_valid_action() {
 
 #[test]
 fn safe_fallback_raw_action_serializes_verbatim_with_empty_params() {
-    let (action, params) = _safe_fallback_action(&strings(&["draw"]))
+    let (action, params) = _safe_fallback_action(&strings(&["place"]))
         .unwrap()
         .to_wire();
-    assert_eq!(action, "draw");
+    assert_eq!(action, "place");
     assert_eq!(params, json!({}));
 }
 
@@ -575,14 +578,16 @@ impl Bot for NlheBot {
     }
 }
 
-/// An NLHE bot mis-seated at a variant table (`valid_actions == ["draw"]`)
-/// used to answer `fold`, get rejected, answer `fold` again, and spin until
-/// the auto-substitute streak limit killed the match. The safe fallback now
-/// echoes the first valid action, so the exchange terminates after a single
-/// rejection (chipzen-ai/Chipzen#4244).
+/// An NLHE bot mis-seated at a variant table whose action set the SDK does
+/// not model (`valid_actions == ["place"]`) used to answer `fold`, get
+/// rejected, answer `fold` again, and spin until the auto-substitute streak
+/// limit killed the match. The safe fallback now echoes the first valid
+/// action, so the exchange terminates after a single rejection
+/// (chipzen-ai/Chipzen#4244). (A `["draw"]` turn is modelled since
+/// chipzen-sdk#174 and falls back to a stand pat; see tests/draw27.rs.)
 #[tokio::test]
 async fn run_session_does_not_loop_at_a_variant_table() {
-    let table = VariantTable::new(&["draw"]);
+    let table = VariantTable::new(&["place"]);
     let mut reader = TableReader(Arc::clone(&table));
     let mut writer = TableWriter(Arc::clone(&table));
     let mut bot = NlheBot;
@@ -601,7 +606,7 @@ async fn run_session_does_not_loop_at_a_variant_table() {
     );
     assert_eq!(
         state.accepted,
-        vec!["draw".to_string()],
+        vec!["place".to_string()],
         "the safe fallback should echo the first valid action"
     );
     assert_eq!(

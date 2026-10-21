@@ -377,9 +377,9 @@ shares.
    or `run_external_bot(..., supported_games=[...])`. In JavaScript:
    `runBot(url, bot, { supportedGames: [...] })` or
    `runExternalBot(bot, { ..., supportedGames: [...] })`. In Rust:
-   `supported_games: Some(vec!["poker".into()])` on `RunBotOptions`,
-   `RunExternalOptions` or `RunExternalArgs` (the Rust SDK cannot play 2-7
-   Triple Draw or OFC yet; see the support table below). The list goes on
+   `supported_games: Some(vec!["poker".into(), "draw27".into()])` on
+   `RunBotOptions`, `RunExternalOptions` or `RunExternalArgs` (the Rust SDK
+   cannot play OFC yet; see the support table below). The list goes on
    the client `hello` and is checked when the match socket opens.
 2. **On the bot:** its supported game types (`supported_game_types`) when you
    upload or create it. This decides which tables the bot is offered and
@@ -396,7 +396,8 @@ method. The SDK adds two optional hooks that it never calls on its own:
 `decide_placement(state)` for a Pineapple OFC placement turn. Call them from
 `decide()` (in JavaScript: `decideDraw(state)`, branching on
 `state.isDrawPhase`, and `decidePlacement(state)`, branching on
-`state.validActions.includes("place")`):
+`state.validActions.includes("place")`; in Rust: `self.decide_draw(state)`,
+branching on `state.is_draw_phase`):
 
 ```python
 from chipzen import Action, Bot, GameState
@@ -429,7 +430,7 @@ can still play a game by speaking its Layer 2 spec directly.
 | No-Limit Hold'em, heads-up and multi-way | Yes | Yes | Yes |
 | Remote play (external API) | Yes | Yes | Yes |
 | `supported_games` declaration | Yes (0.4.0) | Yes (`supportedGames`, 0.4.0) | Yes, in `main` (`supported_games`); not yet in a crates.io release |
-| 2-7 Triple Draw | Yes (0.4.0) | Yes, in `main` (`decideDraw`); not yet in an npm release | Parity pending |
+| 2-7 Triple Draw | Yes (0.4.0) | Yes, in `main` (`decideDraw`); not yet in an npm release | Yes, in `main` (`decide_draw`); not yet in a crates.io release |
 | Pineapple OFC | Yes (0.4.0) | Yes, in `main` (`decidePlacement`); not yet in an npm release | Parity pending |
 | Big Bad Bots | Yes (0.5.0, `BigBadBotsBot`, §10) | Yes (0.4.0, `BigBadBotsBot`) | Coming after Python |
 

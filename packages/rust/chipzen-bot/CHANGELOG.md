@@ -10,6 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **2-7 Triple Draw parity with the Python SDK**
+  ([#174](https://github.com/chipzen-ai/chipzen-sdk/issues/174)). A Rust bot
+  can now declare `supported_games: Some(vec!["poker".into(), "draw27".into()])`
+  and play a 2-7 Triple Draw table. Per
+  `docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md`:
+  - `GameState` gains `is_draw_phase`, `draw_number`, `draws_remaining`,
+    `max_discard`, `your_draw_counts` and `opponent_draw_counts` (keyed by
+    seat as a decimal string). `parse_game_state` always fills them; at a
+    hold'em table they hold their defaults (`false`, `0`, empty). They are
+    parsed leniently, as in Python: a mistyped value falls back to its
+    default (a float is truncated) instead of failing the turn.
+  - `GameState` implements `Default` (the state parsed from an empty
+    `turn_request`), so a hand-built state can end with
+    `..Default::default()`.
+  - `Action::Draw(Vec<DiscardItem>)`, built with `Action::discard(cards)`
+    (card strings, `Card`s or 0-based positions), `Action::discard_positions`
+    or `Action::stand_pat()`, emits
+    `{"action": "draw", "params": {"discard": [...]}}`. `ActionKind::Draw`
+    is its kind. `DiscardItem` is exported.
+  - `Bot::decide_draw(&mut self, state)`, an optional hook whose default is
+    a stand pat. The SDK never calls it; call it from `decide()` when
+    `state.is_draw_phase`.
+  - The safe fallback (after a panic in `decide()`, an illegal action, or an
+    `action_rejected`) is a stand pat on a draw turn, which offers neither
+    `check` nor `fold`. It used to echo a bare `draw` with empty params.
+  - `tests/draw27.rs` ports the 27TD half of the Python
+    `test_variant_backcompat.py` and the JavaScript `draw27.test.ts` against
+    the Python `_draw27_*` frames, value for value (reading a draw
+    `turn_result`'s `details.amount` as the discard mask, per the protocol),
+    plus full sessions of a bot that declares `draw27`. As in Python, the
+    frames are not part of the conformance grader.
+
 - **`supported_games` declaration, parity with the Python SDK**
   ([#172](https://github.com/chipzen-ai/chipzen-sdk/issues/172)). A new
   `supported_games: Option<Vec<String>>` field on `RunBotOptions`,
@@ -22,22 +54,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pinned by `tests/supported_games.rs`, which covers `run_bot` against a
   real local WebSocket server and `run_external_bot` over a scripted
   transport. Declaring a `game_type` asserts you implement everything in
-  that game's Layer 2 spec; this release still reads every turn as a
-  hold'em turn, so do not declare `draw27` or `ofc` from Rust until that
-  parity ships. Code that builds these option structs with a struct
-  literal and no `..Default::default()` must add the field.
+  that game's Layer 2 spec; Pineapple OFC is not supported yet, so do not
+  declare `ofc` from Rust until that parity ships (#176). Code that builds
+  these option structs with a struct literal and no `..Default::default()`
+  must add the field.
 
 ### Changed
 
+- **Breaking (pre-1.0): `Action` is no longer `Copy`**, because
+  `Action::Draw` carries its discard list. `Action` is still `Clone`; code
+  that copied an `Action` implicitly must `.clone()` it. `Action` and
+  `ActionKind` each gain a variant, so an exhaustive `match` on either needs
+  an arm for it. `GameState` gains fields, so a `GameState` struct literal
+  must name them or end with `..Default::default()`.
+- **The session routes on the table's `state_shape`**
+  (`docs/protocol/LAYER2-COMMON.md` section 2), as the Python and JavaScript
+  SDKs do. The server `hello`'s `game.state_shape` is read before the client
+  `hello` is sent: no descriptor (hold'em) and `27tripledraw` are played;
+  any other shape, including Pineapple OFC's `pineapple` until #176, and a
+  malformed descriptor end the session (`Ok(None)`, with a line on stderr)
+  instead of being read as hold'em. Previously every table was parsed as
+  hold'em, so a bot seated at a variant table played garbage.
 - The client `hello` is serialized from a fixed-order struct instead of a
   `serde_json::json!` map. The bytes are unchanged; the key order no longer
   depends on whether the final binary enables `serde_json`'s
   `preserve_order` feature.
 
+### Fixed
+
+- **`GameState.your_seat` and `dealer_seat` are tracked through the
+  session** (the Rust analog of
+  [#194](https://github.com/chipzen-ai/chipzen-sdk/issues/194)). A hold'em
+  or 27TD turn state carries neither, so a bot was always handed
+  `your_seat: 0` and `dealer_seat: 0`, whatever its seat (except on a
+  `reconnected` replay, which already re-learned the seat). The seat now
+  comes from `match_start` (or `reconnected`) and the button from each
+  `round_start`; a turn state that carries either keeps its own value.
+
 ### Documentation
 
 - `README.md`, `docs/DEV-MANUAL.md` §2.8 and
   `docs/PORTING-BETWEEN-SDKS.md` §8 give the Rust name.
+- The "do not declare `draw27` from Rust" notes are gone from `README.md`,
+  `packages/rust/README.md` (which now shows a draw turn),
+  `docs/DEV-MANUAL.md` §2.8 and `docs/PORTING-BETWEEN-SDKS.md` (§2, §3, §8);
+  the Rust 2-7 Triple Draw cells are flipped. OFC's notes stay until #176.
 
 ## [0.3.2] — 2026-10-18
 

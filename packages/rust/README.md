@@ -102,16 +102,39 @@ it goes on the client `hello` as `supported_games`:
 
 ```rust
 let options = RunBotOptions {
-    supported_games: Some(vec!["poker".to_string()]),
+    supported_games: Some(vec!["poker".to_string(), "draw27".to_string()]),
     ..Default::default()
 };
 ```
 
 Leaving it `None` (the default) declares nothing ("poker only") and keeps
 the `hello` unchanged; an empty list is sent as is and means "supports
-nothing". This release reads every turn as a hold'em turn: until 2-7 Triple
-Draw and Pineapple OFC parity lands, a Rust bot cannot play those tables, so
-do not declare `draw27` or `ofc` yet. See
+nothing".
+
+**2-7 Triple Draw** (`draw27`) is fixed-limit lowball with three draws. One
+`GameState` covers both kinds of turn: branch on `state.is_draw_phase`. On a
+draw turn `valid_actions` is exactly `["draw"]`; answer with
+`Action::discard(...)` (card strings, `Card`s or 0-based positions, at most
+`state.max_discard`) or `Action::stand_pat()`. The optional
+`Bot::decide_draw` hook defaults to a stand pat and is only called if your
+`decide` calls it:
+
+```rust
+fn decide(&mut self, state: &GameState) -> Action {
+    if state.is_draw_phase {
+        return self.decide_draw(state);
+    }
+    // betting turn: fixed limit, so min_raise == max_raise
+    if state.valid_actions.iter().any(|a| a == "check") { Action::Check } else { Action::Fold }
+}
+
+fn decide_draw(&mut self, state: &GameState) -> Action {
+    Action::discard(&state.hole_cards[..2]) // throw the first two cards
+}
+```
+
+Pineapple OFC is not supported yet: the session ends at an OFC table rather
+than reading it as hold'em, so do not declare `ofc`. See
 [DEV-MANUAL §2.8](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#28-playing-other-games).
 
 ## Workspace layout

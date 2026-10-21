@@ -71,7 +71,8 @@ pub use external::{
     RunExternalArgs, RunExternalOptions, BOT_TOKEN_SUBPROTOCOL,
 };
 pub use models::{
-    parse_card, parse_game_state, Action, ActionHistoryEntry, ActionKind, Card, GameState,
+    parse_card, parse_game_state, Action, ActionHistoryEntry, ActionKind, Card, DiscardItem,
+    GameState,
 };
 pub use retry::{default_retry_policy, RetryPolicy};
 
