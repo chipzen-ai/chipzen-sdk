@@ -383,7 +383,9 @@ export interface GameState {
   readonly pot: number;
   readonly yourStack: number;
   readonly opponentStacks: readonly number[];
+  /** Your seat index, 0-indexed: the turn state's `your_seat` (OFC), else the `match_start` seat. */
   readonly yourSeat: number;
+  /** The button's seat index: the turn state's `dealer_seat` (OFC), else the latest `round_start`'s. */
   readonly dealerSeat: number;
   readonly toCall: number;
   readonly minRaise: number;
@@ -431,7 +433,8 @@ export interface GameState {
   // There is no betting: `toCall`, `minRaise` and `maxRaise` are 0 in every
   // OFC payload, and `pot` is 0 until the hand settles. OFC also carries
   // `your_seat` and `dealer_seat` in the turn state; `yourSeat` and
-  // `dealerSeat` read them from there.
+  // `dealerSeat` read them from there (hold'em and 27TD take them from
+  // `match_start` / `round_start` instead).
   // ------------------------------------------------------------------
 
   /** Your own three rows, by row name, unredacted: `{ top: [...], middle: [...], bottom: [...] }`. */
@@ -484,13 +487,28 @@ interface RawTurnRequest {
 }
 
 /**
+ * Seat context a session carries into each turn: the bot's seat (from
+ * `match_start`) and the current button (from the latest `round_start`).
+ */
+export interface SeatContext {
+  yourSeat?: number;
+  dealerSeat?: number;
+}
+
+/**
  * Parse a `turn_request` envelope into a `GameState`.
  *
  * The wire shape is documented in
  * `docs/protocol/POKER-GAME-STATE-PROTOCOL.md`. All fields default
  * to safe values when absent — but a real server always sends them.
+ *
+ * A hold'em or 27TD turn state carries neither `your_seat` nor
+ * `dealer_seat`: the seat arrives in `match_start` and the button in each
+ * `round_start`, and `seats` passes them in. An OFC turn state carries both
+ * itself, and its own values win (as in the Python SDK's
+ * `GameState.from_turn_request`).
  */
-export function parseGameState(message: RawTurnRequest): GameState {
+export function parseGameState(message: RawTurnRequest, seats: SeatContext = {}): GameState {
   const state = (message?.state ?? {}) as Record<string, unknown>;
   const holeStrs = (state["your_hole_cards"] as string[] | undefined) ?? [];
   const boardStrs = (state["board"] as string[] | undefined) ?? [];
@@ -508,8 +526,8 @@ export function parseGameState(message: RawTurnRequest): GameState {
     pot: numberOrZero(state["pot"]),
     yourStack: numberOrZero(state["your_stack"]),
     opponentStacks: ((state["opponent_stacks"] as number[] | undefined) ?? []).map(Number),
-    yourSeat: numberOrZero(state["your_seat"]),
-    dealerSeat: numberOrZero(state["dealer_seat"]),
+    yourSeat: numberOr(state["your_seat"], seats.yourSeat ?? 0),
+    dealerSeat: numberOr(state["dealer_seat"], seats.dealerSeat ?? 0),
     toCall: numberOrZero(state["to_call"]),
     minRaise: numberOrZero(state["min_raise"]),
     maxRaise: numberOrZero(state["max_raise"]),
@@ -616,7 +634,11 @@ function parseHistoryEntry(raw: RawHistoryEntry): ActionHistoryEntry {
 }
 
 function numberOrZero(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  return numberOr(v, 0);
+}
+
+function numberOr(v: unknown, fallback: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -672,7 +694,7 @@ export function stateShapeOf(serverHello: Record<string, unknown>): string | nul
  * Parse a `turn_request` into the model for the table's `state_shape`.
  *
  * - `null` (NLHE), `"27tripledraw"` and `"pineapple"`: a {@link GameState},
- *   exactly as {@link parseGameState} builds it.
+ *   exactly as {@link parseGameState} builds it (`seats` is passed through).
  * - `"bigbadbots"`: the Big Bad Bots model for the call
  *   (`parseBigBadBotsTurnRequest`).
  *
@@ -683,8 +705,9 @@ export function stateShapeOf(serverHello: Record<string, unknown>): string | nul
 export function parseTurnRequest(
   message: Record<string, unknown>,
   stateShape: string | null = null,
+  seats: SeatContext = {},
 ): GameState | BigBadBotsTurnState {
-  if (POKER_STATE_SHAPES.has(stateShape)) return parseGameState(message as RawTurnRequest);
+  if (POKER_STATE_SHAPES.has(stateShape)) return parseGameState(message as RawTurnRequest, seats);
   if (stateShape === BIGBADBOTS_STATE_SHAPE) return parseBigBadBotsTurnRequest(message);
   throw new UnsupportedStateShapeError(stateShape);
 }

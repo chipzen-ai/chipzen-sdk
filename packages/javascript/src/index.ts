@@ -22,6 +22,7 @@ export {
   type Draw27ActionKind,
   type Draw27Phase,
   type GameState,
+  type SeatContext,
   type OfcActionKind,
   type OfcPhase,
   type OfcPlacement,

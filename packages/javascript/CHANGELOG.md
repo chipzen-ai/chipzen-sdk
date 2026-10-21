@@ -77,6 +77,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Declaring a `game_type` asserts you implement everything in that game's
   Layer 2 spec.
 
+### Fixed
+
+- **`yourSeat` and `dealerSeat` are tracked through the session**
+  ([#194](https://github.com/chipzen-ai/chipzen-sdk/issues/194)). A hold'em
+  or 2-7 Triple Draw `turn_request.state` carries neither `your_seat` nor
+  `dealer_seat`, and the session loop only read them from there, so both
+  stayed `0` for the whole match (a bot in seat 1 played as seat 0 and never
+  saw the button move, so the starter's `tablePosition()` was wrong too).
+  The loop now takes the seat from `match_start` (the `is_self` entry of
+  `seats`, or `reconnected.seats`) and the button from each `round_start`,
+  as the Python SDK does. An OFC turn state carries both itself, and its own values still
+  win. `parseGameState` and `parseTurnRequest` take an optional
+  `SeatContext` (`{ yourSeat, dealerSeat }`) used where the state has no
+  value, mirroring Python's `GameState.from_turn_request(your_seat=,
+  dealer_seat=)`. Big Bad Bots is unaffected (its state is me/opponent
+  relative).
+
 ### Documentation
 
 - The `supportedGames` doc comment matches the Python `supported_games`
