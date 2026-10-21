@@ -1,0 +1,13 @@
+node_modules/
+.git/
+.gitignore
+.env
+.env.*
+*.md
+README*
+LICENSE*
+*.log
+coverage/
+.DS_Store
+bun.lockb
+package-lock.json

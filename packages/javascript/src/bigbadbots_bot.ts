@@ -32,6 +32,7 @@ import {
   type FittingState,
   type RuleSet,
 } from "./bigbadbots.js";
+import { ruleSetWarnings } from "./bigbadbots_rules.js";
 import { Bot } from "./bot.js";
 import { Action, type GameState } from "./models.js";
 
@@ -195,6 +196,11 @@ export abstract class BigBadBotsBot extends Bot {
 
   /**
    * Parse `match_start.game_config` into {@link gameConfig} and {@link rules}.
+   *
+   * Logs a warning when the rule set is not one this SDK release knows, or
+   * differs from its published numbers (`ruleSetWarnings`); the bot plays on
+   * the values `match_start` sent either way.
+   *
    * If you override this, call `super.onMatchStart(matchInfo)`.
    */
   override onMatchStart(matchInfo: Record<string, unknown>): void {
@@ -223,7 +229,9 @@ export abstract class BigBadBotsBot extends Bot {
           `into state.rules (${err.message}); it is null for this match, and ` +
           "gameConfig.ruleSet holds the raw table",
       );
+      return;
     }
+    for (const warning of ruleSetWarnings(this.rules)) console.warn(`chipzen-sdk: ${warning}`);
   }
 }
 

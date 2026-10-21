@@ -291,6 +291,42 @@ jobs:
             -e PYTHONPATH=/bot \
             --entrypoint python "bbb-${{ matrix.starter }}:ci" /tmp/check.py /tmp/doc.md
 
+  bigbadbots-js-starter-image:
+    # The JavaScript Big Bad Bots starter (issue #151) compiles bot.js and the
+    # SDK into one executable, so there is no module to import inside the
+    # image. Instead the check plays the image a short match over a real
+    # WebSocket: handshake, match_start, the protocol doc's four published
+    # turn_requests (each answer judged by the SDK's server-side checker), then
+    # match_end and a clean exit. It also checks the image runs as non-root and
+    # holds no .js source.
+    #
+    # The Dockerfile builds the SDK from GitHub at CHIPZEN_SDK_REF until an npm
+    # release carries Big Bad Bots; CI points it at the commit under test.
+    name: Big Bad Bots JS starter image (rusher)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: packages/javascript/pnpm-lock.yaml
+      - name: Build the JavaScript SDK (the check uses its ws and its checker)
+        working-directory: packages/javascript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Build the starter image
+        run: |
+          docker build \
+            --build-arg "CHIPZEN_SDK_REF=${{ github.event.pull_request.head.sha || github.sha }}" \
+            -t bbb-js-rusher:ci packages/javascript/starters/bigbadbots/rusher
+      - name: The compiled bot plays the published requests
+        run: node scripts/check_bigbadbots_js_starter_image.mjs bbb-js-rusher:ci docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md
+
   reference-bot:
     name: Reference bot (lint)
     runs-on: ubuntu-latest

@@ -69,6 +69,27 @@ export {
   isAnswerShaped,
 } from "./bigbadbots_bot.js";
 export {
+  publishedRuleSet,
+  publishedRuleSetIds,
+  ruleSetWarnings,
+  type PublishedRuleSet,
+} from "./bigbadbots_rules.js";
+export {
+  BIGBADBOTS_CALLS,
+  BIGBADBOTS_VALIDATE_GAME_CONFIG,
+  MAX_BOT_MESSAGE_BYTES,
+  bigBadBotsCallOf,
+  checkBigBadBotsAnswer,
+  checkBigBadBotsTurnAction,
+  loadBigBadBotsFixtures,
+  runBigBadBotsChecks,
+  type BigBadBotsAnswerCheck,
+  type BigBadBotsCall,
+  type BigBadBotsCheck,
+  type BigBadBotsFixture,
+  type RunBigBadBotsChecksOptions,
+} from "./bigbadbots_validate.js";
+export {
   runBot,
   BotDecisionError,
   BIGBADBOTS_SEND_MARGIN_MS,
@@ -116,7 +137,9 @@ export {
   DEFAULT_MAX_UPLOAD_BYTES,
   DEFAULT_TIMEOUT_WARN_MS,
   PLATFORM_TIMEOUT_MS,
+  VALIDATE_GAMES,
   type Severity,
+  type ValidateGame,
   type ValidateOptions,
   type ValidationResult,
 } from "./validate.js";

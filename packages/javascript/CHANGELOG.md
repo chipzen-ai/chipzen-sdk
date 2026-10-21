@@ -33,6 +33,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `RunBotOptions.supportedGames` / `RunExternalBotOptions.supportedGames`.
   - `runExternalBot` and `chipzen-sdk run-external` play Big Bad Bots with
     the existing base URL selection (`--env` / `$CHIPZEN_ENV`, default prod).
+- **Big Bad Bots: starter, conformance checks and bundled rule sets**
+  (slice 2 of [#151](https://github.com/chipzen-ai/chipzen-sdk/issues/151)):
+  - `chipzen-sdk validate` runs the Big Bad Bots conformance profile on a
+    `BigBadBotsBot` subclass (or any bot with `--game bigbadbots`): it hands
+    the bot every request in the conformance fixtures and judges each answer
+    the way the server does (`ok`, `corrected`, `malformed`), and reports a
+    handler that throws, calls `process.exit()`, or is slow for the per-tick
+    deadline. The fixtures are the Python SDK's, bundled byte for byte, so
+    both SDKs are held to the same recorded frames. Also exported:
+    `runBigBadBotsChecks`, `checkBigBadBotsAnswer`,
+    `checkBigBadBotsTurnAction`, `loadBigBadBotsFixtures`, and
+    `ValidateOptions.game`.
+  - The published rule sets (`bigbadbots-1.0`, `1.1`, `1.2`) ship with the
+    package: `publishedRuleSet`, `publishedRuleSetIds` and
+    `ruleSetWarnings`. A `BigBadBotsBot` logs a warning at `match_start`
+    when the rule set is one this release does not know, or a published
+    value differs from the server's, and plays on the server's numbers
+    (Python #144 parity).
+  - A JavaScript Rusher starter (`starters/bigbadbots/rusher/`), ported
+    from the Python house-bot starter, with an IP-protected, digest-pinned,
+    non-root `bun build --compile` Dockerfile. A CI job builds its image
+    and plays it the protocol doc's published requests over a WebSocket.
+  - Docs: `docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md`.
 
 ## [0.3.1] — 2026-10-18
 

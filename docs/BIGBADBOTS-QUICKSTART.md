@@ -3,6 +3,10 @@
 Get from nothing to an uploaded Big Bad Bots bot that fights the house bots,
 in about 20 minutes.
 
+This page uses Python. Writing your bot in JavaScript? Follow
+[`BIGBADBOTS-QUICKSTART-JAVASCRIPT.md`](BIGBADBOTS-QUICKSTART-JAVASCRIPT.md)
+instead.
+
 **Big Bad Bots** (game type `bigbadbots`) is Chipzen's robot-fighting game, in
 beta. A match is one bot against one bot, in two stages:
 

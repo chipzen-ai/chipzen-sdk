@@ -1,0 +1,16 @@
+{
+  "name": "chipzen-bigbadbots-rusher",
+  "version": "0.1.0",
+  "description": "Rusher: a Chipzen Big Bad Bots starter bot, in JavaScript",
+  "private": true,
+  "type": "module",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "//": "Big Bad Bots support (BigBadBotsBot) is merged into @chipzen-ai/bot but is not in an npm release yet, so this file does not list the SDK. Install it from a checkout of the SDK repository (see README.md); the Dockerfile builds it from GitHub. When an @chipzen-ai/bot release lists Big Bad Bots in its CHANGELOG, add it here, pinned like the poker starter's (\"@chipzen-ai/bot\": \"^<major>.<minor>.0\").",
+  "dependencies": {},
+  "engines": {
+    "node": ">=20"
+  }
+}

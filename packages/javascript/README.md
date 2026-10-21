@@ -42,6 +42,15 @@ parsing, ping/pong, request-id echoing, `action_rejected` retries,
 and reconnect. Subclass `Bot`, override `decide()`, return an
 `Action`. That's the entire surface for a working bot.
 
+**Big Bad Bots** (the robot-fighting game, in beta) has its own base
+class: extend `BigBadBotsBot` and implement `act(state)`, one fight tick;
+`chooseBody()`, `bid()` and `fit()` have legal defaults. `chipzen-sdk
+validate` runs the Big Bad Bots conformance checks on it. Big Bad Bots
+support is in the repository's `main` branch and not yet in an npm release;
+see the
+[JavaScript Big Bad Bots quickstart](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md)
+and the [Rusher starter](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/javascript/starters/bigbadbots/rusher).
+
 Lifecycle hooks (`onMatchStart`, `onRoundStart`, `onPhaseChange`,
 `onTurnResult`, `onRoundResult`, `onMatchEnd`) are optional —
 override them if you need to maintain per-match or per-hand state
