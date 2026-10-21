@@ -24,8 +24,10 @@ Python ships every game first; JavaScript and Rust follow to full parity.
 How to declare and play a game other than hold'em:
 [`docs/DEV-MANUAL.md` §2.8](docs/DEV-MANUAL.md#28-playing-other-games).
 Declaring the games on the connection (the client `hello`'s
-`supported_games`): Python `supported_games=[...]` and JavaScript
-`supportedGames: [...]`; Rust parity is pending.
+`supported_games`): Python `supported_games=[...]`, JavaScript
+`supportedGames: [...]` and Rust `supported_games: Some(vec![...])` (in
+`main`, not yet on crates.io; a Rust bot cannot play 2-7 Triple Draw or OFC
+yet, so it should not declare them).
 
 **Building a Big Bad Bots bot?** Start at
 [`docs/BIGBADBOTS-QUICKSTART.md`](docs/BIGBADBOTS-QUICKSTART.md) (Python) or
