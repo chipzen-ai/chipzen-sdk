@@ -15,7 +15,7 @@ this folder, change it, upload it.
 | File | Purpose |
 |---|---|
 | [`bot.py`](bot.py) | The bot. Its taste is the constants at the top; its thinking is the methods below them. |
-| [`requirements.txt`](requirements.txt) | Where the SDK comes from. Add your own dependencies here. |
+| [`requirements.txt`](requirements.txt) | The SDK pin (`chipzen-bot~=0.5`). Add your own dependencies here. |
 | [`Dockerfile`](Dockerfile) | Multi-stage Cython build: the runtime image contains no `.py` source for the bot. |
 | [`.dockerignore`](.dockerignore) | Keeps the build context tight (no caches, virtualenvs, secrets). |
 
@@ -73,11 +73,10 @@ Bots bot plays on the platform as an uploaded image (see
 [Package and upload](#package-and-upload)). The commands below are ready for
 when remote play opens.
 
-Until a `chipzen-bot` release on PyPI includes Big Bad Bots, install the SDK
-from this repository:
+Install the SDK (Big Bad Bots support is in `chipzen-bot` 0.5.0 and later):
 
 ```bash
-pip install "chipzen-bot @ https://github.com/chipzen-ai/chipzen-sdk/archive/refs/heads/main.tar.gz#subdirectory=packages/python"
+pip install "chipzen-bot~=0.5"
 ```
 
 Then run the bot as an external-API bot. Put your token and bot id in

@@ -27,8 +27,8 @@ fetch an engine, or measure win rate locally. Your local gate is
 ## Setup
 
 ```bash
-# The SDK. Big Bad Bots support is in main, not yet in a PyPI release.
-pip install "chipzen-bot @ https://github.com/chipzen-ai/chipzen-sdk/archive/refs/heads/main.tar.gz#subdirectory=packages/python"
+# The SDK. Big Bad Bots support is in chipzen-bot 0.5.0 and later.
+pip install "chipzen-bot~=0.5"
 
 # A starter to build on (pick rusher, zoner or turtle).
 git clone https://github.com/chipzen-ai/chipzen-sdk.git

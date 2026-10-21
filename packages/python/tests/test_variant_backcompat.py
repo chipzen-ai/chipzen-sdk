@@ -718,11 +718,16 @@ class TestConformanceFixturesMatchTheSpecs:
         assert _classify_turn_action(payload)[0] is False
         assert _classify_turn_action(payload, legal_actions=DRAW27_ACTIONS)[0] is True
 
-    def test_draw27_action_history_amount_is_a_card_count(self):
-        """For ``action: "draw"``, ``amount`` is CARDS -- not a bitmask, not chips."""
+    def test_draw27_turn_result_amount_is_a_discard_mask(self):
+        """For a draw's ``turn_result``, ``amount`` is the discard MASK (DRAW27 3.6).
+
+        Bit i set = hand position i replaced. The count is what
+        ``action_history`` carries (section 3.4), not this field.
+        """
         details = _draw27_turn_result()["details"]
         assert details["action"] == "draw"
-        assert details["amount"] == 2
+        positions = [i for i in range(5) if (details["amount"] >> i) & 1]
+        assert positions == [1]  # 2 is position 1 alone
 
     def test_ofc_action_history_amount_is_a_placement_mask(self):
         """For ``action: "place"``, ``amount`` is a 2-bits-per-card mask.

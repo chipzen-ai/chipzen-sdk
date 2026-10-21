@@ -18,30 +18,13 @@
 # caches, and lockfile metadata out.
 
 # -----------------------------------------------------------------------------
-# Stage 1: build the SDK, then bundle + compile the bot. The .js source lives
-# only in this stage and is discarded before the runtime stage starts.
+# Stage 1: bundle + compile the bot. The .js source lives only in this stage
+# and is discarded before the runtime stage starts.
 # -----------------------------------------------------------------------------
 # Base pinned by digest. Tag: oven/bun:1.4.3-debian (glibc-based; the runtime
 # stage below also uses glibc so the compiled binary's dynamic linker can find
 # what it needs).
 FROM oven/bun:1.4.3-debian@sha256:923bedb355f7746666659f71e724998159a5c8c54bd1cb1030e1975a0698415b AS builder
-
-# Big Bad Bots support (BigBadBotsBot) is merged into @chipzen-ai/bot but is
-# not in an npm release yet. Until it is, this stage builds the SDK from the
-# chipzen-sdk repository on GitHub, at CHIPZEN_SDK_REF (a branch, tag or
-# commit; `--build-arg CHIPZEN_SDK_REF=<ref>` picks another). When an
-# @chipzen-ai/bot release lists Big Bad Bots in its CHANGELOG, add it to
-# package.json and replace this block and the SDK copy below with the poker
-# starter's single `RUN bun install --production`.
-# Default pinned to a commit (the merge of chipzen-sdk #185) so a build is
-# reproducible; a branch name would change under you.
-ARG CHIPZEN_SDK_REF=bbc04571ed3043945747d13b348a0ac6819b30de
-ADD https://github.com/chipzen-ai/chipzen-sdk/archive/${CHIPZEN_SDK_REF}.tar.gz /tmp/chipzen-sdk.tar.gz
-WORKDIR /sdk
-RUN tar -xzf /tmp/chipzen-sdk.tar.gz --strip-components=3 --wildcards '*/packages/javascript/*' \
-    && rm /tmp/chipzen-sdk.tar.gz \
-    && bun install --production \
-    && bun build ./src/index.ts --outdir ./dist --target bun --splitting --external ws
 
 WORKDIR /build
 
@@ -49,13 +32,10 @@ WORKDIR /build
 # keep the build context narrow so the .dockerignore is the only allowlist.
 COPY package.json bot.js ./
 
-# Install the bot's own dependencies. Any @chipzen-ai/bot entry (for example
-# a local path added by `npm install <sdk checkout>`) is dropped first: the
-# SDK built above is the one that goes into the image.
-RUN bun -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync("package.json", "utf8")); if (p.dependencies) delete p.dependencies["@chipzen-ai/bot"]; fs.writeFileSync("package.json", JSON.stringify(p, null, 2));' \
-    && bun install --production \
-    && mkdir -p node_modules/@chipzen-ai \
-    && cp -r /sdk node_modules/@chipzen-ai/bot
+# Resolve @chipzen-ai/bot (Big Bad Bots support is in 0.4.0 and later) + ws so
+# `bun build` can bundle them. No lockfile is committed; the registry pin in
+# package.json is enough for a fresh install at build time.
+RUN bun install --production
 
 # Compile bot.js -> /build/bot. `--compile` emits a single executable that
 # bundles the JS, all deps, and the Bun runtime statically. `--minify`

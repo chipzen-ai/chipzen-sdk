@@ -410,7 +410,12 @@ def _draw27_turn_request(
 
 
 def _draw27_turn_result(seq: int = 5) -> dict:
-    """``turn_result`` for a draw: ``amount`` is the CARD COUNT, not chips."""
+    """``turn_result`` for a draw: ``amount`` is the discard MASK, not the count.
+
+    Per DRAW27 section 3.6, ``details.amount`` is the server-normalized discard
+    mask (bit i = hand position i replaced): ``2`` is position 1 alone. The
+    public COUNT is what ``action_history`` carries (section 3.4).
+    """
     return {
         "type": "turn_result",
         "match_id": MATCH_ID,

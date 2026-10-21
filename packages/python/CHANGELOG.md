@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Big Bad Bots starters pin the PyPI release**
+  ([#195](https://github.com/chipzen-ai/chipzen-sdk/issues/195)). `rusher`,
+  `zoner` and `turtle` install `chipzen-bot~=0.5` instead of the SDK from
+  GitHub `main`. Their READMEs, `AGENTS.md`, `docs/BIGBADBOTS-QUICKSTART.md`
+  and `llms.txt` drop the "not yet in a PyPI release" wording.
+
+### Fixed
+
+- **The 2-7 Triple Draw `turn_result` fixture is labelled as a discard mask**
+  ([#195](https://github.com/chipzen-ai/chipzen-sdk/issues/195)). The
+  conformance fixture `_draw27_turn_result` and its test called
+  `details.amount` a card count; per DRAW27-GAME-STATE-PROTOCOL section 3.6
+  it is the discard mask (the count is in `action_history`). The frame is
+  unchanged; the docstring and the test now read it as a mask, as the
+  JavaScript port does.
+
 ## [0.5.0] — 2026-10-21
 
 ### Added

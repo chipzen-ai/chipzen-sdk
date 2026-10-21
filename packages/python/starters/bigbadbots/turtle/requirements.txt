@@ -1,6 +1,1 @@
-# Big Bad Bots support (chipzen.BigBadBotsBot) is merged into the SDK but is not
-# in a PyPI release yet. Until it is, this installs the SDK from the main branch
-# on GitHub. When a chipzen-bot release lists Big Bad Bots in its CHANGELOG,
-# replace the line below with that release, pinned like the poker starter's
-# (`chipzen-bot~=<major>.<minor>`).
-chipzen-bot @ https://github.com/chipzen-ai/chipzen-sdk/archive/refs/heads/main.tar.gz#subdirectory=packages/python
+chipzen-bot~=0.5

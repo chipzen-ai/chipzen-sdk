@@ -8,8 +8,9 @@
   "scripts": {
     "start": "node bot.js"
   },
-  "//": "Big Bad Bots support (BigBadBotsBot) is merged into @chipzen-ai/bot but is not in an npm release yet, so this file does not list the SDK. Install it from a checkout of the SDK repository (see README.md); the Dockerfile builds it from GitHub. When an @chipzen-ai/bot release lists Big Bad Bots in its CHANGELOG, add it here, pinned like the poker starter's (\"@chipzen-ai/bot\": \"^<major>.<minor>.0\").",
-  "dependencies": {},
+  "dependencies": {
+    "@chipzen-ai/bot": "^0.4.0"
+  },
   "engines": {
     "node": ">=20"
   }

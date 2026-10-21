@@ -10,8 +10,8 @@ Key facts for an agent building a Big Bad Bots bot:
 - Every tick needs its own answer: send `block` again on every tick you want to block.
 - While the opponent winds up a move it shows only as `"attack"` in phase `"startup"`.
 - Read every number from `state.rules` (the rule set the match is played under); never hard-code one.
-- Big Bad Bots support is in the SDK's `main` branch, not yet in a PyPI release: `pip install "chipzen-bot @ https://github.com/chipzen-ai/chipzen-sdk/archive/refs/heads/main.tar.gz#subdirectory=packages/python"`.
-- JavaScript: Big Bad Bots support is not yet in an npm release either. Build `packages/javascript` from a clone (`npm install && npm run build`), then `npm install <clone>/packages/javascript` in the bot folder. The JavaScript names are the Python ones in camelCase (`chooseBody()`, `state.me.strikeRange`).
+- Big Bad Bots support is in `chipzen-bot` 0.5.0 and later on PyPI: `pip install "chipzen-bot~=0.5"`.
+- JavaScript: Big Bad Bots support is in `@chipzen-ai/bot` 0.4.0 and later on npm: `npm install @chipzen-ai/bot@^0.4.0`. The JavaScript names are the Python ones in camelCase (`chooseBody()`, `state.me.strikeRange`).
 
 ## Big Bad Bots docs
 

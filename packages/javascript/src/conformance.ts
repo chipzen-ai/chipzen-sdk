@@ -415,8 +415,7 @@ export function _draw27TurnRequest(
  * `turn_result` for a draw. Per DRAW27 section 3.6, `details.amount` here is
  * the server-normalized discard MASK (bit i = hand position i replaced), not
  * the count: `2` is position 1 alone. The public COUNT is what
- * `action_history` carries (section 3.4). (The Python fixture's docstring
- * calls this value a count; the frame is the same.)
+ * `action_history` carries (section 3.4).
  */
 export function _draw27TurnResult(seq = 5): Record<string, unknown> {
   return {
