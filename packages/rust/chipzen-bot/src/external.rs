@@ -195,6 +195,12 @@ pub struct RunExternalOptions {
     pub max_matches: Option<u64>,
     /// Override the WS `User-Agent`. Defaults to `chipzen-sdk-rust/<version>`.
     pub user_agent: Option<String>,
+    /// The games this client can actually play, declared in each per-match
+    /// `hello` as `supported_games`. `None` (the default) omits the field,
+    /// which the platform reads as "poker only", so the default `hello` is
+    /// unchanged; an empty list is sent as is. See
+    /// [`crate::RunBotOptions::supported_games`].
+    pub supported_games: Option<Vec<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +234,12 @@ pub struct RunExternalArgs {
     /// `--no-safe-mode` sets this to `false` (let a `decide()` panic crash
     /// the process). Defaults to `true`.
     pub safe_mode: bool,
+    /// The games this bot can actually play, declared in each per-match
+    /// `hello` as `supported_games`. Unlike the flags above this is usually
+    /// fixed in your bot's code rather than read from the command line.
+    /// `None` (the default) omits the field ("poker only"). See
+    /// [`RunExternalOptions::supported_games`].
+    pub supported_games: Option<Vec<String>>,
 }
 
 impl RunExternalArgs {
@@ -239,6 +251,20 @@ impl RunExternalArgs {
             bot_id: None,
             max_matches: None,
             safe_mode: true,
+            supported_games: None,
+        }
+    }
+
+    /// The [`RunExternalOptions`] that [`run_external_cli`] runs with.
+    fn into_options(self) -> RunExternalOptions {
+        RunExternalOptions {
+            bot_id: self.bot_id,
+            env: self.env,
+            token: self.token,
+            max_matches: self.max_matches,
+            safe_mode: Some(self.safe_mode),
+            supported_games: self.supported_games,
+            ..Default::default()
         }
     }
 }
@@ -264,15 +290,7 @@ where
     B: Bot,
     F: Fn() -> B + Send + Sync + 'static,
 {
-    let options = RunExternalOptions {
-        bot_id: args.bot_id,
-        env: args.env,
-        token: args.token,
-        max_matches: args.max_matches,
-        safe_mode: Some(args.safe_mode),
-        ..Default::default()
-    };
-    run_external_bot(factory, options).await
+    run_external_bot(factory, args.into_options()).await
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +455,7 @@ where
         user_agent,
         policy,
         max_matches: options.max_matches,
+        supported_games: options.supported_games,
     });
 
     // Shared mutable session state — owned HERE, not by a single lobby
@@ -524,6 +543,7 @@ struct SessionParams {
     user_agent: String,
     policy: RetryPolicy,
     max_matches: Option<u64>,
+    supported_games: Option<Vec<String>>,
 }
 
 /// Why a single lobby connection ended.
@@ -719,6 +739,7 @@ where
         client_name: session.client_name.clone(),
         client_version: session.client_version.clone(),
         safe_mode: session.safe_mode,
+        supported_games: session.supported_games.clone(),
     };
 
     let mut attempt: u32 = 0;
@@ -868,5 +889,23 @@ mod ws_transport {
                 .await
                 .map_err(Error::from)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_external_cli_args_carry_supported_games() {
+        let mut args = RunExternalArgs::new();
+        assert_eq!(args.clone().into_options().supported_games, None);
+        args.supported_games = Some(vec!["poker".to_string(), "draw27".to_string()]);
+        let options = args.into_options();
+        assert_eq!(
+            options.supported_games,
+            Some(vec!["poker".to_string(), "draw27".to_string()])
+        );
+        assert_eq!(options.safe_mode, Some(true));
     }
 }

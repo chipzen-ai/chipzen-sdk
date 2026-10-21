@@ -12,6 +12,7 @@ use crate::models::{parse_game_state, Action};
 use crate::retry::RetryPolicy;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::panic::AssertUnwindSafe;
 use tokio_tungstenite::{
@@ -59,6 +60,22 @@ pub struct RunBotOptions {
     /// Override the WS `User-Agent` header. Defaults to
     /// `chipzen-sdk-rust/<version>` (chipzen-ai/chipzen-sdk#46).
     pub user_agent: Option<String>,
+    /// The games this client can actually play, declared in the client
+    /// `hello` as `supported_games`: a list of `game_type` strings
+    /// (`"poker"`, `"draw27"`, `"ofc"`). See
+    /// `docs/protocol/LAYER2-COMMON.md` section 2.
+    ///
+    /// `None` (the default) **omits the field entirely**, and the platform
+    /// reads an absent declaration as "poker only", so the default `hello`
+    /// is byte-identical to earlier releases. An empty list is sent as is
+    /// and means "supports nothing". At a non-poker table a client that has
+    /// not declared the seat's game is rejected before it is seated (close
+    /// `4002`). Declaring a `game_type` asserts you implement everything in
+    /// that game's Layer 2 spec, so do not declare a game your `decide()`
+    /// cannot play. This release reads every turn as a hold'em turn, so do
+    /// not declare `draw27` or `ofc` until the Rust SDK supports them
+    /// (chipzen-ai/chipzen-sdk#172).
+    pub supported_games: Option<Vec<String>>,
 }
 
 impl Default for RunBotOptions {
@@ -72,6 +89,7 @@ impl Default for RunBotOptions {
             retry_policy: RetryPolicy::default(),
             safe_mode: true,
             user_agent: None,
+            supported_games: None,
         }
     }
 }
@@ -88,6 +106,10 @@ pub struct SessionContext {
     /// When `false`, a panicking `decide()` surfaces as
     /// [`Error::BotDecision`] instead of being folded to a safe action.
     pub safe_mode: bool,
+    /// The `game_type`s declared on the client `hello` as
+    /// `supported_games`. `None` omits the field (see
+    /// [`RunBotOptions::supported_games`]).
+    pub supported_games: Option<Vec<String>>,
 }
 
 impl SessionContext {
@@ -108,6 +130,7 @@ impl SessionContext {
             client_name,
             client_version,
             safe_mode: true,
+            supported_games: None,
         }
     }
 }
@@ -147,6 +170,7 @@ pub async fn run_bot<B: Bot>(
             .unwrap_or_else(|| DEFAULT_CLIENT_NAME.to_string()),
         client_version,
         safe_mode: options.safe_mode,
+        supported_games: options.supported_games.clone(),
     };
 
     let policy = options.retry_policy;
@@ -288,14 +312,15 @@ where
         )));
     }
 
-    let client_hello = json!({
-        "type": "hello",
-        "match_id": ctx.match_id,
-        "supported_versions": SUPPORTED_PROTOCOL_VERSIONS,
-        "client_name": ctx.client_name,
-        "client_version": ctx.client_version,
-    });
-    writer.send(client_hello.to_string()).await?;
+    let client_hello = ClientHello {
+        client_name: &ctx.client_name,
+        client_version: &ctx.client_version,
+        match_id: &ctx.match_id,
+        supported_versions: SUPPORTED_PROTOCOL_VERSIONS,
+        kind: "hello",
+        supported_games: ctx.supported_games.as_deref(),
+    };
+    writer.send(serde_json::to_string(&client_hello)?).await?;
 
     // --- Message loop ---------------------------------------------------------
     let mut last_seq: i64 = 0;
@@ -426,6 +451,30 @@ where
 
     // Stream closed without match_end. Caller decides whether to retry.
     Ok(None)
+}
+
+/// The Layer 1 client `hello` frame.
+///
+/// The first five fields are declared in the exact order the frame has
+/// always gone on the wire (the `json!` map it replaced serialized its keys
+/// sorted), so a client that declares nothing sends byte-identical text to
+/// earlier releases, whatever `serde_json` features the final binary
+/// enables. `supported_games` (chipzen-ai/chipzen-sdk#172) is appended
+/// **last** and only when declared: the platform reads an absent
+/// declaration as "poker only", which is what every deployed bot relies
+/// on, while an empty list means "supports nothing". `supported_games` is
+/// on the server's handshake field allowlist; any other key closes the
+/// socket.
+#[derive(Serialize)]
+struct ClientHello<'a> {
+    client_name: &'a str,
+    client_version: &'a str,
+    match_id: &'a str,
+    supported_versions: &'a [&'a str],
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supported_games: Option<&'a [String]>,
 }
 
 /// Send a `turn_action` envelope echoing `request_id`.

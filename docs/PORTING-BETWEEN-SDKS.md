@@ -265,10 +265,14 @@ section 2). Omitting it declares nothing, which the platform reads as
 |---|---|---|
 | Python | `run_bot(url, bot, supported_games=["poker", "draw27"])` | `run_external_bot(bot, ..., supported_games=[...])` |
 | JavaScript | `runBot(url, bot, { supportedGames: [...] })` | `runExternalBot(bot, { ..., supportedGames: [...] })` |
-| Rust | Parity pending | Parity pending |
+| Rust | `run_bot(url, bot, RunBotOptions { supported_games: Some(vec!["poker".into(), "draw27".into()]), .. })` | `RunExternalOptions { supported_games: Some(..), .. }`, or the same field on `RunExternalArgs` for `run_external_cli` |
 
-In both SDKs a Big Bad Bots base class (`BigBadBotsBot`) declares
-`["bigbadbots"]` when you pass nothing, and an explicit list replaces it.
+In Python and JavaScript a Big Bad Bots base class (`BigBadBotsBot`)
+declares `["bigbadbots"]` when you pass nothing, and an explicit list
+replaces it. The Rust SDK has no such base class yet, and it reads every
+turn as a hold'em turn: it cannot play 2-7 Triple Draw or Pineapple OFC
+tables (see the support table in DEV-MANUAL §2.8), so a Rust bot should not
+declare `draw27` or `ofc` until that parity lands.
 
 ## See also
 

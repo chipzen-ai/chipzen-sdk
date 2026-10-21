@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`supported_games` declaration, parity with the Python SDK**
+  ([#172](https://github.com/chipzen-ai/chipzen-sdk/issues/172)). A new
+  `supported_games: Option<Vec<String>>` field on `RunBotOptions`,
+  `RunExternalOptions` and `RunExternalArgs` (and on the hidden
+  `SessionContext`) puts the declared list, such as `["poker", "draw27"]`,
+  on the client `hello` (never the `authenticate` frame) as
+  `supported_games`, appended after the existing keys. The default `None`
+  omits the field, so the client `hello` is byte-identical to earlier
+  releases; an empty list is sent as is ("supports nothing"), not dropped.
+  Pinned by `tests/supported_games.rs`, which covers `run_bot` against a
+  real local WebSocket server and `run_external_bot` over a scripted
+  transport. Declaring a `game_type` asserts you implement everything in
+  that game's Layer 2 spec; this release still reads every turn as a
+  hold'em turn, so do not declare `draw27` or `ofc` from Rust until that
+  parity ships. Code that builds these option structs with a struct
+  literal and no `..Default::default()` must add the field.
+
+### Changed
+
+- The client `hello` is serialized from a fixed-order struct instead of a
+  `serde_json::json!` map. The bytes are unchanged; the key order no longer
+  depends on whether the final binary enables `serde_json`'s
+  `preserve_order` feature.
+
+### Documentation
+
+- `README.md`, `docs/DEV-MANUAL.md` §2.8 and
+  `docs/PORTING-BETWEEN-SDKS.md` §8 give the Rust name.
+
 ## [0.3.2] — 2026-10-18
 
 ### Added

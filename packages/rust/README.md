@@ -93,6 +93,27 @@ and [`docs/PORTING-BETWEEN-SDKS.md`](https://github.com/chipzen-ai/chipzen-sdk/b
 Run `chipzen-sdk run-external` to verify your `chipzen.toml` + env setup
 before connecting.
 
+### Other games
+
+A bot plays No-Limit Hold'em unless it declares otherwise. To declare the
+games it can play, set `supported_games` on `RunBotOptions`,
+`RunExternalOptions` or `RunExternalArgs` to a list of `game_type` strings;
+it goes on the client `hello` as `supported_games`:
+
+```rust
+let options = RunBotOptions {
+    supported_games: Some(vec!["poker".to_string()]),
+    ..Default::default()
+};
+```
+
+Leaving it `None` (the default) declares nothing ("poker only") and keeps
+the `hello` unchanged; an empty list is sent as is and means "supports
+nothing". This release reads every turn as a hold'em turn: until 2-7 Triple
+Draw and Pineapple OFC parity lands, a Rust bot cannot play those tables, so
+do not declare `draw27` or `ofc` yet. See
+[DEV-MANUAL §2.8](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#28-playing-other-games).
+
 ## Workspace layout
 
 ```
