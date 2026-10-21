@@ -27,7 +27,11 @@ export interface ConformanceCheck {
 }
 
 const MATCH_ID = "m_conformance_test";
-const VALID_ACTION_KINDS = new Set(["fold", "check", "call", "raise", "all_in"]);
+
+/** The hold'em action vocabulary: the default legal set for a classified `turn_action`. */
+export const NLHE_ACTIONS: ReadonlySet<string> = new Set(["fold", "check", "call", "raise", "all_in"]);
+/** 2-7 Triple Draw's vocabulary: the hold'em one plus `draw`. Opt-in, per scenario. */
+export const DRAW27_ACTIONS: ReadonlySet<string> = new Set([...NLHE_ACTIONS, "draw"]);
 
 // ---------------------------------------------------------------------------
 // Mock WebSocket — replays a scripted message sequence
@@ -67,7 +71,16 @@ class _CapturingSocket implements SessionWebSocket {
 // Canned protocol messages — one full hand
 // ---------------------------------------------------------------------------
 
-function serverHello(): Record<string, unknown> {
+/**
+ * The server's handshake reply. `gameType` is the platform-level game
+ * identifier (`nlhe_6max`, `draw27`, ...); the SDK does not branch on it.
+ * It branches on the optional `game` descriptor's `state_shape`
+ * (LAYER2-COMMON section 2), which is added only when `game` is passed.
+ */
+function serverHello(
+  gameType = "nlhe_6max",
+  game?: Record<string, unknown>,
+): Record<string, unknown> {
   return {
     type: "hello",
     match_id: MATCH_ID,
@@ -75,8 +88,9 @@ function serverHello(): Record<string, unknown> {
     server_ts: "2026-04-13T14:30:05.123Z",
     supported_versions: ["1.0"],
     selected_version: "1.0",
-    game_type: "nlhe_6max",
+    game_type: gameType,
     capabilities: [],
+    ...(game ? { game } : {}),
   };
 }
 
@@ -118,6 +132,11 @@ function roundStart(): Record<string, unknown> {
       deck_commitment: "",
     },
   };
+}
+
+/** Internal, for tests: the hold'em `turn_request` fixture (Python `_turn_request`). */
+export function _turnRequest(): Record<string, unknown> {
+  return turnRequest();
 }
 
 function turnRequest(): Record<string, unknown> {
@@ -239,6 +258,235 @@ function actionRejected(
   };
 }
 
+// ---------------------------------------------------------------------------
+// 2-7 Triple Draw fixtures
+//
+// Fixtures ONLY, exactly like the Python SDK's: they are deliberately NOT
+// wired into `runConformanceChecks`. An uploaded bot is a hold'em bot, and
+// grading it at a table it never asked to sit at would fail every clean bot.
+// They exist so tests can drive the real session loop with a real 27TD
+// payload. The frames are the Python SDK's `_draw27_*` fixtures
+// (`packages/python/src/chipzen/conformance.py`) value for value, so both
+// SDKs are tested against the same frames; the shapes come from
+// docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md, the authority.
+// ---------------------------------------------------------------------------
+
+/** The server `hello`'s `game` descriptor at a 27TD table (DRAW27 section 1.1). */
+export function _draw27GameDescriptor(): Record<string, unknown> {
+  return {
+    game_type: "draw27",
+    variant: "27tripledraw",
+    actions: ["call", "check", "draw", "fold", "raise"],
+    phases: ["predraw", "draw1", "bet1", "draw2", "bet2", "draw3", "bet3", "showdown", "complete"],
+    state_shape: "27tripledraw",
+  };
+}
+
+/**
+ * The server `hello` at a 27TD table. `withDescriptor` (the default) adds the
+ * `game` descriptor a live 27TD table sends; without it the frame is the
+ * Python fixture's `_server_hello(game_type="draw27")`.
+ */
+export function _draw27ServerHello(withDescriptor = true): Record<string, unknown> {
+  return serverHello("draw27", withDescriptor ? _draw27GameDescriptor() : undefined);
+}
+
+/**
+ * `match_start` for a heads-up 27TD table. `betting_structure` is FIXED
+ * LIMIT, and the four sizes (`small_blind`, `big_blind`, `small_bet`,
+ * `big_bet`) are four independent numbers. No `total_hands`, as for NLHE.
+ */
+export function _draw27MatchStart(seq = 2): Record<string, unknown> {
+  return {
+    type: "match_start",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:06.000Z",
+    seats: [
+      { seat: 0, participant_id: "p0", display_name: "You", is_self: true },
+      { seat: 1, participant_id: "p1", display_name: "Opp", is_self: false },
+    ],
+    game_config: {
+      variant: "27tripledraw",
+      starting_stack: 10000,
+      betting_structure: "fixed_limit",
+      small_blind: 50,
+      big_blind: 100,
+      small_bet: 100,
+      big_bet: 200,
+      ante: 0,
+      bet_cap: 5,
+      num_betting_rounds: 4,
+      num_draws: 3,
+      cards_per_player: 5,
+      escalation_unit: "small_bet",
+      escalation_interval: 10,
+      num_players: 2,
+    },
+    turn_timeout_ms: 5000,
+  };
+}
+
+/** `round_start` for 27TD: five cards, and the new `draws_remaining`. */
+export function _draw27RoundStart(seq = 3): Record<string, unknown> {
+  return {
+    type: "round_start",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:07.000Z",
+    round_id: "r_1",
+    round_number: 1,
+    state: {
+      hand_number: 1,
+      dealer_seat: 0,
+      your_hole_cards: ["Ah", "Kd", "9s", "7c", "3h"],
+      pot: 150,
+      post_blind_stacks: [9950, 9900],
+      draws_remaining: 3,
+      stacks: [10000, 10000],
+      deck_commitment: "",
+    },
+  };
+}
+
+/**
+ * `turn_request` for 27TD: a draw turn by default, else a betting turn. One
+ * shape covers both; `is_draw_phase` says which. In a draw phase
+ * `valid_actions` is exactly `["draw"]` and the BOUND on the discard
+ * (`max_discard`) lives in the state. `board` is permanently `[]`.
+ */
+export function _draw27TurnRequest(
+  seq = 4,
+  requestId = "req_1",
+  { drawPhase = true }: { drawPhase?: boolean } = {},
+): Record<string, unknown> {
+  const phaseBits: Record<string, unknown> = drawPhase
+    ? {
+        phase: "draw1",
+        to_call: 0,
+        min_raise: 0,
+        max_raise: 0,
+        is_draw_phase: true,
+        draw_number: 1,
+        draws_remaining: 3,
+        max_discard: 5,
+      }
+    : {
+        // Fixed limit: min_raise == max_raise, always. One legal size.
+        phase: "bet1",
+        to_call: 100,
+        min_raise: 200,
+        max_raise: 200,
+        is_draw_phase: false,
+        draw_number: 0,
+        draws_remaining: 2,
+        max_discard: 0,
+      };
+  return {
+    type: "turn_request",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:07.500Z",
+    seat: 0,
+    request_id: requestId,
+    timeout_ms: 5000,
+    valid_actions: drawPhase ? ["draw"] : ["fold", "call", "raise"],
+    state: {
+      hand_number: 1,
+      board: [],
+      your_hole_cards: ["Ah", "Kd", "9s", "7c", "3h"],
+      pot: 400,
+      your_stack: 9800,
+      opponent_stacks: [9800],
+      your_draw_counts: [],
+      opponent_draw_counts: { "1": [] },
+      action_history: [
+        { seat: 0, action: "post_small_blind", amount: 50, phase: "predraw", is_timeout: false },
+        { seat: 1, action: "post_big_blind", amount: 100, phase: "predraw", is_timeout: false },
+      ],
+      ...phaseBits,
+    },
+  };
+}
+
+/**
+ * `turn_result` for a draw. Per DRAW27 section 3.6, `details.amount` here is
+ * the server-normalized discard MASK (bit i = hand position i replaced), not
+ * the count: `2` is position 1 alone. The public COUNT is what
+ * `action_history` carries (section 3.4). (The Python fixture's docstring
+ * calls this value a count; the frame is the same.)
+ */
+export function _draw27TurnResult(seq = 5): Record<string, unknown> {
+  return {
+    type: "turn_result",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:08.000Z",
+    is_timeout: false,
+    details: { seat: 0, action: "draw", amount: 2 },
+  };
+}
+
+/**
+ * `round_result` for 27TD: the envelope is unchanged; showdown is not.
+ * `hand_rank` is a dash-joined rank string (`"8-6-4-3-2"`), NOT an NLHE
+ * hand-rank enum value, and the LOWEST hand wins.
+ */
+export function _draw27RoundResult(seq = 6): Record<string, unknown> {
+  return {
+    type: "round_result",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:12.000Z",
+    round_id: "r_1",
+    round_number: 1,
+    result: {
+      hand_number: 1,
+      winner_seats: [0],
+      pot: 800,
+      payouts: [{ seat: 0, amount: 800 }],
+      showdown: [
+        {
+          seat: 0,
+          hole_cards: ["8s", "6h", "4d", "3c", "2h"],
+          hand_rank: "8-6-4-3-2",
+          best_hand: ["8s", "6h", "4d", "3c", "2h"],
+        },
+        {
+          seat: 1,
+          hole_cards: ["Js", "9h", "6d", "4c", "2s"],
+          hand_rank: "J-9-6-4-2",
+          best_hand: ["Js", "9h", "6d", "4c", "2s"],
+        },
+      ],
+      action_history: [],
+      stacks: [10400, 9600],
+      deck_commitment: "",
+      deck_reveal: null,
+    },
+  };
+}
+
+/**
+ * Handshake + one 27TD hand (a draw turn AND a betting turn) + match_end.
+ * The hello carries the 27TD `game` descriptor unless `withDescriptor` is
+ * false (the Python fixture's hello, which has none).
+ */
+export function _draw27Script(
+  { withDescriptor = true }: { withDescriptor?: boolean } = {},
+): Array<Record<string, unknown>> {
+  return [
+    _draw27ServerHello(withDescriptor),
+    _draw27MatchStart(),
+    _draw27RoundStart(),
+    _draw27TurnRequest(4, "req_1", { drawPhase: true }),
+    _draw27TurnResult(),
+    _draw27TurnRequest(6, "req_2", { drawPhase: false }),
+    _draw27RoundResult(7),
+    matchEnd(8),
+  ];
+}
+
 function fullMatchScript(): string[] {
   return [
     serverHello(),
@@ -336,7 +584,11 @@ interface ClassifyResult {
  *   the server can correlate, deduplicate, and route action_rejected
  *   retries.
  */
-function classifyTurnAction(payload: string, expectedRequestId = "req_1"): ClassifyResult {
+function classifyTurnAction(
+  payload: string,
+  expectedRequestId = "req_1",
+  legalActions: ReadonlySet<string> = NLHE_ACTIONS,
+): ClassifyResult {
   let msg: Record<string, unknown>;
   try {
     msg = JSON.parse(payload) as Record<string, unknown>;
@@ -359,7 +611,7 @@ function classifyTurnAction(payload: string, expectedRequestId = "req_1"): Class
   // bots may also nest action inside params, so check both spots.
   const params = (msg.params as Record<string, unknown> | undefined) ?? {};
   const action = (msg.action as string | undefined) ?? (params.action as string | undefined);
-  if (!action || !VALID_ACTION_KINDS.has(action)) {
+  if (!action || !legalActions.has(action)) {
     return {
       ok: false,
       message: `turn_action action ${JSON.stringify(action)} is not in the legal set`,
@@ -367,6 +619,12 @@ function classifyTurnAction(payload: string, expectedRequestId = "req_1"): Class
   }
   return { ok: true, message: `sent turn_action: action=${JSON.stringify(action)}` };
 }
+
+/**
+ * Internal, for tests: {@link classifyTurnAction}. `legalActions` defaults to
+ * the hold'em vocabulary; pass {@link DRAW27_ACTIONS} for a 27TD exchange.
+ */
+export const _classifyTurnAction = classifyTurnAction;
 
 /** Filter the captured-send buffer down to parsed `turn_action` payloads. */
 function extractTurnActions(sent: string[]): Array<Record<string, unknown>> {
@@ -430,6 +688,23 @@ async function driveSession(
     return { socket, error: err as Error };
   }
 }
+
+/**
+ * Internal, for tests: drive `_runSession` over `script` (frames as objects
+ * or JSON text). Returns what the client sent and any error it raised.
+ */
+export async function _driveSession(
+  bot: Bot,
+  script: ReadonlyArray<Record<string, unknown> | string>,
+  timeoutMs = 5000,
+): Promise<{ sent: string[]; error: Error | null }> {
+  const frames = script.map((m) => (typeof m === "string" ? m : JSON.stringify(m)));
+  const { socket, error } = await driveSession(bot, frames, timeoutMs);
+  return { sent: socket.sent, error };
+}
+
+/** Internal, for tests: the parsed `turn_action` frames among `sent`. */
+export const _extractTurnActions = extractTurnActions;
 
 async function withTimeout<T>(p: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

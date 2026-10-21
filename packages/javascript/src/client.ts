@@ -789,6 +789,9 @@ export function _waitForOpen(ws: WebSocket): Promise<void> {
 export function _safeFallbackAction(validActions: string[] | undefined): Action {
   const valid = new Set(validActions ?? []);
   if (valid.has("check")) return Action.check();
+  // A 2-7 Triple Draw draw turn offers exactly `["draw"]`, so `fold` would
+  // be rejected; a stand pat is the server's own default there.
+  if (valid.has("draw") && !valid.has("fold")) return Action.standPat();
   return Action.fold();
 }
 

@@ -68,6 +68,7 @@ exact same order driven by the same protocol messages.
 | Round (hand) result | `on_round_result` | `onRoundResult` |
 | Round result, simplified | `on_hand_result` *(Python only)* | — |
 | Match end | `on_match_end` | `onMatchEnd` |
+| 2-7 Triple Draw draw turn *(optional, never called by the SDK; call it from `decide`)* | `decide_draw` *(Python; Rust parity pending)* | `decideDraw` |
 
 Python additionally exposes the `on_hand_start` / `on_hand_result`
 convenience wrappers that do the common parsing work
@@ -90,6 +91,16 @@ invariants at construction time.
 | Python | `Action.fold()` | `Action.check()` | `Action.call()` | `Action.raise_to(N)` | `Action.all_in()` |
 | JavaScript | `Action.fold()` | `Action.check()` | `Action.call()` | `Action.raiseTo(N)` | `Action.allIn()` |
 | Rust | `Action::Fold` | `Action::Check` | `Action::Call` | `Action::Raise(N)` | `Action::AllIn` |
+
+2-7 Triple Draw's `draw` action
+([`protocol/DRAW27-GAME-STATE-PROTOCOL.md`](protocol/DRAW27-GAME-STATE-PROTOCOL.md)
+§3.5) puts the discard list under `params`:
+
+| | discard (card strings or 0-based positions) | stand pat |
+|---|---|---|
+| Python | `Action.discard(["Ah", "Kd"])` | `Action.stand_pat()` |
+| JavaScript | `Action.discard(["Ah", "Kd"])` | `Action.standPat()` |
+| Rust | Parity pending | Parity pending |
 
 The `N` in raises is the **target total bet** (matching the wire field
 name `amount`), not the raise increment over the current bet. All three
@@ -116,6 +127,12 @@ fields verbatim. JavaScript bridges to camelCase in the parser
 | `pot` | `pot` |
 | `phase` | `phase` |
 | `board` | `board` |
+| `is_draw_phase` (2-7 Triple Draw) | `isDrawPhase` |
+| `draw_number` | `drawNumber` |
+| `draws_remaining` | `drawsRemaining` |
+| `max_discard` | `maxDiscard` |
+| `your_draw_counts` | `yourDrawCounts` |
+| `opponent_draw_counts` | `opponentDrawCounts` |
 
 If you log raw wire payloads (e.g. from `on_round_start(message)` in any
 language), you'll always see snake_case keys regardless of which SDK you're
@@ -226,9 +243,9 @@ section 2). Omitting it declares nothing, which the platform reads as
 
 In both SDKs a Big Bad Bots base class (`BigBadBotsBot`) declares
 `["bigbadbots"]` when you pass nothing, and an explicit list replaces it.
-The JavaScript SDK does not parse 2-7 Triple Draw or Pineapple OFC tables
-yet (see the support table in DEV-MANUAL §2.8), so a JavaScript bot should
-not declare `draw27` or `ofc` until that parity lands.
+The JavaScript SDK does not parse Pineapple OFC tables yet (see the support
+table in DEV-MANUAL §2.8), so a JavaScript bot should not declare `ofc`
+until that parity lands.
 
 ## See also
 

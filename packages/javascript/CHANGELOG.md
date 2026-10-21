@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **2-7 Triple Draw parity with the Python SDK**
+  ([#173](https://github.com/chipzen-ai/chipzen-sdk/issues/173)). The SDK
+  now plays a 2-7 Triple Draw table (`state_shape: "27tripledraw"`) instead
+  of ending the session there, so a bot can declare
+  `supportedGames: ["poker", "draw27"]`. Per
+  `docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md`:
+  - `GameState` gains `isDrawPhase`, `drawNumber`, `drawsRemaining`,
+    `maxDiscard`, `yourDrawCounts` and `opponentDrawCounts`. They are
+    optional in the type (a `GameState` literal written for hold'em still
+    compiles), always filled by `parseGameState`, default at a hold'em
+    table, and parsed leniently: a mistyped value falls back to its default
+    rather than ending the session. `phase` also lists the nine 27TD phases.
+  - `Action.discard(cards)` (card strings or 0-based positions) and
+    `Action.standPat()` emit `{"action": "draw", "params": {"discard": [...]}}`.
+  - `Bot.decideDraw(state)`, an optional hook that defaults to a stand pat.
+    The SDK never calls it; delegate to it from `decide()`.
+  - The safe fallback (after a throw, a non-`Action` return or an
+    `action_rejected`) is a stand pat on a draw turn, where `fold` is not on
+    offer.
+  - The Python SDK's 27TD conformance frames, value for value, and a
+    back-compat suite (`tests/draw27.test.ts`) mirroring the Python
+    `test_variant_backcompat.py`. As in Python, they are not part of the
+    `validate` grader.
+
 - **`supported_games` parity with the Python SDK**
   ([#171](https://github.com/chipzen-ai/chipzen-sdk/issues/171)). The
   `supportedGames` option on `runBot` and `runExternalBot` (shipped in 0.4.0
@@ -21,9 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases; an empty list is sent as is ("supports nothing"), not dropped.
   Both runners are covered, `runBot` against a real local WebSocket server.
   Declaring a `game_type` asserts you implement everything in that game's
-  Layer 2 spec; this release still ends the session at a 2-7 Triple Draw or
-  Pineapple OFC table, so do not declare `draw27` or `ofc` from JavaScript
-  until that parity ships.
+  Layer 2 spec; this release still ends the session at a Pineapple OFC
+  table, so do not declare `ofc` from JavaScript until that parity ships.
 
 ### Documentation
 

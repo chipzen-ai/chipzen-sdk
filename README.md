@@ -16,9 +16,9 @@ libraries** for Python, JavaScript and Rust, the **wire protocol spec**, a
 | Game | Status | Python | JavaScript | Rust |
 |---|---|---|---|---|
 | No-Limit Hold'em (heads-up and multi-way) | Live | Yes | Yes | Yes |
-| 2-7 Triple Draw | Live | Yes | Parity pending | Parity pending |
+| 2-7 Triple Draw | Live | Yes | Yes, in `main` (not yet on npm) | Parity pending |
 | Pineapple OFC | Live | Yes | Parity pending | Parity pending |
-| Big Bad Bots (robot fighting) | Beta (draft spec) | Yes, in `main` (not yet on PyPI) | Yes, in `main` (not yet on npm) | Later |
+| Big Bad Bots (robot fighting) | Beta (draft spec) | Yes | Yes | Later |
 
 Python ships every game first; JavaScript and Rust follow to full parity.
 How to declare and play a game other than hold'em:

@@ -46,8 +46,7 @@ and reconnect. Subclass `Bot`, override `decide()`, return an
 class: extend `BigBadBotsBot` and implement `act(state)`, one fight tick;
 `chooseBody()`, `bid()` and `fit()` have legal defaults. `chipzen-sdk
 validate` runs the Big Bad Bots conformance checks on it. Big Bad Bots
-support is in the repository's `main` branch and not yet in an npm release;
-see the
+support ships in `@chipzen-ai/bot` 0.4.0 and later; see the
 [JavaScript Big Bad Bots quickstart](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md)
 and the [Rusher starter](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/javascript/starters/bigbadbots/rusher).
 
@@ -55,10 +54,25 @@ and the [Rusher starter](https://github.com/chipzen-ai/chipzen-sdk/tree/main/pac
 To declare the games it can play, pass `supportedGames` to `runBot` or
 `runExternalBot`, a list of `game_type` strings; it goes on the client
 `hello` as `supported_games`. Leaving it out declares
-nothing ("poker only") and keeps the `hello` unchanged. This release parses
-hold'em and Big Bad Bots tables only: until 2-7 Triple Draw and Pineapple OFC
-parity lands, the SDK ends the session at those tables, so do not declare
-`draw27` or `ofc` yet. See
+nothing ("poker only") and keeps the `hello` unchanged.
+
+**2-7 Triple Draw** (`draw27`) is supported: declare
+`supportedGames: ["poker", "draw27"]` and branch on `state.isDrawPhase` in
+`decide()`. On a draw turn return `Action.discard(cards)` (card strings or
+0-based positions into `state.holeCards`, at most `state.maxDiscard`) or
+`Action.standPat()`; the optional `decideDraw(state)` hook, which defaults
+to a stand pat, is there to delegate to. Betting turns are fixed limit
+(`state.minRaise == state.maxRaise`).
+
+```ts
+decide(state: GameState): Action {
+  if (state.isDrawPhase) return this.decideDraw(state);
+  // your betting logic
+}
+```
+
+Pineapple OFC is not parsed yet: the SDK ends the session at an OFC table,
+so do not declare `ofc` yet. See
 [DEV-MANUAL §2.8](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#28-playing-other-games).
 
 Lifecycle hooks (`onMatchStart`, `onRoundStart`, `onPhaseChange`,
