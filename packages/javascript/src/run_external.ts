@@ -29,6 +29,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { BigBadBotsBot } from "./bigbadbots_bot.js";
 import { Bot } from "./bot.js";
 import {
   type ChipzenConfig,
@@ -161,7 +162,7 @@ export function findBotSubclasses(module: Record<string, unknown>): BotConstruct
   const seen = new Set<unknown>();
   for (const value of Object.values(module)) {
     if (typeof value !== "function") continue;
-    if (value === Bot) continue;
+    if (value === Bot || value === BigBadBotsBot) continue;
     if (seen.has(value)) continue;
     // A subclass of Bot: Bot is in its prototype chain.
     if (value.prototype instanceof Bot) {

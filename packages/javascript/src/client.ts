@@ -9,8 +9,20 @@
 
 import WebSocket from "ws";
 
+import {
+  BIGBADBOTS_STATE_SHAPE,
+  parseBigBadBotsTurnRequest,
+  StateParseError,
+} from "./bigbadbots.js";
+import { BigBadBotsBot, fallbackAction, isAnswerShaped } from "./bigbadbots_bot.js";
 import type { Bot } from "./bot.js";
-import { Action, parseGameState } from "./models.js";
+import {
+  Action,
+  parseGameState,
+  POKER_STATE_SHAPES,
+  stateShapeOf,
+  UnsupportedStateShapeError,
+} from "./models.js";
 import { DEFAULT_RETRY_POLICY, RetryPolicy } from "./retry.js";
 import { VERSION } from "./version.js";
 
@@ -73,10 +85,24 @@ export interface RunBotOptions {
    * platform's Cloudflare bot-fight rule; chipzen-ai/chipzen-sdk#46).
    */
   userAgent?: string;
+  /**
+   * The `game_type`s this client declares in its `hello`
+   * (`supported_games`, LAYER2-COMMON section 2). `undefined` / `null`
+   * declares nothing (poker only), except that a `BigBadBotsBot` declares
+   * `["bigbadbots"]`.
+   */
+  supportedGames?: readonly string[] | null;
 }
 
 /** Protocol versions this client claims to support in the handshake. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ["1.0"] as const;
+
+/**
+ * How long before a Big Bad Bots request's `timeout_ms` runs out the SDK
+ * stops waiting and sends the default instead, so the answer still reaches
+ * the server in time.
+ */
+export const BIGBADBOTS_SEND_MARGIN_MS = 20;
 
 /**
  * Connect a bot to the Chipzen server and play until the match ends.
@@ -117,6 +143,7 @@ export async function runBot(
         clientName,
         clientVersion,
         safeMode,
+        supportedGames: options.supportedGames ?? null,
       });
     } catch (err) {
       if (err instanceof BotDecisionError) {
@@ -164,6 +191,8 @@ interface SessionContext {
    * {@link BotDecisionError} (terminal — never reconnect-retried).
    */
   safeMode?: boolean;
+  /** See {@link RunBotOptions.supportedGames}. */
+  supportedGames?: readonly string[] | null;
 }
 
 /**
@@ -269,11 +298,48 @@ export async function _runSession(
     throw new Error(`expected server hello, got ${hello.type ?? "<no type>"}`);
   }
 
-  await sendJson(ws, {
+  // LAYER2-COMMON section 2: branch on `state_shape` before parsing any
+  // state. An NLHE hello carries no `game` descriptor (shape `null`), so
+  // every poker table keeps the path it has always taken. A shape this
+  // release cannot parse ends the session rather than being read as NLHE.
+  let stateShape: string | null;
+  try {
+    stateShape = stateShapeOf(hello);
+  } catch (err) {
+    console.error(
+      `chipzen-sdk: server hello has a malformed game descriptor: ${(err as Error).message}`,
+    );
+    return null;
+  }
+  const isBigBadBots = stateShape === BIGBADBOTS_STATE_SHAPE;
+  if (!isBigBadBots && !POKER_STATE_SHAPES.has(stateShape)) {
+    console.error(`chipzen-sdk: ${new UnsupportedStateShapeError(stateShape).message}`);
+    return null;
+  }
+  if (bot instanceof BigBadBotsBot && !isBigBadBots) {
+    console.error(
+      `chipzen-sdk: ${bot.constructor.name} is a BigBadBotsBot but the table's state_shape ` +
+        `is ${JSON.stringify(stateShape)}; it cannot play here`,
+    );
+    return null;
+  }
+  let supportedGames = ctx.supportedGames ?? null;
+  if (supportedGames === null && bot instanceof BigBadBotsBot) {
+    supportedGames = [BIGBADBOTS_STATE_SHAPE];
+  }
+
+  // `supported_games` is appended LAST and only when the caller declared
+  // something, so a bot that declares nothing sends the exact hello it has
+  // always sent; the platform reads an absent list as "poker only".
+  const clientHello: Record<string, unknown> = {
     type: "hello",
     match_id: ctx.matchId,
     supported_versions: [...SUPPORTED_PROTOCOL_VERSIONS],
-  });
+  };
+  if (supportedGames !== null) clientHello.supported_games = [...supportedGames];
+  await sendJson(ws, clientHello);
+
+  const bbb = isBigBadBots ? new _BigBadBotsTurns(ws, bot, reader, ctx.matchId, safeMode) : null;
 
   // --- Message loop -----------------------------------------------------
   let lastSeq = 0;
@@ -319,6 +385,7 @@ export async function _runSession(
         break;
 
       case "turn_result":
+        bbb?.noteTurnResult(msg);
         _callHook("onTurnResult", () => bot.onTurnResult(msg), safeMode);
         break;
 
@@ -327,6 +394,10 @@ export async function _runSession(
         break;
 
       case "turn_request": {
+        if (bbb) {
+          await bbb.answer(msg);
+          break;
+        }
         const requestId = (msg.request_id as string | undefined) ?? "";
         const state = parseGameState(msg);
         // _decide handles timing + safeMode; under safeMode=false it
@@ -348,6 +419,10 @@ export async function _runSession(
       }
 
       case "action_rejected": {
+        if (bbb) {
+          await bbb.retryRejected(msg);
+          break;
+        }
         // Server rejected our action. Retry with a safe fallback,
         // echoing the original request_id.
         const requestId = (msg.request_id as string | undefined) ?? "";
@@ -382,7 +457,9 @@ export async function _runSession(
         // If a pending_request is included, dispatch it as if it were a
         // fresh turn_request.
         const pending = msg.pending_request as Record<string, unknown> | undefined;
-        if (pending && pending.type === "turn_request") {
+        if (bbb && pending && typeof pending === "object") {
+          await bbb.answer(pending);
+        } else if (pending && pending.type === "turn_request") {
           // Replay the pending turn exactly like a fresh turn_request,
           // but with the seat re-learned from the reconnected frame
           // (the pending state itself does not carry `your_seat`).
@@ -429,11 +506,205 @@ export async function _runSession(
 }
 
 // ---------------------------------------------------------------------------
+// Big Bad Bots turn handling
+// ---------------------------------------------------------------------------
+
+/**
+ * The Big Bad Bots side of one session: only used when the server hello
+ * declares `state_shape: "bigbadbots"`. Exported for tests; not part of the
+ * supported API.
+ */
+export class _BigBadBotsTurns {
+  /**
+   * The previous fight action, as applied, keyed by round: the server's
+   * default for a missed tick repeats it if it was block/move_in/move_out
+   * and resets every round (protocol section 3.5).
+   */
+  private lastFight: { round: unknown; action: string | null } = { round: null, action: null };
+  /** The last request answered, kept so an `action_rejected` for it can be retried with its default. */
+  private lastRequest: Record<string, unknown> | null = null;
+
+  constructor(
+    private readonly ws: WebSocket | SessionWebSocket,
+    private readonly bot: Bot,
+    private readonly reader: AsyncMessageReader,
+    private readonly matchId: string,
+    private readonly safeMode: boolean,
+  ) {}
+
+  private previousFightAction(request: Record<string, unknown>): string | null {
+    const state = request.state as Record<string, unknown> | undefined;
+    const round = state && typeof state === "object" ? state.round : undefined;
+    if (this.lastFight.round !== null && this.lastFight.round === round) {
+      return this.lastFight.action;
+    }
+    return null;
+  }
+
+  private fallback(request: Record<string, unknown>, why: string): Action | null {
+    const action = fallbackAction(request, this.previousFightAction(request));
+    const sent = action ? JSON.stringify(action.toWire()) : "(none: the server applies its own)";
+    console.warn(
+      `chipzen-sdk: Big Bad Bots request ${String(request.request_id)}: ${why}; ` +
+        `sending the protocol default ${sent}`,
+    );
+    return action;
+  }
+
+  /**
+   * Decide one request: the bot's action or the protocol default.
+   *
+   * Never sends a silent wrong action. The default (section 3.5) replaces
+   * the bot's answer, with a warning, when the payload fails to parse,
+   * `decide` throws (`safeMode`), `decide` returns something that is not
+   * one of `valid_actions`, or the request already waited out its budget
+   * (`timeout_ms` less {@link BIGBADBOTS_SEND_MARGIN_MS}) behind earlier
+   * work, in which case the bot is not called. `decide` is synchronous and
+   * cannot be interrupted, so an answer that comes back past its budget is
+   * still sent, with a warning: if it missed `timeout_ms` the server drops
+   * it and plays the same default. Under `safeMode = false` a parse
+   * failure, a throw or a malformed answer is a {@link BotDecisionError}; a
+   * slow answer is not.
+   */
+  decide(request: Record<string, unknown>): { action: Action | null; latencyMs: number } {
+    const arrived = this.reader.receivedAt?.();
+    const start = Date.now();
+    const waited = arrived === undefined ? 0 : Math.max(start - arrived, 0);
+    const elapsed = (): number => Date.now() - start;
+
+    let state;
+    try {
+      state = parseBigBadBotsTurnRequest(request);
+    } catch (err) {
+      if (!(err instanceof StateParseError)) throw err;
+      console.error(`chipzen-sdk: Big Bad Bots turn_request failed to parse: ${err.message}`);
+      if (!this.safeMode) throw new BotDecisionError(err.message);
+      return { action: this.fallback(request, "the payload failed to parse"), latencyMs: elapsed() };
+    }
+
+    const budgetMs = Math.max(state.timeoutMs - BIGBADBOTS_SEND_MARGIN_MS, 1);
+    if (waited >= budgetMs) {
+      const why = `it waited ${waited}ms behind earlier work, past its ${budgetMs}ms budget`;
+      return { action: this.fallback(request, why), latencyMs: elapsed() };
+    }
+
+    let action: unknown;
+    try {
+      // `Bot.decide` is typed for poker; at this table it takes the Big Bad
+      // Bots model (`BigBadBotsBot.decide` accepts both).
+      action = (this.bot.decide as (s: unknown) => unknown).call(this.bot, state);
+    } catch (err) {
+      if (err instanceof BotDecisionError) throw err;
+      console.error(
+        "chipzen-sdk: bot decide() threw",
+        err instanceof Error ? (err.stack ?? err.message) : err,
+      );
+      if (!this.safeMode) {
+        throw new BotDecisionError(err instanceof Error ? err.message : String(err));
+      }
+      return { action: this.fallback(request, "decide() threw"), latencyMs: elapsed() };
+    }
+
+    if (!isAnswerShaped(action, state.validActions)) {
+      const what =
+        action !== null &&
+        typeof action === "object" &&
+        typeof (action as { then?: unknown }).then === "function"
+          ? "a Promise (the Big Bad Bots methods must be synchronous)"
+          : action instanceof Action
+            ? JSON.stringify(action.toWire())
+            : String(action);
+      const message = `decide() returned ${what}, not one of ${JSON.stringify(state.validActions)}`;
+      if (!this.safeMode) throw new BotDecisionError(message);
+      console.error(`chipzen-sdk: Big Bad Bots request ${state.requestId}: ${message}`);
+      return {
+        action: this.fallback(request, "the answer was not a valid action"),
+        latencyMs: elapsed(),
+      };
+    }
+
+    const latencyMs = elapsed();
+    if (waited + latencyMs > budgetMs) {
+      console.warn(
+        `chipzen-sdk: Big Bad Bots request ${state.requestId}: answered ${waited + latencyMs}ms ` +
+          `after it arrived, past its ${budgetMs}ms budget; sending it anyway (the server drops ` +
+          "an answer later than timeout_ms and plays the protocol default)",
+      );
+    }
+    return { action, latencyMs };
+  }
+
+  /** Answer one `turn_request` (or a `reconnected.pending_request`). */
+  async answer(request: Record<string, unknown>): Promise<void> {
+    const { action, latencyMs } = this.decide(request);
+    this.lastRequest = request;
+    if (action === null) return;
+    const state = request.state as Record<string, unknown> | undefined;
+    if (state && typeof state === "object" && state.phase === "fight") {
+      this.lastFight = { round: state.round, action: action.action };
+    }
+    await sendJson(this.ws, {
+      type: "turn_action",
+      match_id: this.matchId,
+      request_id: request.request_id, // MUST echo
+      ...action.toWire(),
+    });
+    _callHook("onDecisionLatency", () => this.bot.onDecisionLatency(latencyMs), this.safeMode);
+  }
+
+  /**
+   * Retry an `action_rejected` once with the request's protocol default,
+   * which is always well-shaped (section 3.7). A second rejection gets no
+   * retry; the server applies the default itself when the time runs out.
+   */
+  async retryRejected(msg: Record<string, unknown>): Promise<void> {
+    const requestId = msg.request_id;
+    console.warn(
+      `chipzen-sdk: action rejected (${String(msg.reason)}): ${String(msg.message ?? "")} -- ` +
+        `${String(msg.remaining_ms ?? 0)}ms remaining`,
+    );
+    const rejected = this.lastRequest;
+    if (rejected === null || rejected.request_id !== requestId) {
+      console.warn(`chipzen-sdk: no retry for rejected request ${String(requestId)}`);
+      return;
+    }
+    this.lastRequest = null;
+    const retry = this.fallback(rejected, "the answer was rejected");
+    if (retry === null) return;
+    await sendJson(this.ws, {
+      type: "turn_action",
+      match_id: this.matchId,
+      request_id: requestId,
+      ...retry.toWire(),
+    });
+  }
+
+  /**
+   * Track the fight action as applied (after defaults and corrections):
+   * what the server repeats on a missed tick.
+   */
+  noteTurnResult(msg: Record<string, unknown>): void {
+    const details = msg.details as Record<string, unknown> | undefined;
+    if (!details || typeof details !== "object" || details.phase !== "fight") return;
+    this.lastFight = {
+      round: "round" in details ? details.round : this.lastFight.round,
+      action: typeof details.action === "string" ? details.action : this.lastFight.action,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 export interface AsyncMessageReader {
   next(): Promise<string | null>;
+  /**
+   * Optional: when (`Date.now()`) the message the last `next()` returned
+   * arrived. The Big Bad Bots loop uses it to see how long a request
+   * already waited behind earlier work; readers without it count as no wait.
+   */
+  receivedAt?(): number | undefined;
 }
 
 /**
@@ -445,16 +716,22 @@ export interface AsyncMessageReader {
  * return `null` and the caller's outer reconnect logic decides what to do.
  */
 export class _NodeWebSocketReader implements AsyncMessageReader {
-  private readonly queue: string[] = [];
+  private readonly queue: Array<{ msg: string; at: number }> = [];
   private readonly waiters: Array<(msg: string | null) => void> = [];
   private closed = false;
+  private lastAt: number | undefined;
 
   constructor(ws: WebSocket) {
     ws.on("message", (data) => {
       const msg = data.toString();
+      const at = Date.now();
       const w = this.waiters.shift();
-      if (w) w(msg);
-      else this.queue.push(msg);
+      if (w) {
+        this.lastAt = at;
+        w(msg);
+      } else {
+        this.queue.push({ msg, at });
+      }
     });
     ws.on("close", () => this._close());
     ws.on("error", () => this._close());
@@ -462,9 +739,16 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
 
   async next(): Promise<string | null> {
     const queued = this.queue.shift();
-    if (queued !== undefined) return queued;
+    if (queued !== undefined) {
+      this.lastAt = queued.at;
+      return queued.msg;
+    }
     if (this.closed) return null;
     return new Promise((resolve) => this.waiters.push(resolve));
+  }
+
+  receivedAt(): number | undefined {
+    return this.lastAt;
   }
 
   private _close(): void {
