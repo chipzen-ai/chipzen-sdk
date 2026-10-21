@@ -68,6 +68,11 @@ setup in `on_match_start`, not in `act()`.
 
 ## Run it from your machine: prod or staging
 
+**Remote play does not take Big Bad Bots matches yet.** For now a Big Bad
+Bots bot plays on the platform as an uploaded image (see
+[Package and upload](#package-and-upload)). The commands below are ready for
+when remote play opens.
+
 Until a `chipzen-bot` release on PyPI includes Big Bad Bots, install the SDK
 from this repository:
 
@@ -108,8 +113,13 @@ docker save my-turtle:v1 | gzip > my-turtle.tar.gz
 
 An uploaded bot is started by the platform, which hands it its match URL
 (`CHIPZEN_WS_URL`), so the image itself needs no prod or staging setting.
-`chipzen-sdk validate` checks poker bots only for now; the image build and
-the platform's review are the checks for a Big Bad Bots bot.
+Before you build, run `chipzen validate .` in this folder: it hands each
+method real requests from recorded matches and judges every answer the way
+the server does. The `imports: ... os` warning is expected (`main()` reads
+`CHIPZEN_WS_URL`). The platform's review then runs its own checks on the
+upload. After that, challenge the house bots and read the replays (see
+[`BIGBADBOTS-QUICKSTART.md`](../../../../../docs/BIGBADBOTS-QUICKSTART.md)
+section 9).
 
 Hard upload cap: **250 MB compressed** (the built image is separately capped
 at **200 MB**). This image exports at roughly 45 MB compressed.

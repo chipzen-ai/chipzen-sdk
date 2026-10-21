@@ -21,7 +21,8 @@ everything beyond the one-page quickstart.
 7. [Containerization](#7-containerization)
 8. [Platform rules](#8-platform-rules)
 9. [Troubleshooting](#9-troubleshooting)
-10. [Getting help](#10-getting-help)
+10. [Big Bad Bots](#10-big-bad-bots)
+11. [Getting help](#11-getting-help)
 
 ---
 
@@ -310,7 +311,7 @@ The CLI is installed under two interchangeable names (`chipzen-sdk` and
 | Command | Purpose |
 |---|---|
 | `chipzen-sdk init <name>` | Scaffold a new bot project from a starter template. |
-| `chipzen-sdk validate <path>` | Run the same checks the upload pipeline runs: size, entry point, imports, decide() timeout sniff. The supported go/no-go before docker packaging. |
+| `chipzen-sdk validate <path>` | Run the same checks the upload pipeline runs: size, entry point, imports, decide() timeout sniff (for a Big Bad Bots bot, the four calls against conformance fixtures, §10.8). The supported go/no-go before docker packaging. |
 | `chipzen run-external <bot.py>` | Run a bot on the external-API remote-play path (lobby → matched → play). See §2.7. |
 
 Each command is documented in `chipzen-sdk <command> --help`.
@@ -365,7 +366,7 @@ declares otherwise.
 | No-Limit Hold'em (heads-up and multi-way) | `poker` | Live | [`POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md) |
 | 2-7 Triple Draw | `draw27` | Live | [`DRAW27-GAME-STATE-PROTOCOL.md`](protocol/DRAW27-GAME-STATE-PROTOCOL.md) |
 | Pineapple OFC | `ofc` | Live | [`OFC-GAME-STATE-PROTOCOL.md`](protocol/OFC-GAME-STATE-PROTOCOL.md) |
-| Big Bad Bots (robot fighting) | `bigbadbots` | Coming. Draft spec; launch rule set `bigbadbots-1.2` ([`RULESETS.md`](RULESETS.md)) | [`BIGBADBOTS-GAME-STATE-PROTOCOL.md`](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md) |
+| Big Bad Bots (robot fighting) | `bigbadbots` | Beta. Launch rule set `bigbadbots-1.2` ([`RULESETS.md`](RULESETS.md)); build guide in §10 | [`BIGBADBOTS-GAME-STATE-PROTOCOL.md`](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md) |
 
 [`LAYER2-COMMON.md`](protocol/LAYER2-COMMON.md) covers what every game
 shares.
@@ -406,6 +407,12 @@ The variant fields on `GameState` (`max_discard`, `your_rows`,
 `cards_to_place` and the rest) are optional with defaults, so a hold'em-only
 bot never sees them.
 
+**Big Bad Bots is different.** Its turns are not betting turns, so a Big Bad
+Bots bot does not route from `decide()`: it subclasses `chipzen.BigBadBotsBot`
+and implements one method per phase (`choose_body`, `bid`, `fit`, `act`). See
+§10, and [`BIGBADBOTS-QUICKSTART.md`](BIGBADBOTS-QUICKSTART.md) for the
+walkthrough.
+
 **Support by language.** Python ships every feature first; the JavaScript and
 Rust SDKs follow to full parity. Until a row is done, a JavaScript or Rust bot
 can still play a game by speaking its Layer 2 spec directly.
@@ -417,7 +424,7 @@ can still play a game by speaking its Layer 2 spec directly.
 | `supported_games` declaration | Yes (0.4.0) | Parity pending | Parity pending |
 | 2-7 Triple Draw | Yes (0.4.0) | Parity pending | Parity pending |
 | Pineapple OFC | Yes (0.4.0) | Parity pending | Parity pending |
-| Big Bad Bots | Coming | Coming after Python | Coming after Python |
+| Big Bad Bots | Yes, in `main` (`BigBadBotsBot`, §10); not yet in a PyPI release | Coming after Python | Coming after Python |
 
 ---
 
@@ -1177,7 +1184,440 @@ Other causes:
 
 ---
 
-## 10. Getting help
+## 10. Big Bad Bots
+
+**Big Bad Bots** (game type `bigbadbots`) is Chipzen's robot-fighting game, in
+beta. This chapter is the reference for building one in Python. For the
+step-by-step walkthrough, start at
+[`BIGBADBOTS-QUICKSTART.md`](BIGBADBOTS-QUICKSTART.md). The wire spec is
+[`protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md`](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md),
+and it wins if this chapter ever disagrees with it.
+
+Values marked **provisional** below are placeholders pending a rules
+decision. They travel in `match_start.game_config`, so a bot that reads them
+from `state.rules` keeps working when they change.
+
+### 10.1 A match in one page
+
+A match is one bot against one bot. Every step is **simultaneous**: both seats
+are asked at the same moment, each on its own socket, and neither sees the
+other's answer before it submits its own. There is no turn order.
+
+| Step | Your method | `state.phase` | State model | How many |
+|---|---|---|---|---|
+| Body shop | `choose_body()` | `body_shop` | `BodyShopState` | 1 |
+| One auction lot | `bid()` | `auction` | `AuctionState` | one per lot (`state.rules.gearup.auction_lots`, 6 today) |
+| Fitting | `fit()` | `fitting` | `FittingState` | 1 |
+| One fight tick | `act()` | `fight` | `FightState` | one per tick, `state.rules.rounds.ticks_per_second` (10) a second, every round |
+
+The fight is a best-of-three: the first seat to `rounds.rounds_to_win` round
+wins takes the match, and drawn rounds extend it up to `rounds.max_rounds`. A
+round ends on a KO, at the tick limit (`rounds.round_ticks`, 600 ticks or
+60 s), or by forfeit. At the tick limit, `rounds.timeout_tiebreak` decides:
+`"damage"` (the launch rule set, `bigbadbots-1.2`) gives the round to the
+seat that dealt more damage in it; `"hp_pct"` (or absent, `bigbadbots-1.0`)
+to the higher share of max HP.
+
+The ten fight actions: `idle`, `move_in`, `move_out`, `block`, five attacks
+(`punch_high`, `uppercut`, `kick_high`, `kick_low`, `throw`) and `special` (the
+body's special move, once per round). Each attack has a startup, an active
+and a recovery phase, a stamina cost and a range. **A strike beats a throw, a
+throw beats a block, and a block beats a strike.**
+
+### 10.2 `BigBadBotsBot`
+
+Subclass `chipzen.BigBadBotsBot` and implement `act()`. The three gear-up
+methods have legal defaults you override when you want a real strategy:
+
+```python
+from chipzen import Action, BigBadBotsBot
+from chipzen.bigbadbots import AuctionState, BodyShopState, FightState, FittingState
+
+class MyBot(BigBadBotsBot):
+    def choose_body(self, state: BodyShopState) -> Action:
+        return Action.choose_body(state.offer[0].id)   # a body id from state.offer
+
+    def bid(self, state: AuctionState) -> Action:
+        return Action.bid(0)                           # 0 .. state.me.credits; 0 passes
+
+    def fit(self, state: FittingState) -> Action:
+        return Action.fit({0: state.owned[0].id} if state.owned else {})  # slot index -> part id
+
+    def act(self, state: FightState) -> Action:         # required
+        if state.distance > state.me.strike_range:
+            return Action.act("move_in")
+        return Action.act("punch_high")
+```
+
+(That `fit()` is a sketch: a real one checks that each part's `slot` matches
+the slot type in `state.slots`.)
+
+| Action builder | Call | Notes |
+|---|---|---|
+| `Action.choose_body(body_id)` | `choose_body` | A body not on your offer is corrected to the cheapest one on it. |
+| `Action.bid(amount)` | `bid` | A whole number. Outside `0..me.credits` it is clamped and logged as a violation. |
+| `Action.fit({slot_index: part_id, ...})` | `fit` | Slot indexes into `state.slots`. An entry that does not fit is dropped; the rest are fitted. `{}` fits nothing. |
+| `Action.act(move)` | `act` | One of the ten fight actions. Raises `ValueError` for anything else. |
+
+What the class does for you:
+
+- **Declares the game.** It sends `supported_games=["bigbadbots"]` in its
+  `hello` unless you pass your own list.
+- **Routes each request.** `decide()` routes on `state.phase` to the four
+  methods. You do not override `decide()`.
+- **Parses the rule set.** The default `on_match_start()` reads
+  `match_start.game_config` into `self.game_config` (wire form) and
+  `self.rules` (typed, read-only), and every state carries the same object as
+  `state.rules` (§10.7). **If you override `on_match_start()` or
+  `on_reconnected()`, call `super()` first**, or `state.rules` is `None`.
+- **Times every call** and sends the protocol default when your method is
+  late, raises (under `safe_mode`, the default), or returns something that is
+  not one of `valid_actions` (§10.3).
+
+The other `Bot` hooks fire as usual: `on_round_start`, `on_turn_result` (its
+`details.opponent_action` is the opponent's action as you are allowed to see
+it), `on_round_result`, `on_match_end` and `on_decision_latency`.
+
+The state models (`chipzen.bigbadbots`):
+
+| Model | Key fields |
+|---|---|
+| `BodyShopState` | `offer` (your bodies: `id`, `cost`, `stats`, `slots`, `special`), `me`, `opp`, `lots_total` |
+| `AuctionState` | `lot` (the part on sale: `id`, `slot`, `bonus`, `effects`), `me`, `opp`, `lot_index`, `lots_total`, `history` |
+| `FittingState` | `owned` (every part you won, in full), `slots` (your body's slot types, by index), `me`, `opp`, `history` |
+| `FightState` | `tick`, `round`, `rounds_won`, `me`, `opp` (fighters), `distance`, `facing`, `walls` |
+
+Every state also has `request_id`, `timeout_ms`, `valid_actions`, `phase` and
+`rules`. In gear-up, `me` and `opp` are sides (`credits`, `body`, `owned`,
+`offer`, `fitted`); in the fight they are fighters (`x`, `hp`, `max_hp`,
+`stamina`, `max_stamina`, `action`, `phase`, `frames_left`, `special`,
+`special_used`, `last_attack`, `repeats`, `strike_range`, `move_rate`,
+`attrs`, `buffs`). Protocol §4.3 defines every field.
+
+### 10.3 The per-tick budget
+
+Fight ticks are paced in real time, 10 a second. Every fight request carries
+its deadline in `state.timeout_ms`:
+
+| Value | Today | Where to read it |
+|---|---|---|
+| Per-tick deadline | **100 ms** (provisional) | `state.rules.deadline.deadline_ms` |
+| Time bank | **3 s per seat per round**, refilled at the start of every round (provisional) | `state.rules.deadline.time_bank_ms` |
+| What this request will wait for | deadline plus what is left of your bank | `state.timeout_ms` |
+| What is left of your bank | | `state.timeout_ms - state.rules.deadline.deadline_ms` |
+
+- **An answer inside the deadline costs nothing.** An answer later than the
+  deadline is paid for from the bank, for the part beyond the deadline.
+- **The server measures from sending the request to receiving your answer**,
+  rounded up to whole milliseconds, so the network hop is inside the budget.
+- **A late answer is dropped**, never applied to a later tick. The tick plays
+  the default action instead (§10.4).
+- **Misses count toward a forfeit.** A seat that misses every tick for
+  `forfeit.grace_seconds` (5 s, provisional) forfeits the round, and
+  `forfeit.rounds_for_match` (2, provisional) forfeited rounds forfeit the
+  match. Any answer, even a rejected one, resets the count.
+- **Gear-up calls have no per-tick deadline.** Their `timeout_ms` is the
+  match's turn timeout, so gear-up is where you can afford to think.
+
+**What the SDK does.** It runs your method on a worker thread and waits for
+it until 20 ms before `timeout_ms` runs out. Past that it sends the
+protocol's default for the call and logs a warning. It cannot interrupt your
+method, so while a timed-out call is still running, every later request is
+answered with the default without calling your method again.
+
+So a slow `act()` does not just lose one tick. It spends the bank, and once
+the bank is empty, every tick slower than 100 ms plays the default.
+
+**Staying inside 100 ms:**
+
+- Do the expensive work once. Read `state.rules` into lookup tables in
+  `on_match_start()` (call `super()` first), not on every tick.
+- Keep `act()` to arithmetic over the state. No file or network I/O, no model
+  loading, no imports.
+- Do not log on every tick. Ten lines a second fills your log and costs time.
+- Watch `on_decision_latency(latency_ms)`, and keep an eye on the
+  `bigbadbots_timing` line of `chipzen validate`, which warns when `act()`
+  goes over the per-tick deadline.
+
+### 10.4 One answer per tick: send `block` again every tick
+
+Every tick is a new `turn_request` with its own `request_id`, and every tick
+needs its own answer. There is no "hold" action: **`block` protects you on
+the tick you send it.** To keep blocking, return `block` again on the next
+tick, and the next.
+
+```python
+class Guard(BigBadBotsBot):
+    def act(self, state: FightState) -> Action:
+        # Re-decide every tick. Returning "idle" for one tick drops the guard.
+        if state.opp.phase in ("startup", "active") and state.distance <= state.opp.strike_range * 1.5:
+            return Action.act("block")
+        return Action.act("idle")
+```
+
+Do not lean on the server's default to keep a block up. On a missed tick the
+server plays your previous action if it was `block`, `move_in` or `move_out`
+(otherwise `idle`), but a tick only counts as missed once `timeout_ms` has
+run out, so relying on it spends your whole remaining bank on the first miss,
+and every miss counts toward the forfeit (§10.3). The SDK's own fallback
+repeats `block` the same way, and only after the same wait.
+
+Three more rules about the fight loop:
+
+- **A busy fighter ignores what you send.** While `state.me.phase` is not
+  `None` (startup, active, recovery, hitstun or dazed), the server ignores
+  your action until the current one ends. You still answer every tick
+  (`idle` is the natural answer); you just cannot block during your own
+  recovery, which is why a whiffed attack gets punished.
+- **An action you cannot afford plays as `idle`.** `valid_actions` is always
+  all ten fight actions; whether one can be performed now (stamina, a used
+  special, a busy fighter) is decided when the tick resolves.
+- **Blocking forever loses.** A blocked strike still deals chip damage and
+  drains stamina, a block breaks at 0 stamina, and a throw beats a block.
+
+### 10.5 The masked opponent
+
+The server removes everything a seat may not see before it sends the state,
+so no payload ever carries it. Your own side is always shown in full.
+
+| Phase | Hidden from you | Public |
+|---|---|---|
+| `body_shop` | the opponent's offer (`opp.offer` is `[]`) | both seats' credits |
+| `auction` | the opponent's bid on the lot being sold; the lots not yet revealed | the opponent's body, credits and parts won; both bids on every lot already sold (`history`) |
+| `fitting` | the opponent's fitting (`opp.fitted` is one `None` per slot) | everything the auction showed |
+| `fight` | which move the opponent is winding up, and its frames left | position, HP, stamina, attributes, strike range, move rate, special id, status; the move once it is revealed, and during recovery |
+
+**The hidden wind-up.** While the opponent winds up a move, `state.opp` shows
+`action == "attack"`, `phase == "startup"` and `frames_left is None`. Its
+`stamina`, `special_used`, `last_attack`, `repeats` and `buffs` keep their
+values from before the move started, so none of them gives the move away.
+
+When the move is revealed is the rule set's `combat.intent_reveal`:
+
+- `"on_active"` (or absent, `bigbadbots-1.0`): on the tick the move becomes
+  active, which is the tick it hits, so a `block` answered on that tick still
+  counts.
+- `"after_hit"` (`bigbadbots-1.1` and `bigbadbots-1.2`, the launch rule set):
+  the first active tick still shows as a wind-up, and the move is revealed
+  from the tick after. **You cannot block a strike on sight.** You decide
+  while it is still `"attack"`.
+
+```python
+reveal = state.rules["combat"].get("intent_reveal", "on_active")
+```
+
+Against a hidden wind-up you are making a read, and the counter triangle is
+the whole game: block (beats a strike, loses to a throw), step out of range
+(`move_out`, Zoner's answer), or strike first with an attack whose startup is
+shorter than theirs is likely to be (Rusher's answer).
+
+Two more things the mask does not cover:
+
+- **An interrupted wind-up is revealed.** If your hit staggers the opponent
+  mid-wind-up, it shows `"hitstun"`, but from then on `last_attack` and
+  `repeats` name the move it tried, and `stamina` shows its cost paid.
+- **The opponent's fitting shows in the fight**, through `opp.attrs`,
+  `opp.max_hp`, `opp.max_stamina`, `opp.strike_range` and `opp.move_rate`.
+
+Never in any payload during play: the opponent's answer for the current step,
+its timing (when it answered, whether it used its bank or missed a tick), and
+the match seed. After the match, the replay carries everything.
+
+### 10.6 Gear-up and auction strategy basics
+
+**One budget pays for everything.** Each seat starts with
+`state.rules.gearup.budget` credits (1000 today). The body is paid for first,
+and the auction spends the rest. **Credits left when the auction ends are
+lost.**
+
+**The body shop.** Each seat gets its own private offer of
+`gearup.body_offer_size` bodies (4 today); the two offers can differ. A body
+has a `cost`, base `stats` (the six attributes), `slots` (part slot types, a
+type can repeat) and a `special`. The trade-off is direct: an expensive body
+leaves fewer credits for parts, and more slots are only worth something if
+you can afford parts to fill them. Both choices are revealed before the
+auction, so in `bid()` you know the opponent's body.
+
+**The auction.** `gearup.auction_lots` parts (6 today) are sold one at a
+time. For each lot both seats submit one **sealed bid** at the same moment.
+The highest bid wins and **pays its own bid**. A tie goes to a seeded coin
+flip, and if both bid 0 the lot goes unsold. Both bids are revealed before
+the next lot.
+
+What you know when you bid: the lot on sale now (never future lots), how many
+lots remain (`lots_total - lot_index`), the opponent's credits and the parts
+it has won, and both bids on every lot already sold (`history`).
+
+Basics that hold whatever your style:
+
+- **Value a lot by what it adds to your best fitting**, not by its raw stats.
+  A part only helps if it fits a slot type your body has, and if it beats
+  what you would otherwise put in that slot. All three starters compute
+  "best fitting with this lot" minus "best fitting without it".
+- **Never bid more than `state.opp.credits + 1`.** The opponent cannot beat
+  that, so anything above it is wasted.
+- **Pace your credits.** `credits / lots_left` is your fair share per lot;
+  scale it by how much you want this lot. The starters' `BID_TEMPER` (Rusher
+  1.25, Zoner 0.75, Turtle 0.65) is exactly that knob.
+- **Spend it all on the last lot you can use.** Credits are worth nothing
+  once the auction ends.
+- **Denial is real.** A part you cannot use may still be the part the
+  opponent's body needs, and you know its body and what it has won.
+- **Read the history.** `history[i].opp_bid` shows how the opponent bids.
+  Bots that bid a fixed share, or always pass on some slot types, are easy
+  to exploit.
+
+**The fitting.** `state.slots` lists your body's slot types by index, and
+`state.owned` every part you won (you keep them all, even ones you cannot
+fit). Answer with `Action.fit({slot_index: part_id})`: one part per slot,
+matching the slot type. Parts left over are unused, and attributes are capped
+to their range after all parts apply. The opponent never sees your fitting
+directly, only its effect on your fighter once the fight starts.
+
+### 10.7 Reading the rule set (`state.rules`)
+
+Every match is played under one **rule set**, the named set of numbers the
+game runs on: the budget, the bodies and parts, every move's frame data, the
+arena, the round length, the deadline. A balance patch is a new rule set with
+a new id, never a code change, so **a bot that reads its numbers from the
+rule set keeps working when they change**. The id scheme, the lifecycle and
+the changelog are in [`RULESETS.md`](RULESETS.md). The launch rule set is
+`bigbadbots-1.2`.
+
+`state.rules` (a `chipzen.bigbadbots_rules.RuleSet`, the same object as
+`self.rules`) holds the rule set `match_start` sent:
+
+| Attribute | What it holds |
+|---|---|
+| `id` | The rule-set id, for example `"bigbadbots-1.2"`. Fixed for the whole match. |
+| `gearup` | `budget`, `body_offer_size`, `auction_lots` |
+| `arena` | `width`, `start_x`, `start_jitter`, `min_separation` |
+| `rounds` | `ticks_per_second`, `round_ticks`, `rounds_to_win`, `max_rounds`, `timeout_tiebreak`, the optional closing-wall keys (`stall_close_after`, `stall_close_rate`, `stall_min_width`), and `closing_walls` (whether the rule set has them) |
+| `forfeit` | `grace_seconds`, `rounds_for_match` |
+| `deadline` | `deadline_ms`, `time_bank_ms`, `default_action_policy`, `late_answer`, `miss_counts_toward_forfeit` |
+| `["section"]` | Any section of the full table, read-only: `attributes`, `slot_types`, `bodies`, `parts`, `moves`, `specials`, `fighter`, `combat`, `special_effects`, and the five above. [`RULESETS.md` §4](RULESETS.md#4-the-parameter-table) lists what each holds. |
+
+The full table travels in every `match_start`, so the bodies, parts and
+moves are always there in play:
+
+```python
+def act(self, state: FightState) -> Action:
+    rules = state.rules
+    kick = rules["moves"]["kick_high"]        # startup, active, recovery, stamina, damage, ...
+    # A move either has a fixed "range" (the throw does) or reaches a multiple
+    # of the fighter's strike_range. This is how the starters read it.
+    reach = kick["range"] if kick.get("range") is not None else kick.get("reach", 1.0) * state.me.strike_range
+    if state.distance <= reach and state.me.stamina >= kick.get("stamina", 0):
+        return Action.act("kick_high")
+    return Action.act("move_in")
+```
+
+Rules for reading it:
+
+- **Use `.get()` with a default for optional keys.** A key a rule set leaves
+  out means "the old behaviour": `combat.intent_reveal` absent means
+  `"on_active"`, and the closing-wall keys are absent in `bigbadbots-1.0`
+  and `bigbadbots-1.2` (so `walls` stays at the arena edges).
+- **Branch on behaviour keys, not on the id.** Read `rounds.timeout_tiebreak`
+  and `combat.intent_reveal` rather than comparing `rules.id` to a string;
+  the next rule set may keep the behaviour under a new id.
+- **The table is read-only.** Objects are read-only mappings and arrays are
+  tuples. `self.game_config.rule_set` keeps the wire form (plain dicts),
+  which is what the starters read.
+
+**Offline lookup.** The SDK bundles the published numbers of every released
+rule set:
+
+```python
+from chipzen.bigbadbots_rules import published_rule_set, published_rule_set_ids
+
+published_rule_set_ids()                  # ('bigbadbots-1.0', 'bigbadbots-1.1', 'bigbadbots-1.2')
+entry = published_rule_set("bigbadbots-1.2")
+entry.state, entry.engine, entry.sha256   # 'preview', '1.2.0', '5e1f...'
+entry.sections["deadline"]["deadline_ms"] # 100
+```
+
+The bundle holds the published sections (`gearup`, `arena`, `rounds`,
+`forfeit`, `deadline`), not the bodies, parts or moves; those come from
+`match_start`. It is a reference only: **the server's numbers always win**.
+A `rule_set_id` the installed SDK does not know, or a published value that
+differs from the one sent, logs a warning, and the bot plays on the server's
+numbers.
+
+### 10.8 Checking a bot: `chipzen validate`
+
+`chipzen validate <bot dir>` is the pre-upload check. For a `BigBadBotsBot`
+subclass it runs the Big Bad Bots checks automatically; for a bot that
+speaks the protocol some other way, add `--game bigbadbots`.
+
+| Check | What it proves |
+|---|---|
+| `act_method` | The class implements `act()`. |
+| `bigbadbots_choose_body`, `bigbadbots_bid`, `bigbadbots_fit`, `bigbadbots_act` | Every request in the conformance fixtures (real `turn_request`s from recorded matches, all four calls) gets an answer, judged as the server judges it. **Malformed** (the server would reject it) fails; **corrected** (well-shaped but not legal, so the server would fix it and log a violation) warns. |
+| `bigbadbots_state_mutation` | No method changes the state it is handed. |
+| `bigbadbots_timing` | Every answer arrives within `timeout_ms`; warns when `act()` goes over the per-tick deadline. |
+| `bigbadbots_exit` | No method raises `SystemExit` or another `BaseException`. |
+| `bigbadbots_crash_every_tick` | `act()` does not crash on every tick. |
+
+The file, syntax, import, requirements and size checks run as for any bot.
+`--check-connectivity` drives the poker protocol only; for a Big Bad Bots bot
+the checks above already drive all four calls.
+
+A pass means your bot will not be rejected on protocol grounds. It is not a
+strength check: there is no local simulator, and how well a bot fights is
+measured on the platform (§10.9).
+
+### 10.9 Iterating on the platform
+
+The game engine runs on the platform only; there is no local simulator. The
+loop is:
+
+1. **Check:** `chipzen validate .`
+2. **Build and export:** `docker build -t my-bot:vN .` then
+   `docker save my-bot:vN | gzip > my-bot.tar.gz` (§7).
+3. **Upload** on `chipzen.ai` and choose **Big Bad Bots** as the bot's game.
+   Review moves it from `pending_review` to `active` (§8.3).
+4. **Challenge the house bots** with Big Bad Bots as the game. A challenge
+   against a house bot starts straight away, and Big Bad Bots challenges are
+   unrated during the beta.
+5. **Read the replays and your per-match log** (§5), change one thing, and go
+   round again with a new version tag.
+
+The house bots cover a range of styles, including the originals of the three
+starters. Play several matches per version: body offers, lots and start
+positions come from each match's seed, so one match is one sample.
+
+**Staging.** To use the staging site, upload to `staging.chipzen.ai` instead.
+The image is the same: the platform hands an uploaded bot its match URL
+(`CHIPZEN_WS_URL`), so nothing in the image names prod or staging.
+
+**Remote play.** Remote play from your own machine (`chipzen run-external`,
+§2.7) does not take Big Bad Bots matches yet; a Big Bad Bots bot plays as an
+uploaded image. The SDK side is ready for when it opens:
+`chipzen run-external bot.py` targets prod, and `--env staging` (or
+`CHIPZEN_ENV=staging`) targets staging.
+
+### 10.10 The starters as worked examples
+
+The three starters in
+[`packages/python/starters/bigbadbots/`](../packages/python/starters/bigbadbots/)
+are complete bots and the best reference for the patterns above. Each is one
+`bot.py` with its taste in constants at the top.
+
+| Starter | Gear-up | Fight | Read it for |
+|---|---|---|---|
+| [Rusher](../packages/python/starters/bigbadbots/rusher/) | Quick bodies, `BID_TEMPER = 1.25` | Strikes first against a wind-up, throws blockers, spends its special early | Punishing recovery with frame data from `rules["moves"]`; the counter triangle |
+| [Zoner](../packages/python/starters/bigbadbots/zoner/) | Long-reach bodies, `BID_TEMPER = 0.75` | Holds the tip of its kick range, steps out of wind-ups, blocks with a wall behind it | Spacing with `distance`, `strike_range` and `walls` |
+| [Turtle](../packages/python/starters/bigbadbots/turtle/) | Heavy, guarded bodies, `BID_TEMPER = 0.65` | Blocks wind-ups every tick, punishes whiffs, attacks when the round clock says so | Blocking tick after tick; playing the time-out tiebreak |
+
+All three share the same auction logic (value a lot by its gain to the best
+fitting, cap at `opp.credits + 1`, go all in on a useful last lot), so the
+gear-up differences come only from their constants. Each README covers its
+time budget, the SDK fallback, and packaging.
+
+---
+
+## 11. Getting help
 
 - **SDK / starter / protocol bugs** —
   [chipzen-ai/chipzen-sdk issues](https://github.com/chipzen-ai/chipzen-sdk/issues).

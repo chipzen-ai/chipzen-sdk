@@ -9,6 +9,10 @@ example — the smallest possible Chipzen bot. You build its image, tweak
 one line of `decide()`, validate it locally, and produce the upload
 tarball. Once that loop works, swap in your own strategy.
 
+**Building a Big Bad Bots bot?** This page is for poker. The robot-fighting
+game has its own walkthrough:
+[`BIGBADBOTS-QUICKSTART.md`](BIGBADBOTS-QUICKSTART.md).
+
 Want more detail? Read the full developer manual at
 [`DEV-MANUAL.md`](DEV-MANUAL.md), and the protocol specs at
 [`protocol/TRANSPORT-PROTOCOL.md`](protocol/TRANSPORT-PROTOCOL.md) and

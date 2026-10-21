@@ -83,7 +83,7 @@ Each rule set is in one of four states. The state is looked up **when a match is
 - **`deprecated`** is a rule set that has been superseded. Its retirement date is published when it is deprecated.
 - **`retired`** rule sets never start a match again, but every match played on one stays replayable and verifiable.
 
-Transitions happen at published UTC timestamps. A rule set is never announced before builders can run it locally (§6).
+Transitions happen at published UTC timestamps. A rule set is never announced before builders can play it on the platform (§6).
 
 ### 3.1 Notice period (provisional)
 
@@ -138,23 +138,17 @@ The SDK also bundles the published numbers of every released rule set, so a bot 
 
 ---
 
-## 6. How the local simulator selects a rule set
+## 6. Playing and testing against a rule set
 
-When the SDK's local Big Bad Bots simulator ships (chipzen-ai/chipzen-sdk#141), it selects a rule set like this:
+There is no local Big Bad Bots simulator: the game engine runs on the platform only. Builders test a bot against a rule set by playing it there, against the house bots (see [`DEV-MANUAL.md` §10.9](DEV-MANUAL.md#109-iterating-on-the-platform)).
 
-| How | Selects |
-|---|---|
-| `--rule-set bigbadbots-1.0` | exactly that rule set |
-| `--from-match-start <file.json>` | the `rule_set_id` of a recorded `match_start`, so a real match can be replicated locally |
-| `--rule-set live` | the rule set currently `live` on the platform, asked from a public read-only endpoint |
-| no flag | the **newest released** rule set the installed simulator knows. The simulator prints the id it chose. |
+- **Every match names its rule set.** A match is played under the rule set it was created with (§5), and `match_start.game_config` states it to both bots. A challenge is played under the game's default rule set unless it names another.
+- **`preview`** rule sets can be played in practice and by explicit selection (§3), so a bot can be tuned against one on the platform during its notice period, before it counts.
+- **`deprecated`** rule sets can still be played, until their published retirement date.
+- **`retired`** rule sets never start a match again, but every match played on one stays replayable.
+- **Never a silent fallback.** The bot always plays the numbers `match_start` sent. The SDK's bundled copies of the published rule sets (§4.1) are a reference only; a `rule_set_id` the installed SDK does not know, or a published value that differs from the one sent, logs a warning, and the bot plays on the server's numbers.
 
-- **Never a silent fallback.** If the requested rule set is not in the installed simulator, it stops with an error naming the minimum version that has it. It never runs a different rule set instead.
-- **`preview`** rule sets are selectable explicitly, so a bot can be tuned during the notice period.
-- **`deprecated`** rule sets still run, with a warning naming the replacement and the retirement date.
-- **`retired`** rule sets are refused for a new simulated match, but can still replay and verify a recorded one.
-
-The simulator plays a rule set exactly as the platform does, so a bot tuned locally meets the same numbers after upload.
+The platform plays every rule set exactly as published (§1.2, §2), so a bot that reads its numbers from `state.rules` meets the same numbers in every match played under that rule set.
 
 ---
 
@@ -220,3 +214,4 @@ Every rating event records the rule-set id it was earned under, so either policy
 - [`protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md`](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md): the Big Bad Bots (`bigbadbots`) Layer 2 dialect, and where `game_config` carries the rule set (§4.1).
 - [`protocol/LAYER2-COMMON.md`](protocol/LAYER2-COMMON.md): how a Layer 2 dialect itself versions (§4).
 - [`protocol/TRANSPORT-PROTOCOL.md`](protocol/TRANSPORT-PROTOCOL.md): Layer 1, unchanged by rule sets.
+- [`DEV-MANUAL.md` §10.7](DEV-MANUAL.md#107-reading-the-rule-set-staterules): reading the rule set from a bot (`state.rules`).

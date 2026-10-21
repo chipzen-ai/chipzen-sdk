@@ -7,6 +7,11 @@ remote-play API, you want the other document:
 [`PACKAGING-WITH-AI-AGENTS.md`](PACKAGING-WITH-AI-AGENTS.md). This one is for
 starting from an empty directory.
 
+Building a **Big Bad Bots** bot instead? Point your tool at
+[`packages/python/starters/bigbadbots/AGENTS.md`](../packages/python/starters/bigbadbots/AGENTS.md),
+an AGENTS.md-style build guide for that game, and see
+[`BIGBADBOTS-QUICKSTART.md`](BIGBADBOTS-QUICKSTART.md) for the walkthrough.
+
 Every prompt here follows the same shape: point the tool at files that exist in
 this repo, tell it what to build, and end on a check the tool has to run rather
 than a claim it can make. The check is the part that matters. A coding tool will
