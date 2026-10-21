@@ -99,5 +99,7 @@ fn make_state() -> GameState {
         action_history: vec![],
         round_id: String::new(),
         request_id: String::new(),
+        // The 2-7 Triple Draw fields (chipzen-sdk#174) take their defaults.
+        ..Default::default()
     }
 }

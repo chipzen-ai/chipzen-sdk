@@ -68,7 +68,7 @@ exact same order driven by the same protocol messages.
 | Round (hand) result | `on_round_result` | `onRoundResult` |
 | Round result, simplified | `on_hand_result` *(Python only)* | — |
 | Match end | `on_match_end` | `onMatchEnd` |
-| 2-7 Triple Draw draw turn *(optional, never called by the SDK; call it from `decide`)* | `decide_draw` *(Python; Rust parity pending)* | `decideDraw` |
+| 2-7 Triple Draw draw turn *(optional, never called by the SDK; call it from `decide`)* | `decide_draw` | `decideDraw` |
 | Pineapple OFC placement turn *(optional, never called by the SDK; call it from `decide`)* | `decide_placement` *(Python; Rust parity pending)* | `decidePlacement` |
 
 Python additionally exposes the `on_hand_start` / `on_hand_result`
@@ -101,7 +101,7 @@ invariants at construction time.
 |---|---|---|
 | Python | `Action.discard(["Ah", "Kd"])` | `Action.stand_pat()` |
 | JavaScript | `Action.discard(["Ah", "Kd"])` | `Action.standPat()` |
-| Rust | Parity pending | Parity pending |
+| Rust | `Action::discard(["Ah", "Kd"])`, or `Action::discard_positions([0, 3])` | `Action::stand_pat()` |
 
 Pineapple OFC's `place` action
 ([`protocol/OFC-GAME-STATE-PROTOCOL.md`](protocol/OFC-GAME-STATE-PROTOCOL.md)
@@ -269,10 +269,10 @@ section 2). Omitting it declares nothing, which the platform reads as
 
 In Python and JavaScript a Big Bad Bots base class (`BigBadBotsBot`)
 declares `["bigbadbots"]` when you pass nothing, and an explicit list
-replaces it. The Rust SDK has no such base class yet, and it reads every
-turn as a hold'em turn: it cannot play 2-7 Triple Draw or Pineapple OFC
-tables (see the support table in DEV-MANUAL §2.8), so a Rust bot should not
-declare `draw27` or `ofc` until that parity lands.
+replaces it. The Rust SDK has no such base class yet. It plays hold'em and
+2-7 Triple Draw tables, but it cannot parse a Pineapple OFC table yet and
+ends the session there (see the support table in DEV-MANUAL §2.8), so a Rust
+bot should not declare `ofc` until that parity lands.
 
 ## See also
 

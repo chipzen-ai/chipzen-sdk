@@ -27,9 +27,38 @@ pub trait Bot: Send + 'static {
     /// `state.valid_actions`; raises must satisfy
     /// `state.min_raise <= amount <= state.max_raise`. The session
     /// loop substitutes a safe fallback if your decide panics or
-    /// returns an invalid action — but lean on the validator
+    /// returns an invalid action (`check`, else `fold`; a stand pat on a
+    /// 2-7 Triple Draw draw turn) — but lean on the validator
     /// (`chipzen-sdk validate`) to catch those during development.
+    ///
+    /// `decide` is the only method the session loop calls for a turn, at
+    /// every table. A bot that plays 2-7 Triple Draw branches here:
+    ///
+    /// ```ignore
+    /// fn decide(&mut self, state: &GameState) -> Action {
+    ///     if state.is_draw_phase {
+    ///         return self.decide_draw(state); // 2-7 Triple Draw
+    ///     }
+    ///     // ... betting decision ...
+    /// }
+    /// ```
     fn decide(&mut self, state: &GameState) -> Action;
+
+    /// 2-7 Triple Draw: return your `draw` action for a draw turn. Called
+    /// only if your [`Bot::decide`] calls it; the SDK never does on its own.
+    ///
+    /// The default is a **stand pat** ([`Action::stand_pat`]), which is also
+    /// what the server substitutes for a seat that times out in a draw
+    /// phase. It is legal in every draw phase, so the default is never
+    /// rejected; it is just rarely the best draw.
+    ///
+    /// Discard at most `state.max_discard` cards with [`Action::discard`].
+    /// The bound lives in the state, not in `state.valid_actions` (which is
+    /// exactly `["draw"]` on a draw turn).
+    /// See `docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md`.
+    fn decide_draw(&mut self, _state: &GameState) -> Action {
+        Action::stand_pat()
+    }
 
     /// Called when the server's `match_start` arrives. Use for
     /// per-match setup (read game_config, prep opponent model).

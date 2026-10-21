@@ -8,7 +8,7 @@
 
 use crate::bot::Bot;
 use crate::error::Error;
-use crate::models::{parse_game_state, Action};
+use crate::models::{parse_game_state, Action, GameState};
 use crate::retry::RetryPolicy;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
@@ -72,9 +72,10 @@ pub struct RunBotOptions {
     /// not declared the seat's game is rejected before it is seated (close
     /// `4002`). Declaring a `game_type` asserts you implement everything in
     /// that game's Layer 2 spec, so do not declare a game your `decide()`
-    /// cannot play. This release reads every turn as a hold'em turn, so do
-    /// not declare `draw27` or `ofc` until the Rust SDK supports them
-    /// (chipzen-ai/chipzen-sdk#172).
+    /// cannot play. This release plays `poker` and `draw27` (2-7 Triple
+    /// Draw: branch on `state.is_draw_phase`, see [`crate::Bot::decide_draw`]).
+    /// It cannot parse a Pineapple OFC table yet and ends the session there,
+    /// so do not declare `ofc` (chipzen-ai/chipzen-sdk#176).
     pub supported_games: Option<Vec<String>>,
 }
 
@@ -312,6 +313,26 @@ where
         )));
     }
 
+    // LAYER2-COMMON section 2: branch on `state_shape` before parsing any
+    // state. An NLHE hello carries no `game` descriptor (shape `None`), so
+    // every poker table keeps the path it has always taken. A shape this
+    // release cannot parse ends the session (as in the Python and JavaScript
+    // SDKs) rather than being read as NLHE.
+    match state_shape_of(&hello) {
+        Err(detail) => {
+            eprintln!("chipzen-sdk: server hello has a malformed game descriptor: {detail}");
+            return Ok(None);
+        }
+        Ok(shape) if !POKER_STATE_SHAPES.contains(&shape) => {
+            eprintln!(
+                "chipzen-sdk: cannot parse state_shape {shape:?}: this SDK release does not \
+                 know it, so it cannot play this table"
+            );
+            return Ok(None);
+        }
+        Ok(_) => {}
+    }
+
     let client_hello = ClientHello {
         client_name: &ctx.client_name,
         client_version: &ctx.client_version,
@@ -324,6 +345,12 @@ where
 
     // --- Message loop ---------------------------------------------------------
     let mut last_seq: i64 = 0;
+    // Seat context, tracked as the Python loop does (the Rust analog of
+    // chipzen-ai/chipzen-sdk#194): a hold'em or 27TD turn state carries
+    // neither `your_seat` nor `dealer_seat`, so the seat is taken from
+    // `match_start` (or `reconnected`) and the button from each
+    // `round_start`. A turn state that does carry them wins.
+    let mut seats = Seats::default();
     while let Some(raw) = reader.next().await? {
         let msg: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
@@ -347,9 +374,19 @@ where
                 writer.send(pong.to_string()).await?;
             }
             "match_start" => {
+                if let Some(seat) = self_seat(&msg) {
+                    seats.your_seat = seat;
+                }
                 call_hook("on_match_start", ctx.safe_mode, || bot.on_match_start(&msg))?
             }
             "round_start" => {
+                if let Some(dealer) = msg
+                    .get("state")
+                    .and_then(|s| s.get("dealer_seat"))
+                    .and_then(Value::as_i64)
+                {
+                    seats.dealer_seat = dealer;
+                }
                 call_hook("on_round_start", ctx.safe_mode, || bot.on_round_start(&msg))?
             }
             "phase_change" => call_hook("on_phase_change", ctx.safe_mode, || {
@@ -367,7 +404,7 @@ where
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let state = parse_game_state(&msg);
+                let state = parse_turn(&msg, &seats);
                 let (action, latency_ms) = decide_timed(bot, &state, &msg, ctx.safe_mode)?;
                 send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
                 call_hook("on_decision_latency", ctx.safe_mode, || {
@@ -400,18 +437,13 @@ where
                 // `match_start`, so without this the replayed pending turn
                 // below would be decided with your_seat=0
                 // (chipzen-ai/chipzen-sdk#121, the Rust analog of #119).
-                let relearned_seat = msg
-                    .get("seats")
-                    .and_then(|v| v.as_array())
-                    .and_then(|seats| {
-                        seats
-                            .iter()
-                            .find(|s| s.get("is_self").and_then(Value::as_bool).unwrap_or(false))
-                    })
-                    .map(|s| s.get("seat").and_then(Value::as_i64).unwrap_or(0));
+                // The button is kept from the last `round_start` seen.
+                if let Some(seat) = self_seat(&msg) {
+                    seats.your_seat = seat;
+                }
                 call_hook("on_reconnected", ctx.safe_mode, || bot.on_reconnected(&msg))?;
                 // Replay the pending request as if it were a fresh
-                // turn_request so the bot acts on it, but with the seat
+                // turn_request so the bot acts on it, with the seat
                 // re-learned from the reconnected frame (the pending state
                 // itself does not carry `your_seat`).
                 if let Some(pending) = msg.get("pending_request") {
@@ -421,10 +453,7 @@ where
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let mut state = parse_game_state(pending);
-                        if let Some(seat) = relearned_seat {
-                            state.your_seat = seat;
-                        }
+                        let state = parse_turn(pending, &seats);
                         let (action, latency_ms) =
                             decide_timed(bot, &state, pending, ctx.safe_mode)?;
                         send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
@@ -451,6 +480,67 @@ where
 
     // Stream closed without match_end. Caller decides whether to retry.
     Ok(None)
+}
+
+/// The `state_shape`s this release parses with [`parse_game_state`]: `None`
+/// is a server `hello` with no `game` descriptor, which means NLHE, and
+/// `"27tripledraw"` is 2-7 Triple Draw. Pineapple OFC (`"pineapple"`) is not
+/// here yet (chipzen-ai/chipzen-sdk#176), so an OFC table is refused rather
+/// than read as hold'em.
+const POKER_STATE_SHAPES: &[Option<&str>] = &[None, Some("27tripledraw")];
+
+/// The `state_shape` a server `hello` advertises: `Ok(None)` when it has no
+/// `game` descriptor (poker), `Err` when the descriptor is present but does
+/// not carry a string `state_shape`.
+fn state_shape_of(hello: &Value) -> Result<Option<&str>, String> {
+    match hello.get("game") {
+        None | Some(Value::Null) => Ok(None),
+        Some(game) => match game.get("state_shape") {
+            Some(Value::String(shape)) => Ok(Some(shape.as_str())),
+            other => Err(format!(
+                "game.state_shape is {}, not a string",
+                other.map_or_else(|| "missing".to_string(), Value::to_string)
+            )),
+        },
+    }
+}
+
+/// Seat context the session loop carries into each turn.
+#[derive(Debug, Default)]
+struct Seats {
+    /// The bot's seat, from `match_start` / `reconnected`.
+    your_seat: i64,
+    /// The button, from the latest `round_start`.
+    dealer_seat: i64,
+}
+
+/// `seats[].seat` of the entry flagged `is_self` in a `match_start` or
+/// `reconnected` frame (TRANSPORT-PROTOCOL §8.15: the same schema).
+fn self_seat(msg: &Value) -> Option<i64> {
+    msg.get("seats")?
+        .as_array()?
+        .iter()
+        .find(|s| s.get("is_self").and_then(Value::as_bool).unwrap_or(false))?
+        .get("seat")?
+        .as_i64()
+}
+
+/// Parse a `turn_request` with the session's seat context filled in where
+/// the turn state does not carry it (a hold'em or 27TD state never does).
+fn parse_turn(msg: &Value, seats: &Seats) -> GameState {
+    let mut state = parse_game_state(msg);
+    let raw_int = |key: &str| {
+        msg.get("state")
+            .and_then(|s| s.get(key))
+            .and_then(Value::as_i64)
+    };
+    if raw_int("your_seat").is_none() {
+        state.your_seat = seats.your_seat;
+    }
+    if raw_int("dealer_seat").is_none() {
+        state.dealer_seat = seats.dealer_seat;
+    }
+    state
 }
 
 /// The Layer 1 client `hello` frame.
@@ -510,7 +600,7 @@ async fn send_turn_action<W: MessageWriter>(
 /// propagate: there is nothing legal left to send.
 fn decide_timed<B: Bot>(
     bot: &mut B,
-    state: &crate::models::GameState,
+    state: &GameState,
     msg: &Value,
     safe_mode: bool,
 ) -> Result<(FallbackAction, f64), Error> {
@@ -596,15 +686,15 @@ fn action_is_legal(action: &Action, valid: &[String]) -> bool {
 ///
 /// `Typed` carries one of the [`Action`]s this SDK models. `Raw` is the
 /// escape hatch for an action string it does *not* model — a variant
-/// table's `draw` / `place`, or a `raise` whose amount the fallback path
-/// cannot know. A `Raw` action is echoed verbatim on the wire with empty
+/// table's `place`, or a `raise` whose amount the fallback path cannot
+/// know. A `Raw` action is echoed verbatim on the wire with empty
 /// `params`, exactly mirroring the Python SDK's
 /// `Action(action=valid_actions[0])`.
 ///
-/// Kept as a separate fallback-only type on purpose: widening
-/// [`Action`] / [`crate::ActionKind`] with variant action kinds would be
-/// a semver-breaking change to the supported API, and bots still only
-/// ever *return* an [`Action`].
+/// Kept as a separate fallback-only type: an action kind [`Action`] does
+/// not model yet still needs an answer, and bots only ever *return* an
+/// [`Action`]. (2-7 Triple Draw's `draw` is modelled, as [`Action::Draw`],
+/// so a draw turn's fallback is a typed stand pat.)
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FallbackAction {
@@ -629,7 +719,9 @@ impl FallbackAction {
 }
 
 /// Pick a safe action from the legal set: prefer `check`, else `fold`,
-/// else the **first valid action** the server offered. Public-but-hidden
+/// else a **stand pat** on a 2-7 Triple Draw draw turn (`["draw"]`, where
+/// the stand pat is also the server's own timeout substitute), else the
+/// **first valid action** the server offered. Public-but-hidden
 /// so the conformance harness can use the same logic when it doesn't have
 /// a real bot to drive.
 ///
@@ -654,6 +746,12 @@ pub fn _safe_fallback_action(valid_actions: &[String]) -> Result<FallbackAction,
     }
     if valid_actions.iter().any(|a| a == "fold") {
         return Ok(FallbackAction::Typed(Action::Fold));
+    }
+    // A 2-7 Triple Draw draw turn offers exactly `["draw"]`: no check, no
+    // fold. A stand pat is legal in every draw phase and is the protocol's
+    // timeout default (DRAW27-GAME-STATE-PROTOCOL.md section 5.5).
+    if valid_actions.iter().any(|a| a == "draw") {
+        return Ok(FallbackAction::Typed(Action::stand_pat()));
     }
 
     let Some(first) = valid_actions.first() else {
