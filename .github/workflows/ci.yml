@@ -266,6 +266,31 @@ jobs:
             -e PYTHONPATH=/bot \
             --entrypoint python chipzen-starter:ci /tmp/check.py
 
+  bigbadbots-starter-images:
+    # The Big Bad Bots starters (issue #142) ship the same IP-protected
+    # packaging as the poker starter above. Build each one as a user would,
+    # then drive its COMPILED bot through the protocol doc's four published
+    # turn_requests inside the runtime image: that proves the .so loads, that
+    # Cython compiled the strategy without changing what it does, and that the
+    # SDK the image installs plays Big Bad Bots.
+    name: Big Bad Bots starter image (${{ matrix.starter }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        starter: [rusher, zoner, turtle]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the starter image
+        run: docker build -t "bbb-${{ matrix.starter }}:ci" "packages/python/starters/bigbadbots/${{ matrix.starter }}"
+      - name: The compiled bot answers every published call
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts/check_bigbadbots_starter_image.py:/tmp/check.py:ro" \
+            -v "$PWD/docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md:/tmp/doc.md:ro" \
+            -e PYTHONPATH=/bot \
+            --entrypoint python "bbb-${{ matrix.starter }}:ci" /tmp/check.py /tmp/doc.md
+
   reference-bot:
     name: Reference bot (lint)
     runs-on: ubuntu-latest
