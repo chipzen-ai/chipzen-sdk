@@ -121,6 +121,12 @@ The Big Bad Bots (`bigbadbots`) sections:
 
 The table for each released rule set is generated from the rule set itself and published in its changelog entry (§7), so the published numbers cannot drift from the played ones.
 
+### 4.1 In the Python SDK
+
+A `chipzen.BigBadBotsBot` reads the rule set from `match_start` and hands it to every call, in every phase, as `state.rules` (`chipzen.bigbadbots_rules.RuleSet`): the id, the full table read-only, and typed `gearup`, `arena`, `rounds`, `forfeit` and `deadline` sections. A bot that reads its numbers from there runs unchanged on a new rule set.
+
+The SDK also bundles the published numbers of every released rule set, so a bot can look one up offline with `chipzen.bigbadbots_rules.published_rule_set("bigbadbots-1.2")`. They are a reference only: the bot always plays the numbers `match_start` sent. A `rule_set_id` the installed SDK does not know, or a published value that differs from the one sent, logs a warning, and the bot plays on.
+
 ---
 
 ## 5. How a match pins a rule set

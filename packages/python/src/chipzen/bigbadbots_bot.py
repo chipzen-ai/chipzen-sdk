@@ -13,12 +13,18 @@ each ``turn_request`` into the model for its call and hands it to
 :class:`BigBadBotsBot` declares ``supported_games=["bigbadbots"]`` in its
 ``hello`` unless the caller passes its own list.
 
+The rule set a match is played under reaches every call as ``state.rules``
+(:class:`chipzen.bigbadbots_rules.RuleSet`); read every number from there.
+Rule sets are versioned (``bigbadbots-1.1``, ``bigbadbots-1.2``, ...): see
+https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/RULESETS.md
+
 See ``docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md``. Section numbers below
 refer to it.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from abc import abstractmethod
 from collections.abc import Mapping
@@ -33,7 +39,9 @@ from chipzen.bigbadbots import (
     BodyShopState,
     FightState,
     FittingState,
+    StateParseError,
 )
+from chipzen.bigbadbots_rules import RuleSet, rule_set_warnings
 from chipzen.bot import ChipzenBot
 from chipzen.models import Action, GameState
 
@@ -59,6 +67,14 @@ class BigBadBotsBot(ChipzenBot):
     Only :meth:`act` is required. Every step is simultaneous: both seats are
     asked at the same moment, and nothing about the opponent's answer reaches
     you before you answer.
+
+    **Rule sets.** Every state carries ``state.rules``, the rule set this
+    match is played under (:class:`~chipzen.bigbadbots_rules.RuleSet`): its
+    id and every number it plays by, as ``match_start`` sent them. Read the
+    numbers from there and the bot runs unchanged when a new rule set
+    changes them. A ``rule_set_id`` this SDK release does not know is logged
+    as a warning and the bot plays on the server's numbers. See
+    https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/RULESETS.md
 
     **Timing.** A fight tick's ``state.timeout_ms`` is the per-tick deadline
     plus what is left of your time bank (section 3.4). The SDK waits for
@@ -91,6 +107,10 @@ class BigBadBotsBot(ChipzenBot):
     #: then. If you override either hook, call ``super()`` to keep it.
     game_config: BigBadBotsGameConfig | None = None
 
+    #: :attr:`game_config`'s rule set, typed and read-only; the same object
+    #: every call gets as ``state.rules``. ``None`` until ``match_start``.
+    rules: RuleSet | None = None
+
     # ------------------------------------------------------------------
     # Routing
     # ------------------------------------------------------------------
@@ -99,6 +119,7 @@ class BigBadBotsBot(ChipzenBot):
         """Route one ``turn_request`` to the method for its phase.
 
         You do not normally override this; override the per-phase methods.
+        It fills in ``state.rules`` from :attr:`rules` before routing.
 
         Raises:
             TypeError: ``state`` is not a Big Bad Bots state (the bot was
@@ -107,6 +128,8 @@ class BigBadBotsBot(ChipzenBot):
         """
         if isinstance(state, GameState):
             raise TypeError("BigBadBotsBot received a poker GameState; it only plays bigbadbots")
+        if self.rules is not None and state.rules is None:
+            state = dataclasses.replace(state, rules=self.rules)
         if isinstance(state, FightState):
             return self.act(state)
         if isinstance(state, AuctionState):
@@ -161,7 +184,7 @@ class BigBadBotsBot(ChipzenBot):
         """Fight: this tick's action, built with :meth:`chipzen.Action.act`.
 
         Called once per tick, several times a second, so keep it fast: stay
-        inside ``game_config.rule_set["deadline"]["deadline_ms"]`` and the time
+        inside ``state.rules.deadline.deadline_ms`` and the time
         bank is never touched. ``state.valid_actions`` is always all ten fight
         actions; whether one can be performed now (stamina, a busy fighter, a
         used special) is decided when the tick resolves.
@@ -172,19 +195,42 @@ class BigBadBotsBot(ChipzenBot):
     # ------------------------------------------------------------------
 
     def on_match_start(self, match_info: dict) -> None:
-        """Parse ``match_start.game_config`` into :attr:`game_config`.
+        """Parse ``match_start.game_config`` into :attr:`game_config` and :attr:`rules`.
+
+        Logs a warning when the rule set is not one this SDK release knows,
+        or differs from its published numbers
+        (:func:`chipzen.bigbadbots_rules.rule_set_warnings`); the bot plays
+        on the values ``match_start`` sent either way.
 
         If you override this, call ``super().on_match_start(match_info)``.
         """
-        self.game_config = BigBadBotsGameConfig.from_match_start(match_info)
+        self._learn_game_config(match_info)
 
     def on_reconnected(self, message: dict) -> None:
-        """Re-learn :attr:`game_config` from a ``reconnected`` message.
+        """Re-learn :attr:`game_config` and :attr:`rules` from a ``reconnected`` message.
 
         If you override this, call ``super().on_reconnected(message)``.
         """
         if "game_config" in message:
-            self.game_config = BigBadBotsGameConfig.from_match_start(message)
+            self._learn_game_config(message)
+
+    def _learn_game_config(self, message: Mapping[str, Any]) -> None:
+        self.game_config = BigBadBotsGameConfig.from_match_start(message)
+        try:
+            self.rules = RuleSet.from_game_config(self.game_config)
+        except StateParseError as exc:
+            # The server's table lacks a section the typed view needs. Keep
+            # playing: game_config.rule_set still holds everything it sent.
+            self.rules = None
+            logger.warning(
+                "rule set %r could not be read into state.rules (%s); it is None for "
+                "this match, and game_config.rule_set holds the raw table",
+                self.game_config.rule_set_id,
+                exc,
+            )
+            return
+        for warning in rule_set_warnings(self.rules):
+            logger.warning(warning)
 
 
 # ---------------------------------------------------------------------------
