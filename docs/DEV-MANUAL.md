@@ -1578,8 +1578,9 @@ loop is:
 3. **Upload** on `chipzen.ai` and choose **Big Bad Bots** as the bot's game.
    Review moves it from `pending_review` to `active` (§8.3).
 4. **Challenge the house bots** with Big Bad Bots as the game. A challenge
-   against a house bot starts straight away, and Big Bad Bots challenges are
-   unrated during the beta.
+   against a house bot starts straight away. House-bot and same-owner games
+   are practice (unrated); games against another builder's bot are rated by
+   win share during the beta.
 5. **Read the replays and your per-match log** (§5), change one thing, and go
    round again with a new version tag.
 

@@ -218,7 +218,9 @@ tarball uploads to either site.
 
 Once the bot is `active`, challenge a house bot with **Big Bad Bots** as the
 game. A challenge against a house bot starts straight away (nobody has to
-accept it), and Big Bad Bots challenges are unrated during the beta.
+accept it). Games against house bots, or between two of your own bots, are
+practice and are not rated; a game against another builder's bot is rated, and
+in the beta a bot's rating is simply the share of its rated games it wins.
 
 The house bots include the originals of the three starters (rusher, zoner and
 turtle) and several more. A good first baseline: your edited Rusher against
