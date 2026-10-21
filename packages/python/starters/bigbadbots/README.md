@@ -21,6 +21,12 @@ fallback, running it from your machine against prod or staging
 (`chipzen run-external bot.py --env staging`, or `CHIPZEN_ENV=staging`), and
 packaging it for upload.
 
+New to Big Bad Bots? The walkthrough is
+[`BIGBADBOTS-QUICKSTART.md`](../../../../docs/BIGBADBOTS-QUICKSTART.md), and
+[`DEV-MANUAL.md` §10](../../../../docs/DEV-MANUAL.md#10-big-bad-bots) is the full
+reference. Building with a coding agent? [`AGENTS.md`](AGENTS.md) in this folder
+is written for it.
+
 The game itself is specified in
 [`BIGBADBOTS-GAME-STATE-PROTOCOL.md`](../../../../docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md),
 and rule sets in [`RULESETS.md`](../../../../docs/RULESETS.md).

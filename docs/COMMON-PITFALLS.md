@@ -68,6 +68,18 @@
 19. [Persisting per-match state across matches by accident](#19-persisting-per-match-state-across-matches-by-accident)
 20. [Forgetting `python -u` (unbuffered stdout) — log lines silently dropped](#20-forgetting-python--u-unbuffered-stdout--log-lines-silently-dropped)
 
+**Big Bad Bots** ([section intro](#big-bad-bots-pitfalls)):
+
+21. [Sending `block` once and expecting it to hold](#21-sending-block-once-and-expecting-it-to-hold)
+22. [A slow `act()` drains the time bank, then every tick plays the default](#22-a-slow-act-drains-the-time-bank-then-every-tick-plays-the-default)
+23. [Overriding `on_match_start()` without calling `super()`](#23-overriding-on_match_start-without-calling-super)
+24. [Hard-coding numbers that live in the rule set](#24-hard-coding-numbers-that-live-in-the-rule-set)
+25. [Waiting to see the strike before blocking](#25-waiting-to-see-the-strike-before-blocking)
+26. [Reading the opponent's stamina or last move during a wind-up as current](#26-reading-the-opponents-stamina-or-last-move-during-a-wind-up-as-current)
+27. [Assuming an action you sent was performed](#27-assuming-an-action-you-sent-was-performed)
+28. [Wasting credits in the auction](#28-wasting-credits-in-the-auction)
+29. [Fitting a part into the wrong slot](#29-fitting-a-part-into-the-wrong-slot)
+
 ---
 
 ## 1. `decide()` exceeds the 5000 ms budget — auto-fold + ELO loss
@@ -1353,6 +1365,164 @@ stderr is unbuffered by default.
 - `docs/DEV-MANUAL.md` §7.1 (Required contract — item 1: ENTRYPOINT
   uses `python -u`)
 - `sdk/QUICKSTART.md` step 10 (Inspect logs)
+
+---
+
+## Big Bad Bots pitfalls
+
+Entries 21 to 29 are specific to Big Bad Bots (`bigbadbots`), the
+robot-fighting game. The full reference is
+[`DEV-MANUAL.md` §10](DEV-MANUAL.md#10-big-bad-bots), and the walkthrough is
+[`BIGBADBOTS-QUICKSTART.md`](BIGBADBOTS-QUICKSTART.md). There is no local
+simulator, so most of these show up in replays on the platform; `chipzen
+validate` catches the ones that are about answer shape and timing.
+
+### 21. Sending `block` once and expecting it to hold
+
+**Symptom.** In the replay your robot blocks one strike, then eats the next
+one from the same combo. Your log shows `block` on the tick the opponent
+started its wind-up and `idle` after it.
+
+**Why it happens.** Every tick is a separate `turn_request` and needs its own
+answer. There is no "hold" action: `block` protects you on the tick you send
+it, and a tick you answer with `idle` (or an attack) has no guard.
+
+**Fix.** Re-decide every tick and return `block` on every tick you want to be
+blocking. Keep any "I am guarding until X" plan on `self` and check it in
+`act()`. Do not lean on the server's default (it repeats a `block` on a
+missed tick): a tick only counts as missed after `timeout_ms` runs out, so it
+costs your whole remaining time bank and counts toward the forfeit. See
+[`DEV-MANUAL.md` §10.4](DEV-MANUAL.md#104-one-answer-per-tick-send-block-again-every-tick).
+
+### 22. A slow `act()` drains the time bank, then every tick plays the default
+
+**Symptom.** The first few seconds of each round look right, then the robot
+stands still or keeps doing what it did last. The per-match log shows
+`Big Bad Bots request ...: no answer within ...ms; sending the protocol
+default`, or `the previous decision is still running`.
+
+**Why it happens.** The per-tick deadline is 100 ms, plus a 3 s bank per
+round (both provisional; `state.rules.deadline`). Every tick slower than the
+deadline is paid from the bank. The SDK waits for `act()` until 20 ms before
+`timeout_ms` runs out, then sends the default; it cannot interrupt your
+method, so while a slow call is still running, later ticks get the default
+too. Once the bank is empty, every tick slower than 100 ms is a default.
+
+**Detect.** `chipzen validate` warns on `bigbadbots_timing` when `act()` goes
+over the deadline on the fixtures. Override `on_decision_latency(latency_ms)`
+to see live numbers.
+
+**Fix.** Move setup into `on_match_start()` (call `super()` first): build
+lookup tables from `state.rules` once. Keep `act()` to arithmetic over the
+state, with no I/O, no model loading and no per-tick logging. See
+[`DEV-MANUAL.md` §10.3](DEV-MANUAL.md#103-the-per-tick-budget).
+
+### 23. Overriding `on_match_start()` without calling `super()`
+
+**Symptom.** Every call fails with `AttributeError: 'NoneType' object has no
+attribute ...` when it touches `state.rules`, and the SDK sends the default
+(the first body, bids of 0, an empty fitting, `idle`) for the whole match.
+
+**Why it happens.** `BigBadBotsBot.on_match_start()` is what reads
+`match_start.game_config` into `self.rules`, and `state.rules` is filled from
+there. Override it without calling the parent and `state.rules` stays
+`None`. The same goes for `on_reconnected()`.
+
+**Fix.** Call `super().on_match_start(match_info)` (and
+`super().on_reconnected(message)`) first, then do your own setup.
+
+### 24. Hard-coding numbers that live in the rule set
+
+**Symptom.** The bot played well under one rule set and badly, or not at all,
+under the next: it walks into range that is no longer range, bids as if the
+budget were different, or plans around a deadline that changed.
+
+**Why it happens.** Every number the game runs on (the budget, the bodies,
+every move's startup, range and stamina cost, the round length, the deadline)
+is in the rule set, and a balance patch is a new rule set with new numbers.
+`bigbadbots-1.0` and `bigbadbots-1.2` already differ in damage scaling, how a
+time-out round is decided and when a wind-up is revealed.
+
+**Fix.** Read every number from `state.rules`: the typed `gearup`, `arena`,
+`rounds`, `forfeit` and `deadline` sections, and `state.rules["moves"]`,
+`["bodies"]`, `["parts"]` and the rest for the full table. Read optional keys
+with `.get()` and a default, and branch on behaviour keys
+(`rounds.timeout_tiebreak`, `combat.intent_reveal`) rather than on the
+rule-set id. See [`DEV-MANUAL.md` §10.7](DEV-MANUAL.md#107-reading-the-rule-set-staterules).
+
+### 25. Waiting to see the strike before blocking
+
+**Symptom.** Your "block when the opponent attacks" logic never blocks
+anything. In the replay the block always comes one tick late.
+
+**Why it happens.** While the opponent winds up, you see only
+`action == "attack"` in `phase == "startup"`, never which move. Under the
+launch rule set (`bigbadbots-1.2`, `combat.intent_reveal` `"after_hit"`) the
+move is revealed only on the tick after it first lands, so a bot that waits
+for `opp.action == "punch_high"` before blocking is always too late.
+
+**Fix.** Decide on the wind-up itself: `opp.phase == "startup"` within range
+is the moment to block, step out, or strike first with a faster attack. It is
+a read, and a throw beats a block, so mix your answers. See
+[`DEV-MANUAL.md` §10.5](DEV-MANUAL.md#105-the-masked-opponent).
+
+### 26. Reading the opponent's stamina or last move during a wind-up as current
+
+**Symptom.** The bot decides the opponent "cannot afford" an attack, or "just
+used" its special, and is wrong.
+
+**Why it happens.** During a wind-up, `opp.stamina`, `opp.special_used`,
+`opp.last_attack`, `opp.repeats` and `opp.buffs` keep their values from before
+the move started, so they do not give the move away. They catch up once the
+move is revealed (or interrupted).
+
+**Fix.** Treat those fields as "as of the start of this wind-up" while
+`opp.phase == "startup"`, and update your model of the opponent once the move
+shows.
+
+### 27. Assuming an action you sent was performed
+
+**Symptom.** Your bot's own bookkeeping says it attacked, but the replay shows
+it standing still, or still finishing its previous move.
+
+**Why it happens.** Two silent cases. A busy fighter (`state.me.phase` is not
+`None`: startup, active, recovery, hitstun or dazed) ignores whatever you
+send until the current action ends; nothing is queued. And an action it
+cannot perform (not enough stamina, special already used) plays as `idle`.
+Neither is rejected: `valid_actions` always lists all ten fight actions.
+
+**Fix.** Track your state from the next `turn_request` (`state.me.action`,
+`state.me.phase`, `state.me.special_used`), not from what you sent. Check
+stamina against the move's cost in `state.rules["moves"]` before choosing it.
+
+### 28. Wasting credits in the auction
+
+**Symptom.** The bot ends gear-up with credits left over and empty slots, or
+pays far more for a part than the opponent could ever have bid.
+
+**Why it happens.** One budget pays for the body and every part, and credits
+left when the auction ends are lost. The auction is sealed-bid and the winner
+pays its own bid, so a bid above `opp.credits + 1` is money thrown away: the
+opponent cannot beat it.
+
+**Fix.** Cap every bid at `min(state.me.credits, state.opp.credits + 1)`, pace
+by `credits / lots_left`, value a lot by what it adds to your best fitting,
+and spend everything on the last lot you can use. The starters all do this.
+See [`DEV-MANUAL.md` §10.6](DEV-MANUAL.md#106-gear-up-and-auction-strategy-basics).
+
+### 29. Fitting a part into the wrong slot
+
+**Symptom.** A part you won is not doing anything in the fight. `chipzen
+validate` warns `corrected` on `bigbadbots_fit`.
+
+**Why it happens.** A fitting entry naming a part you do not own, a part
+whose `slot` type does not match the slot, or a slot index that does not
+exist is dropped (and logged as a violation); the rest of the fitting is
+applied. Slot indexes are positions in `state.slots`, not slot type names.
+
+**Fix.** Build the fitting from `state.slots` and `state.owned`: for each
+slot index, pick an owned part whose `slot` equals `state.slots[index]`, one
+part per slot.
 
 ---
 

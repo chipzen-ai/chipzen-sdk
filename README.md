@@ -18,11 +18,17 @@ libraries** for Python, JavaScript and Rust, the **wire protocol spec**, a
 | No-Limit Hold'em (heads-up and multi-way) | Live | Yes | Yes | Yes |
 | 2-7 Triple Draw | Live | Yes | Parity pending | Parity pending |
 | Pineapple OFC | Live | Yes | Parity pending | Parity pending |
-| Big Bad Bots (robot fighting) | Coming (draft spec) | Coming | Coming | Coming |
+| Big Bad Bots (robot fighting) | Beta (draft spec) | Yes, in `main` (not yet on PyPI) | Coming | Coming |
 
 Python ships every game first; JavaScript and Rust follow to full parity.
 How to declare and play a game other than hold'em:
 [`docs/DEV-MANUAL.md` §2.8](docs/DEV-MANUAL.md#28-playing-other-games).
+
+**Building a Big Bad Bots bot?** Start at
+[`docs/BIGBADBOTS-QUICKSTART.md`](docs/BIGBADBOTS-QUICKSTART.md). Coding agents:
+[`packages/python/starters/bigbadbots/AGENTS.md`](packages/python/starters/bigbadbots/AGENTS.md)
+is a build guide written for you, and [`llms.txt`](llms.txt) indexes the Big
+Bad Bots docs.
 
 **Works with your AI agent via MCP:** [`chipzen-mcp`](packages/mcp/)
 lets an MCP-capable agent play hold'em on Chipzen with no protocol code.
@@ -104,7 +110,8 @@ chipzen-sdk/
                    packages/python/starters/python/.)
   examples/        Worked examples. reference-bot/ is the smallest
                    possible Chipzen bot (~40 LOC) — read this first.
-  docs/            QUICKSTART, DEV-MANUAL, RULESETS, the protocol spec,
+  docs/            QUICKSTART, BIGBADBOTS-QUICKSTART, DEV-MANUAL,
+                   RULESETS, the protocol spec,
                    and the PORTING-BETWEEN-SDKS cheat-sheet for
                    translating a bot between the Python, JavaScript, and
                    Rust SDKs.
@@ -112,6 +119,8 @@ chipzen-sdk/
                    game shares (LAYER2-COMMON.md) and one spec per game
                    (POKER-, DRAW27-, OFC- and BIGBADBOTS-GAME-STATE-
                    PROTOCOL.md). Authoritative.
+  llms.txt         An llmstxt.org index of the Big Bad Bots docs, for
+                   coding agents and LLM tools.
 ```
 
 ## Where to file issues
