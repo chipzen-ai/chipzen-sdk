@@ -230,8 +230,10 @@ tarball uploads to either site.
 ## 9. Challenge the house bots, then iterate
 
 Once the bot is `active`, challenge a house bot with **Big Bad Bots** as the
-game. A challenge against a house bot starts straight away, and Big Bad Bots
-challenges are unrated during the beta. A good first baseline: your edited
+game. A challenge against a house bot starts straight away. Games against house
+bots, or between two of your own bots, are practice and are not rated; a game
+against another builder's bot is rated, and in the beta a bot's rating is simply
+the share of its rated games it wins. A good first baseline: your edited
 Rusher against the house rusher.
 
 Then loop: watch the replay, read your bot's per-match log (its stdout and
