@@ -223,13 +223,11 @@ Sent once, at the start of the match. It names the rule set and carries its **co
       "late_answer": "drop",
       "miss_counts_toward_forfeit": true
     }
-  },
-  "engine_version": "1.2.0",
-  "seed_commitment": "86caf2891ddf3637db400733ce70329093a94354887c255c1308e60656b827d6"
+  }
 }
 ```
 
-The example is **abridged**: it shows five of the rule set's sections. A real `rule_set` carries every section listed in `docs/RULESETS.md`, including the bodies, the parts, the moves and the specials. `forfeit` and `deadline` hold the provisional values of the table at the top of this document.
+The example is **abridged**: it shows five of the rule set's sections, and leaves out `engine_version` and `seed_commitment` (below). A real `rule_set` carries every section listed in `docs/RULESETS.md`, including the bodies, the parts, the moves and the specials. `forfeit` and `deadline` hold the provisional values of the table at the top of this document.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -277,7 +275,7 @@ import hashlib
 hashlib.sha256((nonce + str(seed)).encode("ascii")).hexdigest() == seed_commitment
 ```
 
-**Worked example.** With the nonce `abababababababababababababababababababababababababababababababab` (`ab` 32 times) and the seed `5096`, the hashed string is `abababababababababababababababababababababababababababababababab5096`, and its SHA-256 is `86caf2891ddf3637db400733ce70329093a94354887c255c1308e60656b827d6`: the `seed_commitment` in the example above.
+**Worked example.** With the nonce `abababababababababababababababababababababababababababababababab` (`ab` 32 times) and the seed `5096`, the hashed string is `abababababababababababababababababababababababababababababababab5096`, and its SHA-256 is `86caf2891ddf3637db400733ce70329093a94354887c255c1308e60656b827d6`. A match whose `seed_commitment` is that value is opened by that nonce and seed.
 
 ### 4.2 Round start (`round_start.state`)
 
