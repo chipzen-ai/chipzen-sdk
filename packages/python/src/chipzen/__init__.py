@@ -22,6 +22,7 @@ try:
 except PackageNotFoundError:  # pragma: no cover - running from an uninstalled source tree
     __version__ = "0.0.0+unknown"
 
+from chipzen.bigbadbots_bot import BigBadBotsBot
 from chipzen.bot import ChipzenBot
 from chipzen.client import BotDecisionError, run_bot
 from chipzen.config import ChipzenConfig, ChipzenConfigError, load_chipzen_config
@@ -56,6 +57,8 @@ __all__ = [
     "Player",
     "RoundStart",
     "TurnResult",
+    # Big Bad Bots bot authoring (state models: chipzen.bigbadbots)
+    "BigBadBotsBot",
     # Parsing by the table's state_shape (Big Bad Bots models: chipzen.bigbadbots)
     "parse_turn_request",
     "state_shape_of",

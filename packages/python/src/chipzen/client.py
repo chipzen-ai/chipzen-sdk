@@ -4,11 +4,19 @@ Implements the Chipzen two-layer protocol:
 
 - Layer 1 (Transport): ``docs/protocol/TRANSPORT-PROTOCOL.md``
 - Layer 2 (Poker):     ``docs/protocol/POKER-GAME-STATE-PROTOCOL.md``
+- Layer 2 (Big Bad Bots): ``docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md``
 
 Handles the connection lifecycle: ``authenticate``, ``hello`` handshake,
 ``match_start``, per-round ``round_start`` / ``turn_request`` /
 ``turn_result`` / ``phase_change`` / ``round_result`` dispatch, heartbeat
 ``ping``/``pong``, and safe handling of ``action_rejected`` retries.
+
+The server ``hello``'s ``game.state_shape`` picks the parser (LAYER2-COMMON
+section 2). Absent, ``27tripledraw`` and ``pineapple`` take the poker path,
+unchanged. ``bigbadbots`` parses each ``turn_request`` into its Big Bad Bots
+model, bounds each decision by the request's ``timeout_ms`` and answers with
+the protocol's default when the bot raises or runs out of time. Any other
+shape ends the session before the client ``hello`` is sent.
 """
 
 from __future__ import annotations
@@ -20,8 +28,17 @@ import time
 from typing import Any
 
 from chipzen import __version__ as _VERSION  # noqa: N812
+from chipzen.bigbadbots import STATE_SHAPE as BIGBADBOTS_STATE_SHAPE
+from chipzen.bigbadbots import StateParseError, parse_bigbadbots_turn_request
+from chipzen.bigbadbots_bot import BigBadBotsBot, fallback_action, is_answer_shaped
 from chipzen.bot import ChipzenBot
-from chipzen.models import Action, GameState
+from chipzen.models import (
+    POKER_STATE_SHAPES,
+    Action,
+    GameState,
+    UnsupportedStateShapeError,
+    state_shape_of,
+)
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
 
 logger = logging.getLogger("chipzen")
@@ -29,6 +46,11 @@ logger = logging.getLogger("chipzen")
 # Protocol versions this client implements. Sent in the ``authenticate`` /
 # client ``hello`` so the server can negotiate a mutually supported version.
 SUPPORTED_PROTOCOL_VERSIONS = ["1.0"]
+
+#: How long before a Big Bad Bots request's ``timeout_ms`` runs out the SDK
+#: stops waiting for the bot and sends the default instead, so the answer
+#: still reaches the server in time.
+BIGBADBOTS_SEND_MARGIN_MS = 20
 
 
 def _extract_match_id(url: str) -> str:
@@ -124,7 +146,8 @@ async def run_bot(
             it is seated (``EXTAPI_CLIENT_GAME_UNSUPPORTED``, close ``4002``).
             Declaring a ``game_type`` asserts you implement everything in that
             game's Layer 2 document — do not declare a game your ``decide()``
-            cannot produce actions for.
+            cannot produce actions for. A :class:`chipzen.BigBadBotsBot`
+            declares ``["bigbadbots"]`` when this is ``None``.
 
     Returns:
         The ``match_end`` payload, or ``None`` if the connection closed without
@@ -263,6 +286,115 @@ async def _run_session(
             if not safe_mode:
                 raise BotDecisionError(str(exc)) from exc
 
+    # --- Big Bad Bots turn handling -------------------------------------
+    # Only used when the server hello declares ``state_shape: bigbadbots``.
+    # The previous fight action, as applied, keyed by round: the server's
+    # default for a missed tick repeats it if it was block/move_in/move_out
+    # and resets every round (protocol section 3.5).
+    last_fight: dict[str, Any] = {"round": None, "action": None}
+    # The request a still-running timed-out decision was answering. While it
+    # runs, later requests get the default without starting another thread.
+    busy: dict[str, Any] = {"task": None}
+    # The last request we answered, kept so an ``action_rejected`` for it can
+    # be retried with that request's default.
+    last_request: dict[str, Any] = {}
+
+    def _previous_fight_action(request: dict) -> str | None:
+        state = request.get("state")
+        current_round = state.get("round") if isinstance(state, dict) else None
+        if last_fight["round"] is not None and last_fight["round"] == current_round:
+            return last_fight["action"]
+        return None
+
+    def _bbb_fallback(request: dict, why: str) -> Action | None:
+        action = fallback_action(request, _previous_fight_action(request))
+        logger.warning(
+            "Big Bad Bots request %s: %s; sending the protocol default %s",
+            request.get("request_id"),
+            why,
+            action.to_wire() if action is not None else "(none: the server applies its own)",
+        )
+        return action
+
+    async def _decide_bigbadbots(request: dict) -> tuple[Action | None, float]:
+        """Answer one Big Bad Bots ``turn_request``: the bot's action or the default.
+
+        Never sends a silent wrong action. The protocol default (section 3.5)
+        replaces the bot's answer, with a warning, when the payload fails to
+        parse, ``decide`` raises (``safe_mode``), ``decide`` returns something
+        that is not one of ``valid_actions``, or ``decide`` is still running
+        ``BIGBADBOTS_SEND_MARGIN_MS`` before ``timeout_ms`` ends. A timed-out
+        ``decide`` cannot be interrupted (it runs on a worker thread), so
+        while it is still running every later request gets the default
+        directly. Under ``safe_mode=False`` a parse failure, a raise or a
+        malformed answer is a :class:`BotDecisionError`; a slow answer is not.
+        """
+        start = time.monotonic()
+
+        def _elapsed() -> float:
+            return (time.monotonic() - start) * 1000.0
+
+        running = busy["task"]
+        if running is not None and not running.done():
+            return _bbb_fallback(request, "the previous decision is still running"), _elapsed()
+        busy["task"] = None
+
+        try:
+            state = parse_bigbadbots_turn_request(request)
+        except StateParseError as exc:
+            logger.exception("Big Bad Bots turn_request failed to parse")
+            if not safe_mode:
+                raise BotDecisionError(str(exc)) from exc
+            return _bbb_fallback(request, "the payload failed to parse"), _elapsed()
+
+        budget_ms = max(state.timeout_ms - BIGBADBOTS_SEND_MARGIN_MS, 1)
+        # ``ChipzenBot.decide`` is typed for poker; at this table it takes the
+        # Big Bad Bots model (``BigBadBotsBot.decide`` accepts both).
+        decide: Any = bot.decide
+        task = asyncio.ensure_future(asyncio.to_thread(decide, state))
+        try:
+            action = await asyncio.wait_for(asyncio.shield(task), budget_ms / 1000.0)
+        except asyncio.TimeoutError:
+            busy["task"] = task
+            # Retrieve the eventual result or exception so it is not reported
+            # as never retrieved; the answer it was for has already resolved.
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            return _bbb_fallback(request, f"no answer within {budget_ms}ms"), _elapsed()
+        except Exception as exc:
+            logger.exception("Bot.decide() raised an exception")
+            if not safe_mode:
+                raise BotDecisionError(str(exc)) from exc
+            return _bbb_fallback(request, "decide() raised"), _elapsed()
+
+        if not is_answer_shaped(action, state.valid_actions):
+            message = f"decide() returned {action!r}, not one of {state.valid_actions}"
+            if not safe_mode:
+                raise BotDecisionError(message)
+            logger.error("Big Bad Bots request %s: %s", state.request_id, message)
+            return _bbb_fallback(request, "the answer was not a valid action"), _elapsed()
+        return action, _elapsed()
+
+    async def _answer_bigbadbots(request: dict) -> None:
+        action, decision_ms = await _decide_bigbadbots(request)
+        last_request.clear()
+        last_request.update(request)
+        if action is None:
+            return
+        state = request.get("state")
+        if isinstance(state, dict) and state.get("phase") == "fight":
+            last_fight["round"] = state.get("round")
+            last_fight["action"] = action.action
+        await _send_json(
+            ws,
+            {
+                "type": "turn_action",
+                "match_id": match_id,
+                "request_id": request.get("request_id"),  # MUST echo
+                **action.to_wire(),
+            },
+        )
+        _call_hook(bot.on_decision_latency, decision_ms)
+
     # --- Layer 1 handshake --------------------------------------------
     auth_msg: dict[str, Any] = {
         "type": "authenticate",
@@ -304,6 +436,29 @@ async def _run_session(
                 SUPPORTED_PROTOCOL_VERSIONS,
             )
             return None
+
+    # LAYER2-COMMON section 2: branch on ``state_shape`` before parsing any
+    # state. An NLHE hello carries no ``game`` descriptor (shape ``None``), so
+    # every poker table keeps the path it has always taken. A shape this
+    # release cannot parse ends the session rather than being read as NLHE.
+    try:
+        state_shape = state_shape_of(server_hello)
+    except UnsupportedStateShapeError as exc:
+        logger.error("Server hello has a malformed game descriptor: %s", exc)
+        return None
+    is_bigbadbots = state_shape == BIGBADBOTS_STATE_SHAPE
+    if not is_bigbadbots and state_shape not in POKER_STATE_SHAPES:
+        logger.error("%s", UnsupportedStateShapeError(state_shape))
+        return None
+    if isinstance(bot, BigBadBotsBot) and not is_bigbadbots:
+        logger.error(
+            "%s is a BigBadBotsBot but the table's state_shape is %r; it cannot play here",
+            type(bot).__name__,
+            state_shape,
+        )
+        return None
+    if supported_games is None and isinstance(bot, BigBadBotsBot):
+        supported_games = [BIGBADBOTS_STATE_SHAPE]
 
     # #4245 / epic chipzen-ai/Chipzen#4200: the client's declared game
     # vocabulary. Appended LAST and only when the caller declared something,
@@ -381,6 +536,9 @@ async def _run_session(
             # correlate turns to rounds.
             if "round_id" not in payload and current_round_id:
                 payload = {**payload, "round_id": current_round_id}
+            if is_bigbadbots:
+                await _answer_bigbadbots(payload)
+                continue
             state = GameState.from_turn_request(
                 payload,
                 your_seat=your_seat,
@@ -397,6 +555,34 @@ async def _run_session(
                 },
             )
             _call_hook(bot.on_decision_latency, decision_ms)
+
+        elif msg_type == "action_rejected" and is_bigbadbots:
+            # Retry once with the request's protocol default, which is always
+            # well-shaped (section 3.7); a second rejection gets no retry and
+            # the server applies the default itself when the time runs out.
+            logger.warning(
+                "Action rejected (%s): %s -- %sms remaining",
+                payload.get("reason"),
+                payload.get("message", ""),
+                payload.get("remaining_ms", 0),
+            )
+            request_id = payload.get("request_id")
+            if last_request.get("request_id") != request_id:
+                logger.warning("No retry for rejected request %s", request_id)
+                continue
+            rejected = dict(last_request)
+            last_request.clear()
+            retry = _bbb_fallback(rejected, "the answer was rejected")
+            if retry is not None:
+                await _send_json(
+                    ws,
+                    {
+                        "type": "turn_action",
+                        "match_id": match_id,
+                        "request_id": request_id,
+                        **retry.to_wire(),
+                    },
+                )
 
         elif msg_type == "action_rejected":
             # Retry within ``remaining_ms`` using the SAME request_id.
@@ -431,6 +617,12 @@ async def _run_session(
             )
 
         elif msg_type == "turn_result":
+            details = payload.get("details")
+            if is_bigbadbots and isinstance(details, dict) and details.get("phase") == "fight":
+                # The action as applied (after defaults and corrections) is
+                # what the server repeats on a missed tick.
+                last_fight["round"] = details.get("round", last_fight["round"])
+                last_fight["action"] = details.get("action", last_fight["action"])
             _call_hook(bot.on_turn_result, payload)
 
         elif msg_type == "phase_change":
@@ -473,7 +665,9 @@ async def _run_session(
                     break
             _call_hook(bot.on_reconnected, payload)
             pending = payload.get("pending_request")
-            if pending:
+            if pending and is_bigbadbots:
+                await _answer_bigbadbots(pending)
+            elif pending:
                 # Treat the pending request exactly like a ``turn_request``.
                 state = GameState.from_turn_request(
                     pending,

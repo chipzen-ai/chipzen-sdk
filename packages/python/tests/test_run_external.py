@@ -827,3 +827,53 @@ class TestMainCommandRouting:
             main()  # should not raise
         finally:
             sys.argv = original_argv
+
+
+_BIGBADBOTS_BOT_FILE = """\
+from chipzen import Action, BigBadBotsBot
+
+
+class MyFighter(BigBadBotsBot):
+    def act(self, state):
+        return Action.act("block")
+"""
+
+
+class TestBigBadBotsBaseUrl:
+    """A Big Bad Bots bot runs through the same ``run-external`` path, so its
+    server is chosen the same way: ``--env`` > ``$CHIPZEN_ENV`` > prod, with
+    staging for all pre-launch testing (chipzen-sdk#139)."""
+
+    def test_bigbadbots_bot_is_discovered_without_the_base_class(self, tmp_path):
+        bot_file = tmp_path / "fighter.py"
+        bot_file.write_text(_BIGBADBOTS_BOT_FILE)
+        found = _find_bot_subclasses(_load_bot_module(bot_file))
+        assert [cls.__name__ for cls in found] == ["MyFighter"]
+
+    @pytest.mark.parametrize(
+        ("flag", "env_var", "expected_host"),
+        [
+            ("staging", None, "staging.chipzen.ai"),
+            (None, "staging", "staging.chipzen.ai"),
+            (None, None, "chipzen.ai"),
+            ("prod", "staging", "chipzen.ai"),
+        ],
+        ids=["flag", "env-var", "default-prod", "flag-beats-env-var"],
+    )
+    def test_server_is_chosen_by_flag_then_env_var_then_prod(
+        self, tmp_path, monkeypatch, flag, env_var, expected_host
+    ):
+        _bypass_config_discovery(monkeypatch, tmp_path)
+        _clear_chipzen_env(monkeypatch)
+        if env_var is not None:
+            monkeypatch.setenv("CHIPZEN_ENV", env_var)
+        stub = _install_connect_stub(monkeypatch)
+        bot_file = tmp_path / "fighter.py"
+        bot_file.write_text(_BIGBADBOTS_BOT_FILE)
+
+        args = [str(bot_file), "--bot-id", "bbb-bot", "--token", "cz_extbot_bbb"]
+        if flag is not None:
+            args += ["--env", flag]
+        run_external_cli(args)
+
+        assert stub.urls == [f"wss://{expected_host}/ws/external/bot/bbb-bot"]
