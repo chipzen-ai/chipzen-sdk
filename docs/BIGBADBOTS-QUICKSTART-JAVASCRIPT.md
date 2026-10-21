@@ -199,9 +199,9 @@ docker save my-bot:v1 | gzip > my-bot.tar.gz
 ls -lh my-bot.tar.gz
 ```
 
-Until the npm release, the Dockerfile builds the SDK from this repository's
-`main` branch on GitHub (pass `--build-arg CHIPZEN_SDK_REF=<tag or commit>` to
-pin another), and it ignores the local `@chipzen-ai/bot` entry step 3 added
+Until the npm release, the Dockerfile builds the SDK from this repository on
+GitHub at a pinned commit (pass `--build-arg CHIPZEN_SDK_REF=<tag or commit>` to
+build another), and it ignores the local `@chipzen-ai/bot` entry step 3 added
 to `package.json`.
 
 The upload cap is **250 MB compressed** (the built image is separately capped

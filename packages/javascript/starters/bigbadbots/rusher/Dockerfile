@@ -33,7 +33,9 @@ FROM oven/bun:1.4.3-debian@sha256:923bedb355f7746666659f71e724998159a5c8c54bd1cb
 # @chipzen-ai/bot release lists Big Bad Bots in its CHANGELOG, add it to
 # package.json and replace this block and the SDK copy below with the poker
 # starter's single `RUN bun install --production`.
-ARG CHIPZEN_SDK_REF=main
+# Default pinned to a commit (the merge of chipzen-sdk #185) so a build is
+# reproducible; a branch name would change under you.
+ARG CHIPZEN_SDK_REF=bbc04571ed3043945747d13b348a0ac6819b30de
 ADD https://github.com/chipzen-ai/chipzen-sdk/archive/${CHIPZEN_SDK_REF}.tar.gz /tmp/chipzen-sdk.tar.gz
 WORKDIR /sdk
 RUN tar -xzf /tmp/chipzen-sdk.tar.gz --strip-components=3 --wildcards '*/packages/javascript/*' \
