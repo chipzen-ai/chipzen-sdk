@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warns on one that mutates its state or runs past the per-tick deadline, and
   checks `act()` in place of `decide()`. `chipzen.bigbadbots_validate` exposes
   the answer checker. Poker bots are validated exactly as before.
+- **Versioned Big Bad Bots rule sets: `state.rules` (#144).** Every Big Bad
+  Bots state, in every phase, carries `state.rules`
+  (`chipzen.bigbadbots_rules.RuleSet`): the match's `rule_set_id` and its
+  parameter table from `match_start.game_config`, read-only, with typed
+  `gearup`, `arena`, `rounds`, `forfeit` and `deadline` sections. A bot that
+  reads its numbers from there runs unchanged on a new rule set. The SDK
+  bundles the published numbers of `bigbadbots-1.0`, `1.1` and `1.2`
+  (`published_rule_set()`); a `rule_set_id` it does not know, or a value that
+  differs from the published one, logs a warning and the bot plays on the
+  numbers `match_start` sent. See `docs/RULESETS.md`.
 
 ### Fixed
 

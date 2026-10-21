@@ -1,0 +1,41 @@
+{
+  "rule_set_id": "bigbadbots-1.2",
+  "state": "preview",
+  "engine": "1.2.0",
+  "frozen_on": "2026-10-08",
+  "sha256": "5e1f453c8f02dc3196cdf6a262e30a6147a1b5d4f472d4ec117e87bab42ac3ca",
+  "rule_set": {
+    "gearup": {
+      "budget": 1000,
+      "body_offer_size": 4,
+      "auction_lots": 6
+    },
+    "arena": {
+      "width": 12.0,
+      "start_x": [
+        4.0,
+        8.0
+      ],
+      "start_jitter": 1.0,
+      "min_separation": 1.15
+    },
+    "rounds": {
+      "ticks_per_second": 10,
+      "round_ticks": 600,
+      "rounds_to_win": 2,
+      "max_rounds": 5,
+      "timeout_tiebreak": "damage"
+    },
+    "forfeit": {
+      "grace_seconds": 5,
+      "rounds_for_match": 2
+    },
+    "deadline": {
+      "deadline_ms": 100,
+      "time_bank_ms": 3000,
+      "default_action_policy": "repeat_block_or_move",
+      "late_answer": "drop",
+      "miss_counts_toward_forfeit": true
+    }
+  }
+}

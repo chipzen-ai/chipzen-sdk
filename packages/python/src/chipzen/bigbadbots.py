@@ -32,7 +32,10 @@ import dataclasses
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union
+
+if TYPE_CHECKING:
+    from chipzen.bigbadbots_rules import RuleSet
 
 #: The ``game.state_shape`` (and ``game_type`` and ``variant``) of a Big Bad
 #: Bots table (section 1.1).
@@ -60,7 +63,8 @@ FIGHT_ACTIONS = (
 PHASES = ("body_shop", "auction", "fitting", "fight")
 
 #: The Layer 1 ``turn_request`` envelope fields a state model carries. Every
-#: other field of a state model is a key of ``turn_request.state``.
+#: other field of a state model is a key of ``turn_request.state``, except
+#: ``rules``, which comes from ``match_start``.
 _ENVELOPE = ("request_id", "seat", "timeout_ms", "valid_actions")
 
 
@@ -424,7 +428,10 @@ class BigBadBotsGameConfig(_WireModel):
             (``gearup``, ``arena``, ``rounds``, ``forfeit``, ``deadline``, the
             bodies, parts, moves and specials). Held as the raw wire object
             because its sections vary by rule set. **Read the numbers from
-            here**; never hard-code them.
+            here** (a :class:`chipzen.BigBadBotsBot` also hands them to every
+            call, typed and read-only, as ``state.rules``); never hard-code
+            them. Rule sets are versioned; see
+            https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/RULESETS.md
     """
 
     variant: str
@@ -475,6 +482,16 @@ class BigBadBotsState:
         pot, to_call, min_raise, max_raise, your_stack: Always ``0``; Big Bad
             Bots has no chips. Credits are on ``me.credits`` / ``opp.credits``.
         opponent_stacks: Always ``[0]``.
+
+    Match context (from ``match_start``, not from the ``turn_request``):
+        rules: The rule set this match is played under, typed and read-only
+            (:class:`chipzen.bigbadbots_rules.RuleSet`): its id
+            (``rules.id``) and every number it plays by. A
+            :class:`chipzen.BigBadBotsBot` fills it in on every call, in every
+            phase; it is ``None`` only when no ``match_start`` was seen (or an
+            ``on_match_start`` override did not call ``super()``). Read the
+            numbers from here and the bot runs unchanged on a new rule set.
+            See https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/RULESETS.md
     """
 
     request_id: str
@@ -490,13 +507,14 @@ class BigBadBotsState:
     max_raise: int
     your_stack: int
     opponent_stacks: list[int]
+    rules: RuleSet | None = dataclasses.field(default=None, kw_only=True, compare=False, repr=False)
 
     def to_state(self) -> dict[str, Any]:
         """Return the ``turn_request.state`` payload this state was parsed from."""
         return {
             f.name: _to_wire(getattr(self, f.name))
             for f in dataclasses.fields(self)
-            if f.name not in _ENVELOPE
+            if f.name not in _ENVELOPE and f.name != "rules"
         }
 
     @staticmethod
