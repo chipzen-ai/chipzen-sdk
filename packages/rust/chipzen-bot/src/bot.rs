@@ -28,14 +28,19 @@ pub trait Bot: Send + 'static {
     /// `state.min_raise <= amount <= state.max_raise`. The session
     /// loop substitutes a safe fallback if your decide panics or
     /// returns an invalid action (`check`, else `fold`; a stand pat on a
-    /// 2-7 Triple Draw draw turn) — but lean on the validator
+    /// 2-7 Triple Draw draw turn; the protocol's default placement on a
+    /// Pineapple OFC turn) — but lean on the validator
     /// (`chipzen-sdk validate`) to catch those during development.
     ///
     /// `decide` is the only method the session loop calls for a turn, at
-    /// every table. A bot that plays 2-7 Triple Draw branches here:
+    /// every table. A bot that plays 2-7 Triple Draw or Pineapple OFC
+    /// branches here:
     ///
     /// ```ignore
     /// fn decide(&mut self, state: &GameState) -> Action {
+    ///     if state.valid_actions.iter().any(|a| a == "place") {
+    ///         return self.decide_placement(state); // Pineapple OFC
+    ///     }
     ///     if state.is_draw_phase {
     ///         return self.decide_draw(state); // 2-7 Triple Draw
     ///     }
@@ -58,6 +63,53 @@ pub trait Bot: Send + 'static {
     /// See `docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md`.
     fn decide_draw(&mut self, _state: &GameState) -> Action {
         Action::stand_pat()
+    }
+
+    /// Pineapple OFC: return your `place` action for a placement turn.
+    /// Called only if your [`Bot::decide`] calls it; the SDK never does on
+    /// its own.
+    ///
+    /// The default fills the rows with free capacity in `bottom`, `middle`,
+    /// `top` order and discards the leftovers. That is **legal, not good**:
+    /// it respects `state.place`, `state.must_discard` and
+    /// `state.row_capacity`, and it will happily foul. Override it.
+    ///
+    /// Legality matters more here than anywhere else in the protocol: OFC
+    /// rejects an illegal placement rather than clamping it, because
+    /// placement is irrevocable and there is no defensible "nearest legal
+    /// placement". Build the answer with [`Action::place`].
+    /// See `docs/protocol/OFC-GAME-STATE-PROTOCOL.md`.
+    fn decide_placement(&mut self, state: &GameState) -> Action {
+        let mut capacity = state.row_capacity.clone();
+        // Canonical order first, then any row name this SDK release has not
+        // heard of, so an added row is filled rather than ignored.
+        let mut rows: Vec<String> = ["bottom", "middle", "top"]
+            .into_iter()
+            .filter(|name| capacity.contains_key(*name))
+            .map(String::from)
+            .collect();
+        for name in capacity.keys() {
+            if !rows.contains(name) {
+                rows.push(name.clone());
+            }
+        }
+
+        let cards = &state.cards_to_place;
+        let place = usize::try_from(state.place).unwrap_or(0).min(cards.len());
+        let mut placements: Vec<(String, String)> = Vec::new();
+        for card in &cards[..place] {
+            if let Some(row) = rows
+                .iter()
+                .find(|row| capacity.get(*row).is_some_and(|free| *free > 0))
+            {
+                placements.push((card.clone(), row.clone()));
+                *capacity.get_mut(row).expect("row is in capacity") -= 1;
+            }
+        }
+        let discard_end = place
+            .saturating_add(usize::try_from(state.must_discard).unwrap_or(0))
+            .min(cards.len());
+        Action::place(placements, &cards[place..discard_end])
     }
 
     /// Called when the server's `match_start` arrives. Use for

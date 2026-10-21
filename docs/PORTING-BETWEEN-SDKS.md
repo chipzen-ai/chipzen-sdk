@@ -69,7 +69,7 @@ exact same order driven by the same protocol messages.
 | Round result, simplified | `on_hand_result` *(Python only)* | — |
 | Match end | `on_match_end` | `onMatchEnd` |
 | 2-7 Triple Draw draw turn *(optional, never called by the SDK; call it from `decide`)* | `decide_draw` | `decideDraw` |
-| Pineapple OFC placement turn *(optional, never called by the SDK; call it from `decide`)* | `decide_placement` *(Python; Rust parity pending)* | `decidePlacement` |
+| Pineapple OFC placement turn *(optional, never called by the SDK; call it from `decide`)* | `decide_placement` | `decidePlacement` |
 
 Python additionally exposes the `on_hand_start` / `on_hand_result`
 convenience wrappers that do the common parsing work
@@ -111,11 +111,18 @@ Pineapple OFC's `place` action
 |---|---|
 | Python | `Action.place([("Ks", "bottom"), ("Js", "middle")], discard="9s")` |
 | JavaScript | `Action.place([["Ks", "bottom"], ["Js", "middle"]], "9s")` |
-| Rust | Parity pending |
+| Rust | `Action::place([("Ks", "bottom"), ("Js", "middle")], ["9s"])` |
 
-Both also accept `{card, row}` objects for the pairs and a list for the
-discard. An OFC turn offers neither `check` nor `fold`, so there the safe
-fallback is a legal default placement rather than a fold.
+Python and JavaScript also accept `{card, row}` objects for the pairs and a
+list for the discard. Rust takes any `(card, row)` pair of printable values
+(a `Card` works) or a `Placement`, and the discard as anything iterable:
+`["9s"]`, `Some("9s")`, or `None::<&str>` on the opening set. Rust always
+sends the discard as a list, which the server accepts for any count. An OFC
+turn offers neither `check` nor `fold`, so there the safe fallback is a
+legal default placement rather than a fold.
+
+Rust's `Action` and `ActionKind` are `#[non_exhaustive]`: a `match` on
+either needs a `_` arm, so a future game's action is not a breaking change.
 
 The `N` in raises is the **target total bet** (matching the wire field
 name `amount`), not the raise increment over the current bet. All three
@@ -269,10 +276,9 @@ section 2). Omitting it declares nothing, which the platform reads as
 
 In Python and JavaScript a Big Bad Bots base class (`BigBadBotsBot`)
 declares `["bigbadbots"]` when you pass nothing, and an explicit list
-replaces it. The Rust SDK has no such base class yet. It plays hold'em and
-2-7 Triple Draw tables, but it cannot parse a Pineapple OFC table yet and
-ends the session there (see the support table in DEV-MANUAL §2.8), so a Rust
-bot should not declare `ofc` until that parity lands.
+replaces it. The Rust SDK has no such base class yet. It plays hold'em,
+2-7 Triple Draw and Pineapple OFC tables (see the support table in
+DEV-MANUAL §2.8).
 
 ## See also
 

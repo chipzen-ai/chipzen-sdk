@@ -47,14 +47,16 @@ fn safe_fallback_degrades_to_first_valid_action() {
     // valid action instead (matches the Python SDK).
     // (A 2-7 Triple Draw `["draw"]` turn is modelled since
     // chipzen-sdk#174: its fallback is a typed stand pat, see
-    // tests/draw27.rs.)
+    // tests/draw27.rs. A Pineapple OFC `["place"]` turn is modelled since
+    // chipzen-sdk#176: its fallback is the default placement, see
+    // tests/ofc.rs. `bid` stands in for an action this SDK does not model.)
     assert_eq!(
         _safe_fallback_action(&strings(&["draw"])).unwrap(),
         FallbackAction::Typed(Action::stand_pat())
     );
     assert_eq!(
-        _safe_fallback_action(&strings(&["place", "pass"])).unwrap(),
-        FallbackAction::Raw("place".to_string())
+        _safe_fallback_action(&strings(&["bid", "pass"])).unwrap(),
+        FallbackAction::Raw("bid".to_string())
     );
     // Modelled kinds that need no params still come back typed.
     assert_eq!(
@@ -69,10 +71,8 @@ fn safe_fallback_degrades_to_first_valid_action() {
 
 #[test]
 fn safe_fallback_raw_action_serializes_verbatim_with_empty_params() {
-    let (action, params) = _safe_fallback_action(&strings(&["place"]))
-        .unwrap()
-        .to_wire();
-    assert_eq!(action, "place");
+    let (action, params) = _safe_fallback_action(&strings(&["bid"])).unwrap().to_wire();
+    assert_eq!(action, "bid");
     assert_eq!(params, json!({}));
 }
 
@@ -579,15 +579,17 @@ impl Bot for NlheBot {
 }
 
 /// An NLHE bot mis-seated at a variant table whose action set the SDK does
-/// not model (`valid_actions == ["place"]`) used to answer `fold`, get
+/// not model (`valid_actions == ["bid"]`) used to answer `fold`, get
 /// rejected, answer `fold` again, and spin until the auto-substitute streak
 /// limit killed the match. The safe fallback now echoes the first valid
 /// action, so the exchange terminates after a single rejection
 /// (chipzen-ai/Chipzen#4244). (A `["draw"]` turn is modelled since
-/// chipzen-sdk#174 and falls back to a stand pat; see tests/draw27.rs.)
+/// chipzen-sdk#174 and falls back to a stand pat, and a `["place"]` turn since
+/// chipzen-sdk#176, falling back to the default placement; see
+/// tests/draw27.rs and tests/ofc.rs.)
 #[tokio::test]
 async fn run_session_does_not_loop_at_a_variant_table() {
-    let table = VariantTable::new(&["place"]);
+    let table = VariantTable::new(&["bid"]);
     let mut reader = TableReader(Arc::clone(&table));
     let mut writer = TableWriter(Arc::clone(&table));
     let mut bot = NlheBot;
@@ -606,7 +608,7 @@ async fn run_session_does_not_loop_at_a_variant_table() {
     );
     assert_eq!(
         state.accepted,
-        vec!["place".to_string()],
+        vec!["bid".to_string()],
         "the safe fallback should echo the first valid action"
     );
     assert_eq!(

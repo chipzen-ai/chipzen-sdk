@@ -14,7 +14,7 @@
 //! - `decide_draw` is defaulted (stand pat) and never called by the SDK.
 //! - The safe fallback on a draw turn is a stand pat, not a fold.
 //! - The session routes on the server hello's `state_shape`: `27tripledraw`
-//!   is played, while `pineapple` (until #176) and unknown shapes end the
+//!   (and, since #176, `pineapple`) is played, while unknown shapes end the
 //!   session before the client `hello`.
 //! - The seat comes from `match_start` and the button from each
 //!   `round_start` (a 27TD turn state carries neither).
@@ -972,9 +972,20 @@ async fn refused(game: Value) {
 }
 
 #[tokio::test]
-async fn an_ofc_table_is_refused_until_ofc_parity_lands() {
-    refused(json!({ "game_type": "ofc", "variant": "pineapple", "state_shape": "pineapple" }))
-        .await;
+async fn an_ofc_table_is_no_longer_refused() {
+    // OFC parity landed in #176 (end-to-end coverage: tests/ofc.rs). The
+    // `pineapple` shape now takes the poker path: the client `hello` goes out
+    // and the session reaches `decide()`.
+    let mut frames = draw27_script(true);
+    frames[0] = server_hello(
+        "ofc_pineapple",
+        Some(json!({ "game_type": "ofc", "variant": "pineapple", "state_shape": "pineapple" })),
+    );
+    let mut bot = NlheOnlyBot::default();
+    let played = play(&mut bot, &frames, Some(&["poker", "draw27", "ofc"])).await;
+    assert!(played.end.is_some());
+    assert!(played.hello().is_some());
+    assert_eq!(bot.seen.len(), 2);
 }
 
 #[tokio::test]

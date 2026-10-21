@@ -79,8 +79,14 @@ pub fn parse_card(s: &str) -> Result<Card, Error> {
 
 /// The action kinds a bot can take. Matches the wire `action` strings
 /// byte-for-byte. `Draw` is 2-7 Triple Draw's only draw-phase action
-/// (`docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md` section 4.1).
+/// (`docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md` section 4.1), and `Place`
+/// is Pineapple OFC's only action
+/// (`docs/protocol/OFC-GAME-STATE-PROTOCOL.md` section 4.1).
+///
+/// `#[non_exhaustive]`: a new game can add a kind in a minor release, so a
+/// `match` on it from outside this crate needs a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ActionKind {
     Fold,
     Check,
@@ -88,6 +94,7 @@ pub enum ActionKind {
     Raise,
     AllIn,
     Draw,
+    Place,
 }
 
 impl ActionKind {
@@ -99,6 +106,7 @@ impl ActionKind {
             ActionKind::Raise => "raise",
             ActionKind::AllIn => "all_in",
             ActionKind::Draw => "draw",
+            ActionKind::Place => "place",
         }
     }
 
@@ -110,6 +118,7 @@ impl ActionKind {
             "raise" => Some(ActionKind::Raise),
             "all_in" => Some(ActionKind::AllIn),
             "draw" => Some(ActionKind::Draw),
+            "place" => Some(ActionKind::Place),
             _ => None,
         }
     }
@@ -169,6 +178,40 @@ impl From<usize> for DiscardItem {
     }
 }
 
+/// One card-to-row assignment of a Pineapple OFC `place` action
+/// (`docs/protocol/OFC-GAME-STATE-PROTOCOL.md` section 3.5).
+///
+/// Row names are the keys of `state.row_capacity`: `"top"`, `"middle"`,
+/// `"bottom"`. Build one with `.into()` from a `(card, row)` pair of
+/// anything printable (`("Ks", "bottom")`, or a [`Card`] and a row);
+/// [`Action::place`] does that for you.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Placement {
+    /// The card, in its 2-character wire form (e.g. `"Ks"`).
+    pub card: String,
+    /// The row it goes to: `"top"`, `"middle"` or `"bottom"`.
+    pub row: String,
+}
+
+impl Placement {
+    pub fn new(card: impl std::fmt::Display, row: impl std::fmt::Display) -> Self {
+        Self {
+            card: card.to_string(),
+            row: row.to_string(),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        serde_json::json!({ "card": self.card, "row": self.row })
+    }
+}
+
+impl<C: std::fmt::Display, R: std::fmt::Display> From<(C, R)> for Placement {
+    fn from((card, row): (C, R)) -> Self {
+        Placement::new(card, row)
+    }
+}
+
 /// The action a bot returns from [`crate::Bot::decide`].
 ///
 /// Construct the hold'em actions via the variants directly —
@@ -181,7 +224,15 @@ impl From<usize> for DiscardItem {
 /// [`Action::discard`], [`Action::discard_positions`] or
 /// [`Action::stand_pat`]. It is legal only on a draw turn
 /// (`state.is_draw_phase`, where `valid_actions` is exactly `["draw"]`).
+///
+/// Pineapple OFC's `place` action is `Action::Place { .. }`, built with
+/// [`Action::place`]. It is the only action at an OFC table, where
+/// `valid_actions` is exactly `["place"]`.
+///
+/// `#[non_exhaustive]`: a new game can add an action in a minor release, so
+/// a `match` on it from outside this crate needs a wildcard arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Action {
     Fold,
     Check,
@@ -190,6 +241,12 @@ pub enum Action {
     AllIn,
     /// 2-7 Triple Draw: discard these cards (an empty list is a stand pat).
     Draw(Vec<DiscardItem>),
+    /// Pineapple OFC: place these cards and discard those (`discard` is
+    /// empty on the opening set).
+    Place {
+        placements: Vec<Placement>,
+        discard: Vec<String>,
+    },
 }
 
 impl Action {
@@ -201,6 +258,7 @@ impl Action {
             Action::Raise(_) => ActionKind::Raise,
             Action::AllIn => ActionKind::AllIn,
             Action::Draw(_) => ActionKind::Draw,
+            Action::Place { .. } => ActionKind::Place,
         }
     }
 
@@ -237,6 +295,43 @@ impl Action {
         Action::Draw(Vec::new())
     }
 
+    /// Pineapple OFC: the `place` action, the only action OFC offers.
+    ///
+    /// `placements` is exactly `state.place` card-to-row assignments drawn
+    /// from `state.cards_to_place`, as `(card, row)` pairs (or
+    /// [`Placement`]s). Row names are the keys of `state.row_capacity`:
+    /// `"top"`, `"middle"`, `"bottom"`. `discard` is exactly
+    /// `state.must_discard` cards: `["9s"]`, `Some("9s")`, or
+    /// `None::<&str>` on the opening set.
+    ///
+    /// ```
+    /// use chipzen_bot::Action;
+    /// let street = Action::place([("Ks", "bottom"), ("Js", "middle")], ["9s"]);
+    /// let opening = Action::place([("2c", "top"), ("3d", "middle")], None::<&str>);
+    /// # let _ = (street, opening);
+    /// ```
+    ///
+    /// Emits `{"action": "place", "params": {"placements": [{"card", "row"},
+    /// ...], "discard": [...]}}`. The discard always goes out as a list,
+    /// which the server accepts for any count (OFC section 3.5).
+    ///
+    /// Unlike hold'em and 2-7 Triple Draw, an illegal placement is
+    /// **rejected, not clamped**: placement is irrevocable, so there is no
+    /// defensible "nearest legal placement". Check `state.row_capacity`
+    /// before submitting.
+    pub fn place<I, P, D, C>(placements: I, discard: D) -> Action
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<Placement>,
+        D: IntoIterator<Item = C>,
+        C: std::fmt::Display,
+    {
+        Action::Place {
+            placements: placements.into_iter().map(Into::into).collect(),
+            discard: discard.into_iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
     /// Serialize to the two-layer `turn_action` payload shape the
     /// server expects. Returns `(action, params)` ready to drop into
     /// the outbound `turn_action` envelope.
@@ -246,6 +341,13 @@ impl Action {
             Action::Raise(amount) => serde_json::json!({ "amount": *amount }),
             Action::Draw(discards) => serde_json::json!({
                 "discard": discards.iter().map(DiscardItem::to_value).collect::<Vec<_>>(),
+            }),
+            Action::Place {
+                placements,
+                discard,
+            } => serde_json::json!({
+                "placements": placements.iter().map(Placement::to_value).collect::<Vec<_>>(),
+                "discard": discard,
             }),
             _ => serde_json::json!({}),
         };
@@ -275,10 +377,11 @@ pub struct ActionHistoryEntry {
 /// Field semantics mirror the Python and JavaScript SDKs exactly so a
 /// bot strategy translates 1:1 between languages.
 ///
-/// The 2-7 Triple Draw fields at the end
-/// (`docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md` section 3.3) are always
-/// filled by [`parse_game_state`] and hold their defaults (`false`, `0`,
-/// empty) at a hold'em table. `GameState` implements [`Default`], so a
+/// The 2-7 Triple Draw and Pineapple OFC fields at the end
+/// (section 3.3 of `docs/protocol/DRAW27-GAME-STATE-PROTOCOL.md` and of
+/// `docs/protocol/OFC-GAME-STATE-PROTOCOL.md`) are always filled by
+/// [`parse_game_state`] and hold their defaults (`false`, `0`, empty) at a
+/// table of another game. `GameState` implements [`Default`], so a
 /// hand-built state can name the fields it cares about and finish with
 /// `..Default::default()`.
 #[derive(Debug, Clone)]
@@ -320,6 +423,48 @@ pub struct GameState {
     /// that seat's per-round draw counts. Excludes you. Draw counts are
     /// public; opponents' cards and discards never appear.
     pub opponent_draw_counts: BTreeMap<String, Vec<i64>>,
+
+    // --- Pineapple OFC (`game_config.variant == "pineapple"`) ---
+    //
+    // Card-carrying fields hold RAW wire strings, not `Card`s, so they add no
+    // new parse failure (the `Card`-parsed copy of your pending cards is
+    // `hole_cards`). There is no betting: `to_call`, `min_raise` and
+    // `max_raise` are 0 in every OFC payload, and `pot` is 0 until the hand
+    // settles. An OFC turn state also carries `your_seat` and `dealer_seat`,
+    // and the fields above read them from there.
+    /// Your own rows by row name, unredacted:
+    /// `{"top": [..], "middle": [..], "bottom": [..]}`.
+    pub your_rows: BTreeMap<String, Vec<String>>,
+    /// Seat index **as a decimal string** to that seat's rows. Public: a
+    /// placed card is visible the moment it is placed. A hidden Fantasy Land
+    /// board reads as empty rows.
+    pub opponent_rows: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    /// The cards this street brought you: 5 on the opening set, 3 on a
+    /// pineapple street, 14 in Fantasy Land. The same cards as `hole_cards`,
+    /// under the name the `place` action uses.
+    pub cards_to_place: Vec<String>,
+    /// How many of `cards_to_place` must be placed: 5 / 2 / 13. Per SEAT,
+    /// not per phase: a Fantasy Land seat places 13 in the phase where its
+    /// opponent places 5.
+    pub place: i64,
+    /// How many must be discarded. `place + must_discard` always equals
+    /// `cards_to_place.len()`.
+    pub must_discard: i64,
+    /// Free slots per row, by row name. An illegal placement is REJECTED,
+    /// not clamped, so read this before submitting.
+    pub row_capacity: BTreeMap<String, i64>,
+    /// Your live royalties per row. Only a complete row can pay.
+    pub royalties: BTreeMap<String, i64>,
+    /// Seat index (decimal string) to that seat's live royalties per row.
+    pub opponent_royalties: BTreeMap<String, BTreeMap<String, i64>>,
+    /// Chips one point is worth this hand. OFC settles in points.
+    pub point_value: i64,
+    /// Whether YOU are playing this hand in Fantasy Land.
+    pub in_fantasy_land: bool,
+    /// The phases THIS SEAT walks: `["deal1", "complete"]` for a Fantasy
+    /// Land seat. A progress indicator must read this, not a match-level
+    /// phase list.
+    pub phase_sequence: Vec<String>,
 }
 
 impl Default for GameState {
@@ -454,6 +599,20 @@ pub fn parse_game_state(message: &Value) -> GameState {
                     .collect()
             })
             .unwrap_or_default(),
+        // --- Pineapple OFC (absent at a hold'em table -> defaults) ---
+        your_rows: as_rows(state_obj.and_then(|o| o.get("your_rows"))),
+        opponent_rows: as_map(state_obj.and_then(|o| o.get("opponent_rows")), as_rows),
+        cards_to_place: as_str_list(state_obj.and_then(|o| o.get("cards_to_place"))),
+        place: as_int(state_obj.and_then(|o| o.get("place"))),
+        must_discard: as_int(state_obj.and_then(|o| o.get("must_discard"))),
+        row_capacity: as_map(state_obj.and_then(|o| o.get("row_capacity")), as_int),
+        royalties: as_map(state_obj.and_then(|o| o.get("royalties")), as_int),
+        opponent_royalties: as_map(state_obj.and_then(|o| o.get("opponent_royalties")), |v| {
+            as_map(v, as_int)
+        }),
+        point_value: as_int(state_obj.and_then(|o| o.get("point_value"))),
+        in_fantasy_land: as_bool(state_obj.and_then(|o| o.get("in_fantasy_land"))),
+        phase_sequence: as_str_list(state_obj.and_then(|o| o.get("phase_sequence"))),
     }
 }
 
@@ -493,6 +652,42 @@ fn as_int_list(value: Option<&Value>) -> Vec<i64> {
         .and_then(Value::as_array)
         .map(|arr| arr.iter().map(|v| as_int(Some(v))).collect())
         .unwrap_or_default()
+}
+
+/// A list of strings, unparsed; a non-list is `[]`. A non-string entry
+/// becomes its JSON text (`5` -> `"5"`, as `str()` / `String()` do in the
+/// Python / JavaScript SDKs). OFC carries cards under several new keys
+/// (`cards_to_place`, `your_rows`, `opponent_rows`); they stay wire strings,
+/// as in the other SDKs, so they add no new parse failure.
+fn as_str_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A JSON object with each value coerced by `item`; a non-object is empty.
+fn as_map<T>(value: Option<&Value>, item: impl Fn(Option<&Value>) -> T) -> BTreeMap<String, T> {
+    value
+        .and_then(Value::as_object)
+        .map(|obj| {
+            obj.iter()
+                .map(|(key, v)| (key.clone(), item(Some(v))))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A `{row_name: [card, ...]}` object (OFC rows).
+fn as_rows(value: Option<&Value>) -> BTreeMap<String, Vec<String>> {
+    as_map(value, as_str_list)
 }
 
 fn parse_history_entry(raw: &Value) -> ActionHistoryEntry {

@@ -133,9 +133,48 @@ fn decide_draw(&mut self, state: &GameState) -> Action {
 }
 ```
 
-Pineapple OFC is not supported yet: the session ends at an OFC table rather
-than reading it as hold'em, so do not declare `ofc`. See
-[DEV-MANUAL §2.8](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#28-playing-other-games).
+**Pineapple OFC** (`ofc`) has no betting: every turn places cards. On an
+OFC turn `valid_actions` is exactly `["place"]` and the shape of a legal
+answer lives in the state: `state.cards_to_place`, `state.place` (how many
+to place), `state.must_discard` and `state.row_capacity` (free slots per
+row). Answer with `Action::place(placements, discard)`. An illegal
+placement is **rejected, not clamped**, so check `row_capacity` first. The
+optional `Bot::decide_placement` hook returns a legal (not good) placement
+and is only called if your `decide` calls it:
+
+```rust
+fn decide(&mut self, state: &GameState) -> Action {
+    if state.valid_actions.iter().any(|a| a == "place") {
+        return self.decide_placement(state); // Pineapple OFC: override it
+    }
+    if state.valid_actions.iter().any(|a| a == "check") { Action::Check } else { Action::Fold }
+}
+```
+
+Building a placement by hand:
+
+```rust
+// A pineapple street (place 2, discard 1):
+Action::place([("Ks", "bottom"), ("Js", "middle")], ["9s"]);
+// The opening set (place 5, nothing to discard):
+Action::place(
+    [("2c", "top"), ("3d", "middle"), ("4h", "middle"), ("5s", "bottom"), ("6s", "bottom")],
+    None::<&str>,
+);
+```
+
+The OFC fields (`your_rows`, `opponent_rows`, `royalties`, `point_value`,
+`in_fantasy_land`, `phase_sequence` and the rest) are always filled and
+hold their defaults at other tables. A Fantasy Land turn is the same shape:
+14 cards, place 13, discard 1. If `decide` panics or returns an action the
+turn does not offer, the SDK sends the protocol's default placement for that
+turn (each card to the row with the most room, ties toward the bottom), and
+does the same when the server rejects an answer.
+
+`Action` and `ActionKind` are `#[non_exhaustive]`: a `match` on them needs a
+`_` arm, so a future game's action is not a breaking change.
+
+See [DEV-MANUAL §2.8](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#28-playing-other-games).
 
 ## Workspace layout
 
