@@ -244,6 +244,23 @@ function _decide(
 }
 
 /**
+ * The seat of the `is_self` entry in a `match_start` / `reconnected` frame's
+ * `seats` roster (TRANSPORT-PROTOCOL section 8.3), or `null` when the frame
+ * has none. Mirrors the Python loop: an `is_self` entry without a numeric
+ * `seat` reads as seat 0.
+ */
+function _selfSeat(msg: Record<string, unknown>): number | null {
+  const roster = Array.isArray(msg.seats) ? (msg.seats as unknown[]) : [];
+  for (const seatInfo of roster) {
+    if (seatInfo && typeof seatInfo === "object" && (seatInfo as Record<string, unknown>).is_self) {
+      const seat = (seatInfo as Record<string, unknown>).seat;
+      return typeof seat === "number" && Number.isFinite(seat) ? seat : 0;
+    }
+  }
+  return null;
+}
+
+/**
  * Invoke a bot lifecycle hook with the same safe-mode guard as `_decide`.
  *
  * A user exception in a lifecycle/stats callback must never tear down the
@@ -357,6 +374,12 @@ export async function _runSession(
   // retried with a fallback built from that turn's state (an OFC default
   // placement needs the cards and the row capacity).
   let lastTurn: { requestId: string; state: GameState } | null = null;
+  // Seat context, tracked as the Python loop does (#194): a hold'em or 27TD
+  // turn state carries neither `your_seat` nor `dealer_seat`, so the seat is
+  // taken from `match_start` (or `reconnected`) and the button from each
+  // `round_start`. An OFC turn state carries both, and its own values win
+  // (parseGameState).
+  const seats: { yourSeat: number; dealerSeat: number } = { yourSeat: 0, dealerSeat: 0 };
   for (;;) {
     const raw = await reader.next();
     if (raw === null) {
@@ -386,13 +409,20 @@ export async function _runSession(
         await sendJson(ws, { type: "pong", match_id: ctx.matchId });
         break;
 
-      case "match_start":
+      case "match_start": {
+        const selfSeat = _selfSeat(msg);
+        if (selfSeat !== null) seats.yourSeat = selfSeat;
         _callHook("onMatchStart", () => bot.onMatchStart(msg), safeMode);
         break;
+      }
 
-      case "round_start":
+      case "round_start": {
+        const roundState = msg.state as Record<string, unknown> | undefined;
+        const dealer = roundState && typeof roundState === "object" ? roundState.dealer_seat : undefined;
+        if (typeof dealer === "number" && Number.isFinite(dealer)) seats.dealerSeat = dealer;
         _callHook("onRoundStart", () => bot.onRoundStart(msg), safeMode);
         break;
+      }
 
       case "phase_change":
         _callHook("onPhaseChange", () => bot.onPhaseChange(msg), safeMode);
@@ -413,7 +443,7 @@ export async function _runSession(
           break;
         }
         const requestId = (msg.request_id as string | undefined) ?? "";
-        const state = parseGameState(msg);
+        const state = parseGameState(msg, seats);
         lastTurn = { requestId, state };
         // _decide handles timing + safeMode; under safeMode=false it
         // throws BotDecisionError, which propagates out of _runSession.
@@ -461,14 +491,9 @@ export async function _runSession(
         // never saw `match_start`, so without this the replayed pending
         // turn below would be decided with yourSeat=0
         // (chipzen-ai/chipzen-sdk#121, the JS analog of #119).
-        const seats = (msg.seats as Array<Record<string, unknown>> | undefined) ?? [];
-        let relearnedSeat: number | null = null;
-        for (const seatInfo of seats) {
-          if (seatInfo.is_self) {
-            relearnedSeat = typeof seatInfo.seat === "number" ? seatInfo.seat : 0;
-            break;
-          }
-        }
+        // The button is kept from the last `round_start` this session saw.
+        const relearnedSeat = _selfSeat(msg);
+        if (relearnedSeat !== null) seats.yourSeat = relearnedSeat;
         _callHook("onReconnected", () => bot.onReconnected(msg), safeMode);
         // If a pending_request is included, dispatch it as if it were a
         // fresh turn_request.
@@ -477,15 +502,11 @@ export async function _runSession(
           await bbb.answer(pending);
         } else if (pending && pending.type === "turn_request") {
           // Replay the pending turn exactly like a fresh turn_request,
-          // but with the seat re-learned from the reconnected frame. A
-          // hold'em or 27TD state does not carry `your_seat`; an OFC state
-          // does, and the state's own value wins (as in the Python SDK).
+          // with the seat re-learned from the reconnected frame. A hold'em
+          // or 27TD state does not carry `your_seat`; an OFC state does, and
+          // the state's own value wins (as in the Python SDK).
           const requestId = (pending.request_id as string | undefined) ?? "";
-          let state = parseGameState(pending);
-          const pendingState = pending.state as Record<string, unknown> | undefined;
-          if (relearnedSeat !== null && typeof pendingState?.your_seat !== "number") {
-            state = { ...state, yourSeat: relearnedSeat };
-          }
+          const state = parseGameState(pending, seats);
           lastTurn = { requestId, state };
           const { action, latencyMs } = _decide(
             bot,
