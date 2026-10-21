@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pineapple OFC parity with the Python SDK**
+  ([#175](https://github.com/chipzen-ai/chipzen-sdk/issues/175)). The SDK
+  now plays a Pineapple OFC table (`state_shape: "pineapple"`) instead of
+  ending the session there, so a bot can declare
+  `supportedGames: ["poker", "ofc"]`. Per
+  `docs/protocol/OFC-GAME-STATE-PROTOCOL.md`:
+  - `GameState` gains `yourRows`, `opponentRows`, `cardsToPlace`, `place`,
+    `mustDiscard`, `rowCapacity`, `royalties`, `opponentRoyalties`,
+    `pointValue`, `inFantasyLand` and `phaseSequence`. Like the 27TD fields
+    they are optional in the type, always filled by `parseGameState`,
+    default at a hold'em table and parsed leniently; card-carrying fields
+    are raw card strings. `phase` also lists the six OFC phases. OFC carries
+    `your_seat` and `dealer_seat` in the turn state, and the state's values
+    win over the seat re-learned on a reconnect.
+  - `Action.place(placements, discard)` (`[card, row]` pairs or
+    `{card, row}` objects; a single discard string or a list) emits
+    `{"action": "place", "params": {"placements": [...], "discard": ...}}`.
+  - `Bot.decidePlacement(state)`, an optional hook whose default is a legal
+    (not good) placement. The SDK never calls it; delegate to it from
+    `decide()`.
+  - The safe fallback (after a throw, a non-`Action` return or an
+    `action_rejected`) is the protocol's default placement (section 5.9) on
+    an OFC turn, which offers neither `check` nor `fold`. An
+    `action_rejected` is answered from the rejected turn's own state.
+  - The Python SDK's OFC conformance frames and `OFC_ACTIONS`, value for
+    value, and a back-compat suite (`tests/ofc.test.ts`) mirroring the
+    Python `test_variant_backcompat.py`, plus a full session of a bot that
+    declares `ofc`. As in Python, the frames are not part of the `validate`
+    grader.
+
 - **2-7 Triple Draw parity with the Python SDK**
   ([#173](https://github.com/chipzen-ai/chipzen-sdk/issues/173)). The SDK
   now plays a 2-7 Triple Draw table (`state_shape: "27tripledraw"`) instead
@@ -45,8 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases; an empty list is sent as is ("supports nothing"), not dropped.
   Both runners are covered, `runBot` against a real local WebSocket server.
   Declaring a `game_type` asserts you implement everything in that game's
-  Layer 2 spec; this release still ends the session at a Pineapple OFC
-  table, so do not declare `ofc` from JavaScript until that parity ships.
+  Layer 2 spec.
 
 ### Documentation
 

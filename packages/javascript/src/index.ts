@@ -22,6 +22,9 @@ export {
   type Draw27ActionKind,
   type Draw27Phase,
   type GameState,
+  type OfcActionKind,
+  type OfcPhase,
+  type OfcPlacement,
 } from "./models.js";
 export {
   BIGBADBOTS_STATE_SHAPE,

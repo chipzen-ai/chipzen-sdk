@@ -71,8 +71,25 @@ decide(state: GameState): Action {
 }
 ```
 
-Pineapple OFC is not parsed yet: the SDK ends the session at an OFC table,
-so do not declare `ofc` yet. See
+**Pineapple OFC** (`ofc`) is supported: declare
+`supportedGames: ["poker", "ofc"]`. Every OFC turn offers exactly
+`["place"]`; the shape of a legal answer lives in the state
+(`state.cardsToPlace`, `state.place`, `state.mustDiscard`,
+`state.rowCapacity`). Return
+`Action.place([[card, row], ...], discard)`: exactly `state.place`
+placements and `state.mustDiscard` discards, each card once, within each
+row's free capacity. An illegal placement is rejected, not clamped. The
+optional `decidePlacement(state)` hook returns a legal (not good) placement
+to delegate to.
+
+```ts
+decide(state: GameState): Action {
+  if (state.validActions.includes("place")) return this.decidePlacement(state);
+  // your betting logic
+}
+```
+
+See
 [DEV-MANUAL §2.8](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#28-playing-other-games).
 
 Lifecycle hooks (`onMatchStart`, `onRoundStart`, `onPhaseChange`,

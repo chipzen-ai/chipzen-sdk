@@ -73,6 +73,22 @@ export type ActionKind = "fold" | "check" | "call" | "raise" | "all_in";
 export type Draw27ActionKind = "draw";
 
 /**
+ * The Pineapple OFC action (`docs/protocol/OFC-GAME-STATE-PROTOCOL.md`
+ * section 4.1). It is the ONLY action at an OFC table: there is no fold,
+ * check, call or raise.
+ */
+export type OfcActionKind = "place";
+
+/**
+ * One card-to-row assignment for {@link Action.place}: a `[card, row]` pair
+ * or a `{ card, row }` object. Row names are the keys of
+ * `state.rowCapacity`: `"top"`, `"middle"`, `"bottom"`.
+ */
+export type OfcPlacement =
+  | readonly [card: string, row: string]
+  | { readonly card: string; readonly row: string };
+
+/**
  * The action a bot returns from `decide()`.
  *
  * Construct via the static factories (`Action.fold()` etc.) — they
@@ -82,7 +98,7 @@ export type Draw27ActionKind = "draw";
  */
 export class Action {
   private constructor(
-    public readonly action: ActionKind | Draw27ActionKind | BigBadBotsActionKind,
+    public readonly action: ActionKind | Draw27ActionKind | OfcActionKind | BigBadBotsActionKind,
     public readonly amount?: number,
     private readonly extraParams?: Readonly<Record<string, unknown>>,
   ) {
@@ -146,6 +162,47 @@ export class Action {
   /** 2-7 Triple Draw: keep all five cards. The same as `Action.discard([])`. */
   static standPat(): Action {
     return Action.discard([]);
+  }
+
+  // ------------------------------------------------------------------
+  // Pineapple OFC action (docs/protocol/OFC-GAME-STATE-PROTOCOL.md
+  // section 3.5). Additive, like the draw actions above.
+  // ------------------------------------------------------------------
+
+  /**
+   * Pineapple OFC: the `place` action, the only action OFC offers.
+   *
+   * `placements` is exactly `state.place` card-to-row assignments, as
+   * `[card, row]` pairs or `{ card, row }` objects, drawn from
+   * `state.cardsToPlace`. Row names are the keys of `state.rowCapacity`:
+   * `"top"`, `"middle"`, `"bottom"`. `discard` is exactly
+   * `state.mustDiscard` cards: a single card string, a list, or
+   * omitted / `null` / `[]` on the opening set.
+   *
+   * Emits `{"action": "place", "params": {"placements": [{"card", "row"},
+   * ...], "discard": ...}}`. A single-string discard goes out as that
+   * string; a list goes out as a list.
+   *
+   * Unlike hold'em and 2-7 Triple Draw, an illegal placement is **rejected,
+   * not clamped**: placement is irrevocable, so there is no defensible
+   * "nearest legal placement". Check `state.rowCapacity` before submitting.
+   */
+  static place(
+    placements: ReadonlyArray<OfcPlacement>,
+    discard?: string | ReadonlyArray<string> | null,
+  ): Action {
+    const wirePlacements = placements.map((entry) =>
+      isPlacementPair(entry)
+        ? { card: String(entry[0]), row: String(entry[1]) }
+        : { card: String(entry.card), row: String(entry.row) },
+    );
+    const wireDiscard: string | string[] =
+      discard === undefined || discard === null
+        ? []
+        : typeof discard === "string"
+          ? discard
+          : discard.map(String);
+    return new Action("place", undefined, { placements: wirePlacements, discard: wireDiscard });
   }
 
   // ------------------------------------------------------------------
@@ -237,11 +294,12 @@ export class Action {
    * Serialize to the two-layer `turn_action` payload shape the server expects.
    *
    * Returns `{action, params}` where `params` carries the raise amount
-   * for `raise`, the discard list for `draw`, the Big Bad Bots parameters
-   * for `choose_body` / `bid` / `fit`, and is empty for everything else.
+   * for `raise`, the discard list for `draw`, the placements and discard
+   * for `place`, the Big Bad Bots parameters for `choose_body` / `bid` /
+   * `fit`, and is empty for everything else.
    */
   toWire(): {
-    action: ActionKind | Draw27ActionKind | BigBadBotsActionKind;
+    action: ActionKind | Draw27ActionKind | OfcActionKind | BigBadBotsActionKind;
     params: Record<string, unknown>;
   } {
     const params: Record<string, unknown> = {};
@@ -251,7 +309,7 @@ export class Action {
     if (this.extraParams) {
       for (const [key, value] of Object.entries(this.extraParams)) {
         params[key] = Array.isArray(value)
-          ? [...(value as unknown[])]
+          ? (value as unknown[]).map((v) => (isPlainObject(v) ? { ...v } : v))
           : isPlainObject(value)
             ? { ...value }
             : value;
@@ -263,6 +321,10 @@ export class Action {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPlacementPair(entry: OfcPlacement): entry is readonly [string, string] {
+  return Array.isArray(entry);
 }
 
 // ---------------------------------------------------------------------------
@@ -293,17 +355,20 @@ export type Draw27Phase =
   | "showdown"
   | "complete";
 
+/** The Pineapple OFC phase strings (OFC-GAME-STATE-PROTOCOL.md section 4.2). */
+export type OfcPhase = "deal1" | "street2" | "street3" | "street4" | "street5" | "complete";
+
 /**
  * Built from the server's `turn_request` message. The parser in
  * `parseGameState` converts the wire-format snake_case to the
  * camelCase fields below.
  *
- * The 2-7 Triple Draw fields at the end are **optional in the type** so a
- * `GameState` literal written before they existed (a hold'em bot's local
- * test harness, say) still compiles. `parseGameState` always fills them: at
- * a hold'em table they hold their "not a draw game" defaults (`false`, `0`,
- * `[]`, `{}`), so a hold'em bot that never reads them sees the state it
- * always saw.
+ * The 2-7 Triple Draw and Pineapple OFC fields at the end are **optional in
+ * the type** so a `GameState` literal written before they existed (a hold'em
+ * bot's local test harness, say) still compiles. `parseGameState` always
+ * fills them: at a hold'em table they hold their "not this variant" defaults
+ * (`false`, `0`, `[]`, `{}`), so a hold'em bot that never reads them sees the
+ * state it always saw.
  */
 export interface GameState {
   readonly handNumber: number;
@@ -312,7 +377,7 @@ export interface GameState {
    * Rule 3): the union lists the phases this release knows, and the parser
    * passes any other value through unchanged.
    */
-  readonly phase: "preflop" | "flop" | "turn" | "river" | Draw27Phase;
+  readonly phase: "preflop" | "flop" | "turn" | "river" | Draw27Phase | OfcPhase;
   readonly holeCards: readonly Card[];
   readonly board: readonly Card[];
   readonly pot: number;
@@ -357,6 +422,58 @@ export interface GameState {
    * public; opponents' cards and discards never appear.
    */
   readonly opponentDrawCounts?: Readonly<Record<string, readonly number[]>>;
+
+  // ------------------------------------------------------------------
+  // Pineapple OFC (`game_config.variant == "pineapple"`).
+  // OFC-GAME-STATE-PROTOCOL.md section 3.3. Card-carrying fields hold RAW
+  // wire strings, not `Card` objects, so they add no new parse-time failure
+  // mode (the `Card`-parsed copy of your pending cards is `holeCards`).
+  // There is no betting: `toCall`, `minRaise` and `maxRaise` are 0 in every
+  // OFC payload, and `pot` is 0 until the hand settles. OFC also carries
+  // `your_seat` and `dealer_seat` in the turn state; `yourSeat` and
+  // `dealerSeat` read them from there.
+  // ------------------------------------------------------------------
+
+  /** Your own three rows, by row name, unredacted: `{ top: [...], middle: [...], bottom: [...] }`. */
+  readonly yourRows?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Seat index (decimal string) to that seat's rows. Public: a placed card
+   * is visible the moment it is placed. A hidden Fantasy Land board reads
+   * as empty rows.
+   */
+  readonly opponentRows?: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>;
+  /**
+   * The cards this street brought you: 5 on the opening set, 3 on a
+   * pineapple street, 14 in Fantasy Land. The same cards as `holeCards`,
+   * under the name the `place` action uses.
+   */
+  readonly cardsToPlace?: readonly string[];
+  /**
+   * How many of `cardsToPlace` must be placed: 5 / 2 / 13. Per SEAT, not per
+   * phase: a Fantasy Land seat places 13 in the phase where its opponent
+   * places 5.
+   */
+  readonly place?: number;
+  /** How many must be discarded. `place + mustDiscard` always equals `cardsToPlace.length`. */
+  readonly mustDiscard?: number;
+  /**
+   * Free slots per row, by row name. An illegal placement is REJECTED, not
+   * clamped, so read this before submitting.
+   */
+  readonly rowCapacity?: Readonly<Record<string, number>>;
+  /** Your live royalties per row. Only a complete row can pay. */
+  readonly royalties?: Readonly<Record<string, number>>;
+  /** Seat index (decimal string) to that seat's live royalties per row. */
+  readonly opponentRoyalties?: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  /** Chips one point is worth this hand. OFC settles in points. */
+  readonly pointValue?: number;
+  /** Whether YOU are playing this hand in Fantasy Land. */
+  readonly inFantasyLand?: boolean;
+  /**
+   * The phases THIS SEAT walks: `["deal1", "complete"]` for a Fantasy Land
+   * seat. A progress indicator must read this, not a match-level phase list.
+   */
+  readonly phaseSequence?: readonly string[];
 }
 
 interface RawTurnRequest {
@@ -412,6 +529,18 @@ export function parseGameState(message: RawTurnRequest): GameState {
         asIntList(counts),
       ]),
     ),
+    // --- Pineapple OFC (absent at a hold'em table -> defaults) ---
+    yourRows: asRows(state["your_rows"]),
+    opponentRows: mapValues(asDict(state["opponent_rows"]), asRows),
+    cardsToPlace: asCardStrs(state["cards_to_place"]),
+    place: asInt(state["place"]),
+    mustDiscard: asInt(state["must_discard"]),
+    rowCapacity: asIntMap(state["row_capacity"]),
+    royalties: asIntMap(state["royalties"]),
+    opponentRoyalties: mapValues(asDict(state["opponent_royalties"]), asIntMap),
+    pointValue: asInt(state["point_value"]),
+    inFantasyLand: asBool(state["in_fantasy_land"]),
+    phaseSequence: asList(state["phase_sequence"]).map(String),
   };
 }
 
@@ -442,6 +571,33 @@ function asDict(value: unknown): Record<string, unknown> {
   return isPlainObject(value) ? value : {};
 }
 
+function asList(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * Raw card strings, unparsed. OFC carries cards under several new keys
+ * (`cards_to_place`, `your_rows`, `opponent_rows`); they stay wire strings,
+ * as in the Python SDK, so they add no new parse-time failure mode.
+ */
+function asCardStrs(value: unknown): string[] {
+  return asList(value).map(String);
+}
+
+/** A `{row_name: [card, ...]}` object (OFC rows). */
+function asRows(value: unknown): Record<string, string[]> {
+  return mapValues(asDict(value), asCardStrs);
+}
+
+/** A `{key: int}` object (`row_capacity`, `royalties`). */
+function asIntMap(value: unknown): Record<string, number> {
+  return mapValues(asDict(value), asInt);
+}
+
+function mapValues<T>(obj: Record<string, unknown>, fn: (v: unknown) => T): Record<string, T> {
+  return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, fn(v)]));
+}
+
 interface RawHistoryEntry {
   seat?: number;
   action?: string;
@@ -470,9 +626,13 @@ function numberOrZero(v: unknown): number {
 /**
  * The `state_shape`s this SDK parses with the poker {@link parseGameState}.
  * `null` is a server `hello` with no `game` descriptor, which means NLHE;
- * `"27tripledraw"` is 2-7 Triple Draw. (Pineapple OFC is not parsed yet.)
+ * `"27tripledraw"` is 2-7 Triple Draw and `"pineapple"` is Pineapple OFC.
  */
-export const POKER_STATE_SHAPES: ReadonlySet<string | null> = new Set([null, "27tripledraw"]);
+export const POKER_STATE_SHAPES: ReadonlySet<string | null> = new Set([
+  null,
+  "27tripledraw",
+  "pineapple",
+]);
 
 /**
  * The table's `state_shape` is one this SDK release cannot parse.
@@ -511,8 +671,8 @@ export function stateShapeOf(serverHello: Record<string, unknown>): string | nul
 /**
  * Parse a `turn_request` into the model for the table's `state_shape`.
  *
- * - `null` (NLHE) and `"27tripledraw"`: a {@link GameState}, exactly as
- *   {@link parseGameState} builds it.
+ * - `null` (NLHE), `"27tripledraw"` and `"pineapple"`: a {@link GameState},
+ *   exactly as {@link parseGameState} builds it.
  * - `"bigbadbots"`: the Big Bad Bots model for the call
  *   (`parseBigBadBotsTurnRequest`).
  *
