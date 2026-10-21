@@ -10,6 +10,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pineapple OFC parity with the Python SDK**
+  ([#176](https://github.com/chipzen-ai/chipzen-sdk/issues/176)). A Rust bot
+  can now declare `supported_games: Some(vec!["poker".into(), "ofc".into()])`
+  and play a Pineapple OFC table, Fantasy Land included. With it the Rust
+  SDK is at parity with Python and JavaScript for the poker-family games.
+  Per `docs/protocol/OFC-GAME-STATE-PROTOCOL.md`:
+  - `GameState` gains `your_rows`, `opponent_rows` (keyed by seat as a
+    decimal string), `cards_to_place`, `place`, `must_discard`,
+    `row_capacity`, `royalties`, `opponent_royalties`, `point_value`,
+    `in_fantasy_land` and `phase_sequence`. `parse_game_state` always fills
+    them; at another table they hold their defaults. Cards stay wire
+    strings, and a mistyped value falls back to its default instead of
+    failing the turn, as in Python. An OFC turn state carries its own
+    `your_seat` / `dealer_seat`, which win over the tracked ones.
+  - `Action::Place { placements, discard }`, built with
+    `Action::place(placements, discard)` (`(card, row)` pairs or
+    `Placement`s, and an iterable discard such as `["9s"]` or
+    `None::<&str>`), emits
+    `{"action": "place", "params": {"placements": [{"card", "row"}, ...],
+    "discard": [...]}}`. `ActionKind::Place` is its kind. `Placement` is
+    exported.
+  - `Bot::decide_placement(&mut self, state)`, an optional hook whose
+    default is legal, not good (it fills `bottom`, `middle`, `top` in that
+    order and discards the leftovers). The SDK never calls it; call it from
+    `decide()` when `valid_actions` contains `"place"`.
+  - The `pineapple` `state_shape` is played instead of refused.
+  - The safe fallback on an OFC turn (`["place"]`, no check, no fold) is the
+    protocol's default placement (section 5.9: each card to the row with the
+    most free capacity, ties toward the bottom), built from that turn's
+    state, after a panic in `decide()` or an illegal action. The session now
+    keeps the last turn's state, so an `action_rejected` retry is the default
+    placement too; a rejection naming a turn this session never saw sends an
+    empty placement, which the server replaces with its own default. It used
+    to echo a bare `place` with empty params.
+  - `tests/ofc.rs` ports the OFC half of the Python
+    `test_variant_backcompat.py` and the JavaScript `ofc.test.ts` against
+    the Python `_ofc_*` frames, value for value, plus full sessions of a bot
+    that declares `ofc` (a whole hand, then a Fantasy Land hand) against a
+    scripted table that rejects illegal placements. As in Python, the frames
+    are not part of the conformance grader.
+
 - **2-7 Triple Draw parity with the Python SDK**
   ([#174](https://github.com/chipzen-ai/chipzen-sdk/issues/174)). A Rust bot
   can now declare `supported_games: Some(vec!["poker".into(), "draw27".into()])`
@@ -54,13 +95,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pinned by `tests/supported_games.rs`, which covers `run_bot` against a
   real local WebSocket server and `run_external_bot` over a scripted
   transport. Declaring a `game_type` asserts you implement everything in
-  that game's Layer 2 spec; Pineapple OFC is not supported yet, so do not
-  declare `ofc` from Rust until that parity ships (#176). Code that builds
+  that game's Layer 2 spec. Code that builds
   these option structs with a struct literal and no `..Default::default()`
   must add the field.
 
 ### Changed
 
+- **Breaking (pre-1.0): `Action` and `ActionKind` are `#[non_exhaustive]`**
+  (#176). A `match` on either outside this crate needs a `_` arm. This
+  release adds `Action::Place` / `ActionKind::Place` (and `Action::Draw` /
+  `ActionKind::Draw`) anyway; from here on a new game's action is not a
+  breaking change. Constructing an `Action` is unchanged.
 - **Breaking (pre-1.0): `Action` is no longer `Copy`**, because
   `Action::Draw` carries its discard list. `Action` is still `Clone`; code
   that copied an `Action` implicitly must `.clone()` it. `Action` and
@@ -70,9 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The session routes on the table's `state_shape`**
   (`docs/protocol/LAYER2-COMMON.md` section 2), as the Python and JavaScript
   SDKs do. The server `hello`'s `game.state_shape` is read before the client
-  `hello` is sent: no descriptor (hold'em) and `27tripledraw` are played;
-  any other shape, including Pineapple OFC's `pineapple` until #176, and a
-  malformed descriptor end the session (`Ok(None)`, with a line on stderr)
+  `hello` is sent: no descriptor (hold'em), `27tripledraw` and `pineapple`
+  are played; any other shape and a malformed descriptor end the session (`Ok(None)`, with a line on stderr)
   instead of being read as hold'em. Previously every table was parsed as
   hold'em, so a bot seated at a variant table played garbage.
 - The client `hello` is serialized from a fixed-order struct instead of a
@@ -98,7 +142,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The "do not declare `draw27` from Rust" notes are gone from `README.md`,
   `packages/rust/README.md` (which now shows a draw turn),
   `docs/DEV-MANUAL.md` §2.8 and `docs/PORTING-BETWEEN-SDKS.md` (§2, §3, §8);
-  the Rust 2-7 Triple Draw cells are flipped. OFC's notes stay until #176.
+  the Rust 2-7 Triple Draw cells are flipped.
+- The "a Rust bot cannot play OFC yet" notes are gone from the same places
+  (`packages/rust/README.md` now shows an OFC turn), and the Rust Pineapple
+  OFC cells are flipped (in `main`, not yet in a crates.io release).
 
 ## [0.3.2] — 2026-10-18
 

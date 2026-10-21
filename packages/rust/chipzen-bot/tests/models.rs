@@ -43,6 +43,7 @@ fn action_kind_round_trips() {
         ActionKind::Raise,
         ActionKind::AllIn,
         ActionKind::Draw,
+        ActionKind::Place,
     ] {
         assert_eq!(ActionKind::parse(kind.as_str()), Some(kind));
     }

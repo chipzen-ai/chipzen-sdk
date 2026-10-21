@@ -72,7 +72,7 @@ pub use external::{
 };
 pub use models::{
     parse_card, parse_game_state, Action, ActionHistoryEntry, ActionKind, Card, DiscardItem,
-    GameState,
+    GameState, Placement,
 };
 pub use retry::{default_retry_policy, RetryPolicy};
 
@@ -80,6 +80,9 @@ pub use retry::{default_retry_policy, RetryPolicy};
 // of the supported public API; the underscore prefix is a convention copied
 // from the Python and JavaScript SDKs.
 #[doc(hidden)]
-pub use client::{_extract_match_id, _run_session, _safe_fallback_action, FallbackAction};
+pub use client::{
+    _extract_match_id, _ofc_default_placement, _run_session, _safe_fallback_action,
+    _safe_fallback_action_for, FallbackAction,
+};
 #[doc(hidden)]
 pub use external::{_set_lobby_recv_timeout_ms, run_external_with_transport, LobbyTransport};

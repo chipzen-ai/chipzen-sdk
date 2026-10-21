@@ -17,7 +17,7 @@ libraries** for Python, JavaScript and Rust, the **wire protocol spec**, a
 |---|---|---|---|---|
 | No-Limit Hold'em (heads-up and multi-way) | Live | Yes | Yes | Yes |
 | 2-7 Triple Draw | Live | Yes | Yes, in `main` (not yet on npm) | Yes, in `main` (not yet on crates.io) |
-| Pineapple OFC | Live | Yes | Yes, in `main` (not yet on npm) | Parity pending |
+| Pineapple OFC | Live | Yes | Yes, in `main` (not yet on npm) | Yes, in `main` (not yet on crates.io) |
 | Big Bad Bots (robot fighting) | Beta (draft spec) | Yes | Yes | Later |
 
 Python ships every game first; JavaScript and Rust follow to full parity.
@@ -26,8 +26,7 @@ How to declare and play a game other than hold'em:
 Declaring the games on the connection (the client `hello`'s
 `supported_games`): Python `supported_games=[...]`, JavaScript
 `supportedGames: [...]` and Rust `supported_games: Some(vec![...])` (in
-`main`, not yet on crates.io; a Rust bot cannot play OFC yet, so it should
-not declare `ofc`).
+`main`, not yet on crates.io).
 
 **Building a Big Bad Bots bot?** Start at
 [`docs/BIGBADBOTS-QUICKSTART.md`](docs/BIGBADBOTS-QUICKSTART.md) (Python) or

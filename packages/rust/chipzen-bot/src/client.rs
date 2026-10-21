@@ -72,10 +72,10 @@ pub struct RunBotOptions {
     /// not declared the seat's game is rejected before it is seated (close
     /// `4002`). Declaring a `game_type` asserts you implement everything in
     /// that game's Layer 2 spec, so do not declare a game your `decide()`
-    /// cannot play. This release plays `poker` and `draw27` (2-7 Triple
-    /// Draw: branch on `state.is_draw_phase`, see [`crate::Bot::decide_draw`]).
-    /// It cannot parse a Pineapple OFC table yet and ends the session there,
-    /// so do not declare `ofc` (chipzen-ai/chipzen-sdk#176).
+    /// cannot play. This release plays `poker`, `draw27` (2-7 Triple Draw:
+    /// branch on `state.is_draw_phase`, see [`crate::Bot::decide_draw`]) and
+    /// `ofc` (Pineapple OFC: branch on `"place"` in `state.valid_actions`,
+    /// see [`crate::Bot::decide_placement`]).
     pub supported_games: Option<Vec<String>>,
 }
 
@@ -349,8 +349,12 @@ where
     // chipzen-ai/chipzen-sdk#194): a hold'em or 27TD turn state carries
     // neither `your_seat` nor `dealer_seat`, so the seat is taken from
     // `match_start` (or `reconnected`) and the button from each
-    // `round_start`. A turn state that does carry them wins.
+    // `round_start`. A turn state that does carry them (OFC's does) wins.
     let mut seats = Seats::default();
+    // The last turn this session answered, kept so an `action_rejected` for
+    // it can be retried with a fallback built from that turn's state (an OFC
+    // default placement needs the cards and the row capacity).
+    let mut last_turn: Option<(String, GameState)> = None;
     while let Some(raw) = reader.next().await? {
         let msg: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
@@ -406,6 +410,7 @@ where
                     .to_string();
                 let state = parse_turn(&msg, &seats);
                 let (action, latency_ms) = decide_timed(bot, &state, &msg, ctx.safe_mode)?;
+                last_turn = Some((request_id.clone(), state));
                 send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
                 call_hook("on_decision_latency", ctx.safe_mode, || {
                     bot.on_decision_latency(latency_ms)
@@ -426,7 +431,14 @@ where
                             .collect()
                     })
                     .unwrap_or_else(|| vec!["fold".to_string()]);
-                let fallback = _safe_fallback_action(&valid_actions)?;
+                // A rejection of a turn this session never saw has no state:
+                // an OFC fallback is then an empty placement, which the
+                // server rejects and replaces with its own default.
+                let rejected_state = last_turn
+                    .as_ref()
+                    .filter(|(id, _)| *id == request_id)
+                    .map(|(_, state)| state);
+                let fallback = _safe_fallback_action_for(&valid_actions, rejected_state)?;
                 send_turn_action(writer, &ctx.match_id, &request_id, fallback).await?;
             }
             "reconnected" => {
@@ -456,6 +468,7 @@ where
                         let state = parse_turn(pending, &seats);
                         let (action, latency_ms) =
                             decide_timed(bot, &state, pending, ctx.safe_mode)?;
+                        last_turn = Some((request_id.clone(), state));
                         send_turn_action(writer, &ctx.match_id, &request_id, action).await?;
                         call_hook("on_decision_latency", ctx.safe_mode, || {
                             bot.on_decision_latency(latency_ms)
@@ -483,11 +496,10 @@ where
 }
 
 /// The `state_shape`s this release parses with [`parse_game_state`]: `None`
-/// is a server `hello` with no `game` descriptor, which means NLHE, and
-/// `"27tripledraw"` is 2-7 Triple Draw. Pineapple OFC (`"pineapple"`) is not
-/// here yet (chipzen-ai/chipzen-sdk#176), so an OFC table is refused rather
-/// than read as hold'em.
-const POKER_STATE_SHAPES: &[Option<&str>] = &[None, Some("27tripledraw")];
+/// is a server `hello` with no `game` descriptor, which means NLHE,
+/// `"27tripledraw"` is 2-7 Triple Draw and `"pineapple"` is Pineapple OFC.
+/// Any other shape is refused rather than read as hold'em.
+const POKER_STATE_SHAPES: &[Option<&str>] = &[None, Some("27tripledraw"), Some("pineapple")];
 
 /// The `state_shape` a server `hello` advertises: `Ok(None)` when it has no
 /// `game` descriptor (poker), `Err` when the descriptor is present but does
@@ -526,7 +538,8 @@ fn self_seat(msg: &Value) -> Option<i64> {
 }
 
 /// Parse a `turn_request` with the session's seat context filled in where
-/// the turn state does not carry it (a hold'em or 27TD state never does).
+/// the turn state does not carry it (a hold'em or 27TD state never does; an
+/// OFC state does, and its own values win).
 fn parse_turn(msg: &Value, seats: &Seats) -> GameState {
     let mut state = parse_game_state(msg);
     let raw_int = |key: &str| {
@@ -617,7 +630,10 @@ fn decide_timed<B: Bot>(
             }
             // safe_mode: fold the panic into a safe action so the match
             // continues. valid_actions drives check-vs-fold-vs-first-valid.
-            return Ok((_safe_fallback_action(&state.valid_actions)?, latency_ms));
+            return Ok((
+                _safe_fallback_action_for(&state.valid_actions, Some(state))?,
+                latency_ms,
+            ));
         }
     };
 
@@ -633,7 +649,7 @@ fn decide_timed<B: Bot>(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|| state.valid_actions.clone());
-        Ok((_safe_fallback_action(&valid)?, latency_ms))
+        Ok((_safe_fallback_action_for(&valid, Some(state))?, latency_ms))
     }
 }
 
@@ -685,16 +701,17 @@ fn action_is_legal(action: &Action, valid: &[String]) -> bool {
 /// A safe-fallback selection resolved from the server's `valid_actions`.
 ///
 /// `Typed` carries one of the [`Action`]s this SDK models. `Raw` is the
-/// escape hatch for an action string it does *not* model — a variant
-/// table's `place`, or a `raise` whose amount the fallback path cannot
-/// know. A `Raw` action is echoed verbatim on the wire with empty
+/// escape hatch for an action string it does *not* model — an unmodelled
+/// variant table's action, or a `raise` whose amount the fallback path
+/// cannot know. A `Raw` action is echoed verbatim on the wire with empty
 /// `params`, exactly mirroring the Python SDK's
 /// `Action(action=valid_actions[0])`.
 ///
 /// Kept as a separate fallback-only type: an action kind [`Action`] does
 /// not model yet still needs an answer, and bots only ever *return* an
-/// [`Action`]. (2-7 Triple Draw's `draw` is modelled, as [`Action::Draw`],
-/// so a draw turn's fallback is a typed stand pat.)
+/// [`Action`]. (2-7 Triple Draw's `draw` and Pineapple OFC's `place` are
+/// modelled, so their fallbacks are a typed stand pat and a typed default
+/// placement.)
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FallbackAction {
@@ -720,10 +737,12 @@ impl FallbackAction {
 
 /// Pick a safe action from the legal set: prefer `check`, else `fold`,
 /// else a **stand pat** on a 2-7 Triple Draw draw turn (`["draw"]`, where
-/// the stand pat is also the server's own timeout substitute), else the
-/// **first valid action** the server offered. Public-but-hidden
-/// so the conformance harness can use the same logic when it doesn't have
-/// a real bot to drive.
+/// the stand pat is also the server's own timeout substitute), else an
+/// **empty placement** on a Pineapple OFC turn (`["place"]`; with no turn
+/// state there is nothing to place, so the server applies its own default,
+/// see [`_safe_fallback_action_for`]), else the **first valid action** the
+/// server offered. Public-but-hidden so the conformance harness can use the
+/// same logic when it doesn't have a real bot to drive.
 ///
 /// This mirrors the Python SDK's `_safe_fallback_action`
 /// (`packages/python/src/chipzen/client.py`) so both SDKs degrade
@@ -741,6 +760,19 @@ impl FallbackAction {
 /// nothing legal, so there is no action to fall back to. An explicit error
 /// beats guessing `fold` and having it rejected forever.
 pub fn _safe_fallback_action(valid_actions: &[String]) -> Result<FallbackAction, Error> {
+    _safe_fallback_action_for(valid_actions, None)
+}
+
+/// [`_safe_fallback_action`] with the turn's state, which a Pineapple OFC
+/// turn (`["place"]`, no check, no fold) needs: there the fallback is the
+/// protocol's default placement built from `state` (see
+/// [`_ofc_default_placement`]). The session passes the state of the turn
+/// being answered, and on an `action_rejected` the state of the turn it
+/// rejects (`None` for a turn this session never saw).
+pub fn _safe_fallback_action_for(
+    valid_actions: &[String],
+    state: Option<&GameState>,
+) -> Result<FallbackAction, Error> {
     if valid_actions.iter().any(|a| a == "check") {
         return Ok(FallbackAction::Typed(Action::Check));
     }
@@ -752,6 +784,12 @@ pub fn _safe_fallback_action(valid_actions: &[String]) -> Result<FallbackAction,
     // timeout default (DRAW27-GAME-STATE-PROTOCOL.md section 5.5).
     if valid_actions.iter().any(|a| a == "draw") {
         return Ok(FallbackAction::Typed(Action::stand_pat()));
+    }
+    // A Pineapple OFC turn offers exactly `["place"]`. The protocol's default
+    // placement is also the server's own timeout substitute
+    // (OFC-GAME-STATE-PROTOCOL.md section 5.9).
+    if valid_actions.iter().any(|a| a == "place") {
+        return Ok(FallbackAction::Typed(_ofc_default_placement(state)));
     }
 
     let Some(first) = valid_actions.first() else {
@@ -776,6 +814,59 @@ pub fn _safe_fallback_action(valid_actions: &[String]) -> Result<FallbackAction,
         // amount this path cannot know — is echoed verbatim, as Python does.
         _ => FallbackAction::Raw(first.clone()),
     })
+}
+
+/// Pineapple OFC: the protocol's default placement
+/// (OFC-GAME-STATE-PROTOCOL.md section 5.9), which is also what the server
+/// substitutes for a seat that times out: each card goes to the row with
+/// the most remaining capacity, ties toward the back (`bottom`, then
+/// `middle`, then `top`). The first `state.place` of `state.cards_to_place`
+/// are placed and the next `state.must_discard` are discarded, so the result
+/// is legal for any state the server sends.
+///
+/// Without a state (an `action_rejected` for a turn this session never saw)
+/// it is an empty placement, which the server rejects and then applies its
+/// own default for, as it would for no answer at all.
+pub fn _ofc_default_placement(state: Option<&GameState>) -> Action {
+    let Some(state) = state else {
+        return Action::place(Vec::<(String, String)>::new(), Vec::<String>::new());
+    };
+    let mut capacity = state.row_capacity.clone();
+    // Back to front, then any row name this release has not heard of.
+    let mut order: Vec<String> = ["bottom", "middle", "top"]
+        .into_iter()
+        .filter(|name| capacity.contains_key(*name))
+        .map(String::from)
+        .collect();
+    for name in capacity.keys() {
+        if !order.contains(name) {
+            order.push(name.clone());
+        }
+    }
+
+    let cards = &state.cards_to_place;
+    let place = usize::try_from(state.place).unwrap_or(0).min(cards.len());
+    let mut placements: Vec<(String, String)> = Vec::new();
+    for card in &cards[..place] {
+        let mut best: Option<&String> = None;
+        for row in &order {
+            let free = capacity.get(row).copied().unwrap_or(0);
+            let best_free = best.and_then(|b| capacity.get(b).copied()).unwrap_or(0);
+            // Strictly greater, so a tie keeps the row nearer the back.
+            if free > best_free {
+                best = Some(row);
+            }
+        }
+        let Some(best) = best else { break };
+        placements.push((card.clone(), best.clone()));
+        if let Some(free) = capacity.get_mut(best) {
+            *free -= 1;
+        }
+    }
+    let discard_end = place
+        .saturating_add(usize::try_from(state.must_discard).unwrap_or(0))
+        .min(cards.len());
+    Action::place(placements, &cards[place..discard_end])
 }
 
 /// Pull `match_id` out of a Chipzen WebSocket URL. Path shape is
