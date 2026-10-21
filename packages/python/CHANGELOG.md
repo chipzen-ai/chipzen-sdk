@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-21
+
 ### Added
 
 - **Big Bad Bots models (`chipzen.bigbadbots`), part 1 of #139.** Typed,
@@ -462,6 +464,7 @@ debugging at the wire level:
 Apache-2.0 (changed from MIT in earlier internal builds — aligns with
 the chipzen-sdk repo's root LICENSE).
 
+[0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.5.0
 [0.4.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.4.0
 [0.3.3]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.3
 [0.3.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.3.2
