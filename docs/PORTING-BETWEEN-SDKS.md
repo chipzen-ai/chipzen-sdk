@@ -69,6 +69,7 @@ exact same order driven by the same protocol messages.
 | Round result, simplified | `on_hand_result` *(Python only)* | — |
 | Match end | `on_match_end` | `onMatchEnd` |
 | 2-7 Triple Draw draw turn *(optional, never called by the SDK; call it from `decide`)* | `decide_draw` *(Python; Rust parity pending)* | `decideDraw` |
+| Pineapple OFC placement turn *(optional, never called by the SDK; call it from `decide`)* | `decide_placement` *(Python; Rust parity pending)* | `decidePlacement` |
 
 Python additionally exposes the `on_hand_start` / `on_hand_result`
 convenience wrappers that do the common parsing work
@@ -102,6 +103,20 @@ invariants at construction time.
 | JavaScript | `Action.discard(["Ah", "Kd"])` | `Action.standPat()` |
 | Rust | Parity pending | Parity pending |
 
+Pineapple OFC's `place` action
+([`protocol/OFC-GAME-STATE-PROTOCOL.md`](protocol/OFC-GAME-STATE-PROTOCOL.md)
+§3.5) puts the placements and the discard under `params`:
+
+| | place (card-to-row pairs, then the discard) |
+|---|---|
+| Python | `Action.place([("Ks", "bottom"), ("Js", "middle")], discard="9s")` |
+| JavaScript | `Action.place([["Ks", "bottom"], ["Js", "middle"]], "9s")` |
+| Rust | Parity pending |
+
+Both also accept `{card, row}` objects for the pairs and a list for the
+discard. An OFC turn offers neither `check` nor `fold`, so there the safe
+fallback is a legal default placement rather than a fold.
+
 The `N` in raises is the **target total bet** (matching the wire field
 name `amount`), not the raise increment over the current bet. All three
 SDKs validate that `state.min_raise <= N <= state.max_raise` before sending
@@ -133,6 +148,17 @@ fields verbatim. JavaScript bridges to camelCase in the parser
 | `max_discard` | `maxDiscard` |
 | `your_draw_counts` | `yourDrawCounts` |
 | `opponent_draw_counts` | `opponentDrawCounts` |
+| `your_rows` (Pineapple OFC) | `yourRows` |
+| `opponent_rows` | `opponentRows` |
+| `cards_to_place` | `cardsToPlace` |
+| `place` | `place` |
+| `must_discard` | `mustDiscard` |
+| `row_capacity` | `rowCapacity` |
+| `royalties` | `royalties` |
+| `opponent_royalties` | `opponentRoyalties` |
+| `point_value` | `pointValue` |
+| `in_fantasy_land` | `inFantasyLand` |
+| `phase_sequence` | `phaseSequence` |
 
 If you log raw wire payloads (e.g. from `on_round_start(message)` in any
 language), you'll always see snake_case keys regardless of which SDK you're
@@ -243,9 +269,6 @@ section 2). Omitting it declares nothing, which the platform reads as
 
 In both SDKs a Big Bad Bots base class (`BigBadBotsBot`) declares
 `["bigbadbots"]` when you pass nothing, and an explicit list replaces it.
-The JavaScript SDK does not parse Pineapple OFC tables yet (see the support
-table in DEV-MANUAL §2.8), so a JavaScript bot should not declare `ofc`
-until that parity lands.
 
 ## See also
 

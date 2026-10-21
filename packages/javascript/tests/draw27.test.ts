@@ -202,9 +202,8 @@ describe("a 27TD turn_request parses", () => {
     expect(state[field]).toEqual(expected);
   });
 
-  it("the 27TD shape is a poker shape; OFC is not yet (chipzen-sdk#175)", () => {
+  it("the 27TD shape is a poker shape", () => {
     expect(POKER_STATE_SHAPES.has("27tripledraw")).toBe(true);
-    expect(POKER_STATE_SHAPES.has("pineapple")).toBe(false);
     const state = parseTurnRequest(_draw27TurnRequest(), "27tripledraw") as GameState;
     expect(state.maxDiscard).toBe(5);
   });
@@ -545,16 +544,6 @@ describe("a JavaScript bot that declares draw27", () => {
     // The bot saw a draw turn and then a betting turn.
     expect(bot.seen.map((s) => s.isDrawPhase)).toEqual([true, false]);
     expect(errorSpy).not.toHaveBeenCalled();
-  });
-
-  it("a Pineapple OFC table still ends the session before the client hello (chipzen-sdk#175)", async () => {
-    const { ws, end } = await play(new Draw27Bot(), [
-      { type: "hello", game: { game_type: "ofc", state_shape: "pineapple" } },
-      _draw27TurnRequest(),
-    ]);
-    expect(end).toBeNull();
-    expect(ws.parsed.find((m) => m.type === "hello")).toBeUndefined();
-    expect(String(errorSpy.mock.calls[0]?.[0])).toMatch(/cannot parse state_shape "pineapple"/);
   });
 
   it("a throw on a draw turn sends a stand pat, not a fold", async () => {

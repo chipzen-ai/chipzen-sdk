@@ -32,6 +32,8 @@ const MATCH_ID = "m_conformance_test";
 export const NLHE_ACTIONS: ReadonlySet<string> = new Set(["fold", "check", "call", "raise", "all_in"]);
 /** 2-7 Triple Draw's vocabulary: the hold'em one plus `draw`. Opt-in, per scenario. */
 export const DRAW27_ACTIONS: ReadonlySet<string> = new Set([...NLHE_ACTIONS, "draw"]);
+/** Pineapple OFC's vocabulary: `place` and nothing else. Opt-in, per scenario. */
+export const OFC_ACTIONS: ReadonlySet<string> = new Set(["place"]);
 
 // ---------------------------------------------------------------------------
 // Mock WebSocket — replays a scripted message sequence
@@ -487,6 +489,274 @@ export function _draw27Script(
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Pineapple OFC fixtures
+//
+// Fixtures ONLY, like the 27TD ones above and for the same reason: they are
+// deliberately NOT wired into `runConformanceChecks`. The frames are the
+// Python SDK's `_ofc_*` fixtures (`packages/python/src/chipzen/conformance.py`)
+// value for value; the shapes come from
+// docs/protocol/OFC-GAME-STATE-PROTOCOL.md, the authority.
+// ---------------------------------------------------------------------------
+
+/** The server `hello`'s `game` descriptor at an OFC table (OFC section 1.1). */
+export function _ofcGameDescriptor(): Record<string, unknown> {
+  return {
+    game_type: "ofc",
+    variant: "pineapple",
+    actions: ["place"],
+    phases: ["deal1", "street2", "street3", "street4", "street5", "complete"],
+    state_shape: "pineapple",
+  };
+}
+
+/**
+ * The server `hello` at an OFC table. `withDescriptor` (the default) adds the
+ * `game` descriptor a live OFC table sends; without it the frame is the
+ * Python fixture's `_server_hello(game_type="ofc_pineapple")`.
+ */
+export function _ofcServerHello(withDescriptor = true): Record<string, unknown> {
+  return serverHello("ofc_pineapple", withDescriptor ? _ofcGameDescriptor() : undefined);
+}
+
+/**
+ * `match_start` for a heads-up Pineapple OFC table. `scoring` is the key to
+ * read first: `"points"`. There is NO `betting_structure` key and no blinds.
+ * `point_value` is the ruled quantity (chips per point); `bank_points` is its
+ * derivation, never a second source of truth.
+ */
+export function _ofcMatchStart(seq = 2): Record<string, unknown> {
+  return {
+    type: "match_start",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:06.000Z",
+    seats: [
+      { seat: 0, participant_id: "p0", display_name: "Opp", is_self: false },
+      { seat: 1, participant_id: "p1", display_name: "You", is_self: true },
+    ],
+    game_config: {
+      variant: "pineapple",
+      starting_stack: 10000,
+      scoring: "points",
+      point_value: 50,
+      bank_points: 200,
+      rows: { top: 3, middle: 5, bottom: 5 },
+      cards_per_seat: 17,
+      cards_placed: 13,
+      cards_per_street: [5, 3, 3, 3, 3],
+      fantasy_land: {
+        cards: 14,
+        progressive: false,
+        middle_stay: null,
+        entry_min_pair_rank: 12,
+      },
+      min_seats: 2,
+      max_seats: 3,
+      rated_max_seats: 2,
+      escalation_unit: "point_value",
+      escalation_interval: 20,
+      num_players: 2,
+    },
+    turn_timeout_ms: 5000,
+  };
+}
+
+/** `round_start` for OFC: the opening set of five, plus the public seats. */
+export function _ofcRoundStart(seq = 3): Record<string, unknown> {
+  const emptySeat = (seat: number): Record<string, unknown> => ({
+    seat,
+    rows: { top: [], middle: [], bottom: [] },
+    placed: 0,
+    royalties: { top: 0, middle: 0, bottom: 0 },
+    fouled: false,
+    stack: 10000,
+    in_fantasy_land: false,
+    hidden: false,
+  });
+  return {
+    type: "round_start",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:07.000Z",
+    round_id: "r_1",
+    round_number: 1,
+    state: {
+      hand_number: 1,
+      dealer_seat: 0,
+      your_seat: 1,
+      your_hole_cards: ["2c", "3d", "4h", "5s", "6s"],
+      cards_to_place: ["2c", "3d", "4h", "5s", "6s"],
+      your_rows: { top: [], middle: [], bottom: [] },
+      pot: 0,
+      post_blind_stacks: [10000, 10000],
+      point_value: 50,
+      in_fantasy_land: false,
+      phase_sequence: ["deal1", "street2", "street3", "street4", "street5", "complete"],
+      seats: [emptySeat(0), emptySeat(1)],
+      stacks: [10000, 10000],
+      deck_commitment: "",
+    },
+  };
+}
+
+/**
+ * `turn_request` for an OFC pineapple street: place 2, discard 1.
+ *
+ * `valid_actions` is exactly `["place"]` on every OFC turn: the SHAPE of a
+ * legal placement lives in the state (`cards_to_place`, `place`,
+ * `must_discard`, `row_capacity`). `board` is always `[]`, and `to_call` /
+ * `min_raise` / `max_raise` are always `0`: OFC has no betting.
+ */
+export function _ofcTurnRequest(seq = 4, requestId = "req_1"): Record<string, unknown> {
+  return {
+    type: "turn_request",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:07.500Z",
+    seat: 1,
+    request_id: requestId,
+    timeout_ms: 5000,
+    valid_actions: ["place"],
+    state: {
+      hand_number: 1,
+      phase: "street2",
+      board: [],
+      your_hole_cards: ["9s", "Js", "Ks"],
+      pot: 0,
+      your_stack: 10000,
+      opponent_stacks: [10000],
+      to_call: 0,
+      min_raise: 0,
+      max_raise: 0,
+      dealer_seat: 0,
+      your_seat: 1,
+      your_rows: { top: ["2c"], middle: ["3d", "4h"], bottom: ["5s", "6s"] },
+      opponent_rows: { "0": { top: ["7c"], middle: ["8d", "9h"], bottom: ["Ts", "Jc"] } },
+      cards_to_place: ["9s", "Js", "Ks"],
+      place: 2,
+      must_discard: 1,
+      row_capacity: { top: 2, middle: 3, bottom: 3 },
+      royalties: { top: 0, middle: 0, bottom: 0 },
+      opponent_royalties: { "0": { top: 0, middle: 0, bottom: 0 } },
+      point_value: 50,
+      in_fantasy_land: false,
+      phase_sequence: ["deal1", "street2", "street3", "street4", "street5", "complete"],
+      action_history: [
+        // Placement mask for the opening set, 2 bits per dealt card in deal
+        // order (0 discard, 1 top, 2 middle, 3 bottom): 2c->top, 3d->middle,
+        // 4h->middle, 5s->bottom, 6s->bottom, which is
+        // 1 + (2<<2) + (2<<4) + (3<<6) + (3<<8) = 1001. It decodes to exactly
+        // the `your_rows` above; deal1 discards nothing, so no code is 0.
+        { seat: 1, action: "place", amount: 1001, phase: "deal1", is_timeout: false },
+      ],
+    },
+  };
+}
+
+/**
+ * `turn_result` for a placement: `amount` is the placement MASK (two bits
+ * per dealt card, in deal order: 0 discard, 1 top, 2 middle, 3 bottom). The
+ * trail carries masks and never cards, which keeps a hidden Fantasy Land
+ * board hidden.
+ */
+export function _ofcTurnResult(seq = 5): Record<string, unknown> {
+  return {
+    type: "turn_result",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:08.000Z",
+    is_timeout: false,
+    details: { seat: 1, action: "place", amount: 14 },
+  };
+}
+
+/**
+ * `round_result` for OFC: the showdown entries carry the OFC breakdown.
+ * `pot` is the VIRTUAL pot (the chips transferred at settlement);
+ * `hand_rank` is the bottom row's category as a display string, not an NLHE
+ * enum value. Every seat appears: OFC has no fold.
+ */
+export function _ofcRoundResult(seq = 6): Record<string, unknown> {
+  return {
+    type: "round_result",
+    match_id: MATCH_ID,
+    seq,
+    server_ts: "2026-04-13T14:30:12.000Z",
+    round_id: "r_1",
+    round_number: 1,
+    result: {
+      hand_number: 1,
+      winner_seats: [1],
+      pot: 300,
+      payouts: [{ seat: 1, amount: 300, refund: 0 }],
+      showdown: [
+        {
+          seat: 0,
+          hole_cards: ["7c", "7d", "7h", "9c", "9d", "9h", "2c", "2d", "Ac", "Ad", "Ah", "Kc", "Kd"],
+          hand_rank: "Two Pair",
+          best_hand: ["Ac", "Ad", "Ah", "Kc", "Kd"],
+          rows: {
+            top: ["7c", "7d", "7h"],
+            middle: ["9c", "9d", "9h", "2c", "2d"],
+            bottom: ["Ac", "Ad", "Ah", "Kc", "Kd"],
+          },
+          row_royalties: { top: 10, middle: 12, bottom: 0 },
+          royalties: 22,
+          fouled: false,
+          complete: true,
+          points: -6,
+          net_chips: -300,
+          fantasy_land: true,
+          in_fantasy_land: false,
+        },
+        {
+          seat: 1,
+          hole_cards: ["2c", "3d", "4h", "5s", "6s", "9s", "Js", "Ks", "Qs", "Th", "8c", "7d", "5h"],
+          hand_rank: "Flush",
+          best_hand: ["Ks", "Qs", "Js", "9s", "5s"],
+          rows: {
+            top: ["2c", "3d", "4h"],
+            middle: ["6s", "8c", "7d", "5h", "Th"],
+            bottom: ["Ks", "Qs", "Js", "9s", "5s"],
+          },
+          row_royalties: { top: 0, middle: 0, bottom: 4 },
+          royalties: 4,
+          fouled: false,
+          complete: true,
+          points: 6,
+          net_chips: 300,
+          fantasy_land: false,
+          in_fantasy_land: false,
+        },
+      ],
+      action_history: [],
+      stacks: [9700, 10300],
+      deck_commitment: "",
+      deck_reveal: null,
+    },
+  };
+}
+
+/**
+ * Handshake + one OFC placement turn + round_result + match_end. The hello
+ * carries the OFC `game` descriptor unless `withDescriptor` is false (the
+ * Python fixture's hello, which has none).
+ */
+export function _ofcScript(
+  { withDescriptor = true }: { withDescriptor?: boolean } = {},
+): Array<Record<string, unknown>> {
+  return [
+    _ofcServerHello(withDescriptor),
+    _ofcMatchStart(),
+    _ofcRoundStart(),
+    _ofcTurnRequest(),
+    _ofcTurnResult(),
+    _ofcRoundResult(),
+    matchEnd(7),
+  ];
+}
+
 function fullMatchScript(): string[] {
   return [
     serverHello(),
@@ -622,7 +892,8 @@ function classifyTurnAction(
 
 /**
  * Internal, for tests: {@link classifyTurnAction}. `legalActions` defaults to
- * the hold'em vocabulary; pass {@link DRAW27_ACTIONS} for a 27TD exchange.
+ * the hold'em vocabulary; pass {@link DRAW27_ACTIONS} for a 27TD exchange or
+ * {@link OFC_ACTIONS} for an OFC one.
  */
 export const _classifyTurnAction = classifyTurnAction;
 

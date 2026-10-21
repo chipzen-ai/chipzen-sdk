@@ -18,6 +18,7 @@ import { BigBadBotsBot, fallbackAction, isAnswerShaped } from "./bigbadbots_bot.
 import type { Bot } from "./bot.js";
 import {
   Action,
+  type GameState,
   parseGameState,
   POKER_STATE_SHAPES,
   stateShapeOf,
@@ -230,14 +231,14 @@ function _decide(
           `bot.decide() returned a non-Action value (${typeof action})`,
         );
       }
-      action = _safeFallbackAction(validActions);
+      action = _safeFallbackAction(validActions, state);
     }
   } catch (err) {
     if (err instanceof BotDecisionError) throw err;
     if (!safeMode) {
       throw new BotDecisionError(err instanceof Error ? err.message : String(err));
     }
-    action = _safeFallbackAction(validActions);
+    action = _safeFallbackAction(validActions, state);
   }
   return { action, latencyMs: Date.now() - start };
 }
@@ -352,6 +353,10 @@ export async function _runSession(
 
   // --- Message loop -----------------------------------------------------
   let lastSeq = 0;
+  // The last turn we answered, kept so an `action_rejected` for it can be
+  // retried with a fallback built from that turn's state (an OFC default
+  // placement needs the cards and the row capacity).
+  let lastTurn: { requestId: string; state: GameState } | null = null;
   for (;;) {
     const raw = await reader.next();
     if (raw === null) {
@@ -409,6 +414,7 @@ export async function _runSession(
         }
         const requestId = (msg.request_id as string | undefined) ?? "";
         const state = parseGameState(msg);
+        lastTurn = { requestId, state };
         // _decide handles timing + safeMode; under safeMode=false it
         // throws BotDecisionError, which propagates out of _runSession.
         const { action, latencyMs } = _decide(
@@ -436,7 +442,8 @@ export async function _runSession(
         // echoing the original request_id.
         const requestId = (msg.request_id as string | undefined) ?? "";
         const validActions = (msg.valid_actions as string[] | undefined) ?? ["fold"];
-        const fallback = _safeFallbackAction(validActions);
+        const rejectedState = lastTurn?.requestId === requestId ? lastTurn.state : undefined;
+        const fallback = _safeFallbackAction(validActions, rejectedState);
         await sendJson(ws, {
           type: "turn_action",
           match_id: ctx.matchId,
@@ -470,13 +477,16 @@ export async function _runSession(
           await bbb.answer(pending);
         } else if (pending && pending.type === "turn_request") {
           // Replay the pending turn exactly like a fresh turn_request,
-          // but with the seat re-learned from the reconnected frame
-          // (the pending state itself does not carry `your_seat`).
+          // but with the seat re-learned from the reconnected frame. A
+          // hold'em or 27TD state does not carry `your_seat`; an OFC state
+          // does, and the state's own value wins (as in the Python SDK).
           const requestId = (pending.request_id as string | undefined) ?? "";
           let state = parseGameState(pending);
-          if (relearnedSeat !== null) {
+          const pendingState = pending.state as Record<string, unknown> | undefined;
+          if (relearnedSeat !== null && typeof pendingState?.your_seat !== "number") {
             state = { ...state, yourSeat: relearnedSeat };
           }
+          lastTurn = { requestId, state };
           const { action, latencyMs } = _decide(
             bot,
             state,
@@ -786,13 +796,68 @@ export function _waitForOpen(ws: WebSocket): Promise<void> {
   });
 }
 
-export function _safeFallbackAction(validActions: string[] | undefined): Action {
+/**
+ * The action sent in place of the bot's when `decide()` throws or returns a
+ * non-`Action` (under safeMode), and on an `action_rejected` retry.
+ *
+ * `check` when legal, else `fold`, mirroring the server's own auto-action
+ * (TRANSPORT-PROTOCOL section 8.12). The variant turns that offer neither
+ * get that variant's protocol default instead:
+ *
+ * - a 2-7 Triple Draw draw turn (`["draw"]`): a stand pat;
+ * - a Pineapple OFC turn (`["place"]`): the default placement of
+ *   OFC-GAME-STATE-PROTOCOL.md section 5.9, built from `state` (see
+ *   {@link _ofcDefaultPlacement}).
+ */
+export function _safeFallbackAction(
+  validActions: readonly string[] | undefined,
+  state?: GameState,
+): Action {
   const valid = new Set(validActions ?? []);
   if (valid.has("check")) return Action.check();
-  // A 2-7 Triple Draw draw turn offers exactly `["draw"]`, so `fold` would
-  // be rejected; a stand pat is the server's own default there.
-  if (valid.has("draw") && !valid.has("fold")) return Action.standPat();
+  if (!valid.has("fold")) {
+    // A 2-7 Triple Draw draw turn offers exactly `["draw"]`, so `fold` would
+    // be rejected; a stand pat is the server's own default there.
+    if (valid.has("draw")) return Action.standPat();
+    // An OFC turn offers exactly `["place"]`: no fold, no check.
+    if (valid.has("place")) return _ofcDefaultPlacement(state);
+  }
   return Action.fold();
+}
+
+/**
+ * Pineapple OFC: the protocol's default placement (OFC-GAME-STATE-PROTOCOL.md
+ * section 5.9), which is also what the server substitutes for a seat that
+ * times out: each card goes to the row with the most remaining capacity,
+ * ties toward the back (`bottom`, then `middle`, then `top`). The first
+ * `state.place` of `state.cardsToPlace` are placed and the next
+ * `state.mustDiscard` are discarded, so the result is legal for any state
+ * the server sends.
+ *
+ * Without a state (an `action_rejected` for a turn this session never saw)
+ * it is an empty placement, which the server rejects and then applies its
+ * own default for, as it would for no answer at all.
+ */
+export function _ofcDefaultPlacement(state?: GameState): Action {
+  const capacity: Record<string, number> = { ...(state?.rowCapacity ?? {}) };
+  // Back to front, then any row name this release has not heard of.
+  const order = ["bottom", "middle", "top"].filter((name) => name in capacity);
+  for (const name of Object.keys(capacity)) if (!order.includes(name)) order.push(name);
+
+  const cards = [...(state?.cardsToPlace ?? [])];
+  const place = state?.place ?? 0;
+  const placements: Array<[string, string]> = [];
+  for (const card of cards.slice(0, place)) {
+    let best: string | undefined;
+    for (const row of order) {
+      // Strictly greater, so a tie keeps the row nearer the back.
+      if ((capacity[row] ?? 0) > (best === undefined ? 0 : (capacity[best] ?? 0))) best = row;
+    }
+    if (best === undefined) break;
+    placements.push([card, best]);
+    capacity[best] = (capacity[best] ?? 0) - 1;
+  }
+  return Action.place(placements, cards.slice(place, place + (state?.mustDiscard ?? 0)));
 }
 
 /**
