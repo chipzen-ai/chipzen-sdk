@@ -209,6 +209,27 @@ and may need its own per-match state — pass `|| MyBot::default()`. Python
 accepts either an instance (reused) or a callable / the class (fresh per
 match).
 
+## 8. Declaring the games a bot plays
+
+A bot that plays more than No-Limit Hold'em declares its games on the
+connection: a list of `game_type` strings that goes on the client `hello` as
+`supported_games` ([`protocol/LAYER2-COMMON.md`](protocol/LAYER2-COMMON.md)
+section 2). Omitting it declares nothing, which the platform reads as
+"poker only", and leaves the `hello` unchanged. See
+[`DEV-MANUAL.md` §2.8](DEV-MANUAL.md#28-playing-other-games).
+
+| | Containerized | External-API |
+|---|---|---|
+| Python | `run_bot(url, bot, supported_games=["poker", "draw27"])` | `run_external_bot(bot, ..., supported_games=[...])` |
+| JavaScript | `runBot(url, bot, { supportedGames: [...] })` | `runExternalBot(bot, { ..., supportedGames: [...] })` |
+| Rust | Parity pending | Parity pending |
+
+In both SDKs a Big Bad Bots base class (`BigBadBotsBot`) declares
+`["bigbadbots"]` when you pass nothing, and an explicit list replaces it.
+The JavaScript SDK does not parse 2-7 Triple Draw or Pineapple OFC tables
+yet (see the support table in DEV-MANUAL §2.8), so a JavaScript bot should
+not declare `draw27` or `ofc` until that parity lands.
+
 ## See also
 
 - [`DEV-MANUAL.md`](DEV-MANUAL.md) — the full developer manual for the

@@ -51,6 +51,16 @@ see the
 [JavaScript Big Bad Bots quickstart](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md)
 and the [Rusher starter](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/javascript/starters/bigbadbots/rusher).
 
+**Other games.** A bot plays No-Limit Hold'em unless it declares otherwise.
+To declare the games it can play, pass `supportedGames` to `runBot` or
+`runExternalBot`, a list of `game_type` strings; it goes on the client
+`hello` as `supported_games`. Leaving it out declares
+nothing ("poker only") and keeps the `hello` unchanged. This release parses
+hold'em and Big Bad Bots tables only: until 2-7 Triple Draw and Pineapple OFC
+parity lands, the SDK ends the session at those tables, so do not declare
+`draw27` or `ofc` yet. See
+[DEV-MANUAL §2.8](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/DEV-MANUAL.md#28-playing-other-games).
+
 Lifecycle hooks (`onMatchStart`, `onRoundStart`, `onPhaseChange`,
 `onTurnResult`, `onRoundResult`, `onMatchEnd`) are optional —
 override them if you need to maintain per-match or per-hand state

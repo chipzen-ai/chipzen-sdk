@@ -86,10 +86,19 @@ export interface RunBotOptions {
    */
   userAgent?: string;
   /**
-   * The `game_type`s this client declares in its `hello`
-   * (`supported_games`, LAYER2-COMMON section 2). `undefined` / `null`
-   * declares nothing (poker only), except that a `BigBadBotsBot` declares
-   * `["bigbadbots"]`.
+   * The games this client can actually play, declared in the client
+   * `hello` as `supported_games`: a list of `game_type` strings (`"poker"`,
+   * `"draw27"`, `"ofc"`). See `docs/protocol/LAYER2-COMMON.md` section 2.
+   *
+   * `undefined` / `null` (the default) **omits the field entirely**, and the
+   * platform reads an absent declaration as "poker only", so the default
+   * `hello` is byte-identical to earlier releases. An empty list is sent as
+   * is and means "supports nothing". At a non-poker table a client that has
+   * not declared the seat's game is rejected before it is seated (close
+   * `4002`). Declaring a `game_type` asserts you implement everything in
+   * that game's Layer 2 spec, so do not declare a game your `decide()`
+   * cannot play. A `BigBadBotsBot` declares `["bigbadbots"]` when this is
+   * omitted.
    */
   supportedGames?: readonly string[] | null;
 }
