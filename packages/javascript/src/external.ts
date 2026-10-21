@@ -548,9 +548,11 @@ export interface RunExternalBotOptions {
   /** When `true` (default), a `decide()` throw is folded; `false` propagates a {@link BotDecisionError}. */
   safeMode?: boolean;
   /**
-   * The `game_type`s declared in each match's `hello` (`supported_games`).
-   * `undefined` declares nothing (poker only), except that a
-   * `BigBadBotsBot` declares `["bigbadbots"]`.
+   * The games this client can actually play, declared in each per-match
+   * `hello` as `supported_games`. `undefined` / `null` (the default) omits
+   * the field, which the platform reads as "poker only", so the default
+   * `hello` is unchanged; a `BigBadBotsBot` declares `["bigbadbots"]`. See
+   * `RunBotOptions.supportedGames`.
    */
   supportedGames?: readonly string[] | null;
   /** Stop after this many matches complete. `undefined` runs until the lobby closes / evict. */

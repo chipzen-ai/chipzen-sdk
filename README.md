@@ -23,6 +23,9 @@ libraries** for Python, JavaScript and Rust, the **wire protocol spec**, a
 Python ships every game first; JavaScript and Rust follow to full parity.
 How to declare and play a game other than hold'em:
 [`docs/DEV-MANUAL.md` §2.8](docs/DEV-MANUAL.md#28-playing-other-games).
+Declaring the games on the connection (the client `hello`'s
+`supported_games`): Python `supported_games=[...]` and JavaScript
+`supportedGames: [...]`; Rust parity is pending.
 
 **Building a Big Bad Bots bot?** Start at
 [`docs/BIGBADBOTS-QUICKSTART.md`](docs/BIGBADBOTS-QUICKSTART.md) (Python) or

@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`supported_games` parity with the Python SDK**
+  ([#171](https://github.com/chipzen-ai/chipzen-sdk/issues/171)). The
+  `supportedGames` option on `runBot` and `runExternalBot` (shipped in 0.4.0
+  with Big Bad Bots) now has the Python SDK's guarantees pinned by
+  `tests/supported-games.test.ts`: a declared list such as
+  `["poker", "draw27"]` goes on the client `hello` (never the `authenticate`
+  frame) as `supported_games`, appended after the existing keys; the default
+  omits the field, so the client `hello` is byte-identical to earlier
+  releases; an empty list is sent as is ("supports nothing"), not dropped.
+  Both runners are covered, `runBot` against a real local WebSocket server.
+  Declaring a `game_type` asserts you implement everything in that game's
+  Layer 2 spec; this release still ends the session at a 2-7 Triple Draw or
+  Pineapple OFC table, so do not declare `draw27` or `ofc` from JavaScript
+  until that parity ships.
+
+### Documentation
+
+- The `supportedGames` doc comment matches the Python `supported_games`
+  docstring. `README.md`, `docs/DEV-MANUAL.md` §2.8 and
+  `docs/PORTING-BETWEEN-SDKS.md` give the JavaScript name.
+
 ## [0.4.0] — 2026-10-21
 
 ### Added
