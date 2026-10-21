@@ -27,7 +27,17 @@ from chipzen.client import BotDecisionError, run_bot
 from chipzen.config import ChipzenConfig, ChipzenConfigError, load_chipzen_config
 from chipzen.connect import ConnectionConfig, connect_to_chipzen
 from chipzen.external import run_external_bot
-from chipzen.models import Action, Card, GameState, Player, RoundStart, TurnResult
+from chipzen.models import (
+    Action,
+    Card,
+    GameState,
+    Player,
+    RoundStart,
+    TurnResult,
+    UnsupportedStateShapeError,
+    parse_turn_request,
+    state_shape_of,
+)
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
 
 # `Bot` is the canonical public name. `ChipzenBot` is the historical
@@ -46,6 +56,10 @@ __all__ = [
     "Player",
     "RoundStart",
     "TurnResult",
+    # Parsing by the table's state_shape (Big Bad Bots models: chipzen.bigbadbots)
+    "parse_turn_request",
+    "state_shape_of",
+    "UnsupportedStateShapeError",
     # Containerized / direct-match path
     "run_bot",
     "BotDecisionError",
