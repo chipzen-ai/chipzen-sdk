@@ -38,6 +38,8 @@ from pathlib import Path
 
 SDK_SRC = Path(__file__).resolve().parent.parent / "packages" / "python" / "src"
 OUT_DIR = SDK_SRC / "chipzen" / "fixtures" / "bigbadbots"
+#: The JavaScript SDK's bundled copy of the same files (@chipzen-ai/bot).
+JS_OUT_DIR = SDK_SRC.parent.parent / "javascript" / "src" / "data" / "bigbadbots" / "fixtures"
 
 #: Logs whose every gear-up call (both seats) becomes a fixture: four ordered
 #: pairings of the sample bots, and one match with a forced body.
@@ -292,14 +294,14 @@ def main() -> None:
             )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    JS_OUT_DIR.mkdir(parents=True, exist_ok=True)
     for call, items in pairs.items():
         path = OUT_DIR / f"{call}.json"
         lines = ",\n".join("    " + json.dumps(item, sort_keys=True) for item in items)
-        path.write_text(
-            f'{{\n  "call": "{call}",\n  "pairs": [\n' + lines + "\n  ]\n}\n",
-            encoding="utf-8",
-            newline="\n",
-        )
+        text = f'{{\n  "call": "{call}",\n  "pairs": [\n' + lines + "\n  ]\n}\n"
+        path.write_text(text, encoding="utf-8", newline="\n")
+        # The JavaScript SDK bundles the same bytes (its tests fail on drift).
+        (JS_OUT_DIR / f"{call}.json").write_text(text, encoding="utf-8", newline="\n")
         counts = {
             k: sum(1 for i in items if i["expect"] == k) for k in ("ok", "corrected", "malformed")
         }

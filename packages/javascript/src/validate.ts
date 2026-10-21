@@ -9,7 +9,9 @@
 import { execSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
+import { runBigBadBotsChecks, type BigBadBotsCheckable } from "./bigbadbots_validate.js";
 import { type GameState } from "./models.js";
 import { runConformanceChecks } from "./conformance.js";
 import type { Bot } from "./bot.js";
@@ -56,7 +58,27 @@ export interface ValidateOptions {
   checkConnectivity?: boolean;
   /** Per-conformance-scenario timeout (ms). Default 10s. */
   conformanceTimeoutMs?: number;
+  /**
+   * Which game's checks to run: `"nlhe"` (poker) or `"bigbadbots"`. The
+   * default picks `bigbadbots` for a `BigBadBotsBot` subclass and `nlhe`
+   * otherwise. The Big Bad Bots checks hand the bot every request in the
+   * bundled conformance fixtures and judge each answer the way the server
+   * does (see `bigbadbots_validate.ts`).
+   */
+  game?: ValidateGame;
 }
+
+/** The games `validate` has checks for. */
+export const VALIDATE_GAMES = ["nlhe", "bigbadbots"] as const;
+export type ValidateGame = (typeof VALIDATE_GAMES)[number];
+
+/** Base classes a bot class can extend, and the game each one implies (null: it does not say). */
+const BOT_BASES: Record<string, ValidateGame | null> = {
+  Bot: null,
+  ChipzenBot: null,
+  BigBadBotsBot: "bigbadbots",
+};
+const BOT_BASE_PATTERN = Object.keys(BOT_BASES).join("|");
 
 // Compressed-archive hard cap enforced by the platform
 // (bot_archive_max_compressed_mb = 250). Single, non-tiered cap; the
@@ -111,6 +133,15 @@ export async function validateBot(
   const results: ValidationResult[] = [];
   const maxBytes = options.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
   const timeoutWarn = options.timeoutWarnMs ?? DEFAULT_TIMEOUT_WARN_MS;
+  if (options.game !== undefined && !(VALIDATE_GAMES as readonly string[]).includes(options.game)) {
+    return [
+      {
+        severity: "fail",
+        name: "game",
+        message: `Unknown game ${JSON.stringify(options.game)}; expected one of: ${VALIDATE_GAMES.join(", ")}`,
+      },
+    ];
+  }
 
   let stat;
   try {
@@ -140,6 +171,7 @@ export async function validateBot(
       timeoutWarn,
       options.checkConnectivity ?? false,
       options.conformanceTimeoutMs ?? 10_000,
+      options.game ?? null,
     )),
   );
   return results;
@@ -180,6 +212,7 @@ async function checkDirectory(
   timeoutWarnMs: number,
   checkConnectivity: boolean,
   conformanceTimeoutMs: number,
+  gameOverride: ValidateGame | null,
 ): Promise<ValidationResult[]> {
   const results: ValidationResult[] = [];
 
@@ -207,11 +240,26 @@ async function checkDirectory(
   const source = await fs.readFile(entry, "utf-8");
   results.push(...checkImports(source, path.basename(entry)));
 
-  // bot_class — regex scan for `class X extends Bot`.
+  // bot_class — regex scan for `class X extends Bot` (or BigBadBotsBot).
   const botClassResult = checkBotClass(source);
   results.push(botClassResult);
   if (botClassResult.severity === "fail") return results;
   const botClassName = botClassResult.message.replace("Found bot class: ", "");
+
+  const baseGame = botBaseGame(source, botClassName);
+  const game = gameOverride ?? baseGame ?? "nlhe";
+  if (game === "bigbadbots") {
+    results.push(
+      ...(await checkBigBadBots(
+        entry,
+        source,
+        botClassName,
+        baseGame === "bigbadbots",
+        checkConnectivity,
+      )),
+    );
+    return results;
+  }
 
   // decide_method — regex scan for `decide(` inside the class body.
   const decideResult = checkDecideMethod(source, botClassName);
@@ -302,13 +350,15 @@ function checkImports(source: string, filename: string): ValidationResult[] {
 }
 
 function checkBotClass(source: string): ValidationResult {
-  // Look for `class XYZ extends Bot` or `class XYZ extends ChipzenBot`.
-  const m = /class\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+extends\s+(?:Bot|ChipzenBot)\b/.exec(source);
+  // Look for `class XYZ extends Bot` / `ChipzenBot` / `BigBadBotsBot`.
+  const m = new RegExp(
+    `class\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s+extends\\s+(?:${BOT_BASE_PATTERN})\\b`,
+  ).exec(source);
   if (!m || !m[1]) {
     return {
       severity: "fail",
       name: "bot_class",
-      message: "No class extending Bot (or ChipzenBot) found in entry point",
+      message: "No class extending Bot, ChipzenBot or BigBadBotsBot found in entry point",
     };
   }
   return {
@@ -319,34 +369,127 @@ function checkBotClass(source: string): ValidationResult {
 }
 
 function checkDecideMethod(source: string, className: string): ValidationResult {
-  // Find the class block, then look for `decide(` inside it.
+  return checkMethod(source, className, "decide");
+}
+
+function checkMethod(source: string, className: string, method: string): ValidationResult {
+  // Find the class block, then look for `<method>(` inside it.
   // Imperfect (regex-based; nested classes / minified code can fool it),
   // but matches the Python validator's level of scrutiny for an alpha-tier
   // pre-flight check. The smoke_test below catches the actual runtime case.
+  const name = `${method}_method`;
   const classBlock = extractClassBlock(source, className);
   if (!classBlock) {
     return {
       severity: "fail",
-      name: "decide_method",
-      message: `Could not isolate ${className}'s class body for decide() check`,
+      name,
+      message: `Could not isolate ${className}'s class body for ${method}() check`,
     };
   }
-  if (!/\bdecide\s*\(/.test(stripComments(classBlock))) {
+  if (!new RegExp(`\\b${method}\\s*\\(`).test(stripComments(classBlock))) {
     return {
       severity: "fail",
-      name: "decide_method",
-      message: `${className} does not implement decide()`,
+      name,
+      message: `${className} does not implement ${method}()`,
     };
   }
   return {
     severity: "pass",
-    name: "decide_method",
-    message: `${className}.decide() implemented`,
+    name,
+    message: `${className}.${method}() implemented`,
   };
 }
 
+/** The game the named class's base implies, or null when the base does not say. */
+function botBaseGame(source: string, className: string): ValidateGame | null {
+  const m = new RegExp(
+    `class\\s+${className}\\s+extends\\s+(${BOT_BASE_PATTERN})\\b`,
+  ).exec(source);
+  return m && m[1] ? (BOT_BASES[m[1]] ?? null) : null;
+}
+
+/** The Big Bad Bots half of `checkDirectory`, after the bot class is found. */
+async function checkBigBadBots(
+  entry: string,
+  source: string,
+  className: string,
+  isBigBadBotsBot: boolean,
+  checkConnectivity: boolean,
+): Promise<ValidationResult[]> {
+  const results: ValidationResult[] = [];
+
+  // A BigBadBotsBot needs act() (its one method with no default); any other
+  // bot playing Big Bad Bots answers through decide().
+  const methodResult = checkMethod(source, className, isBigBadBotsBot ? "act" : "decide");
+  results.push(methodResult);
+  if (methodResult.severity === "fail") return results;
+
+  const loaded = await loadBot(entry, className);
+  if ("failure" in loaded) {
+    results.push(loaded.failure);
+    return results;
+  }
+  results.push({ severity: "pass", name: "smoke_test", message: `${className} instantiated` });
+  results.push(...(await runBigBadBotsChecks(loaded.bot as unknown as BigBadBotsCheckable)));
+
+  if (checkConnectivity) {
+    results.push({
+      severity: "warn",
+      name: "connectivity",
+      message:
+        "skipped: the --check-connectivity scenarios are poker sessions; the " +
+        "bigbadbots_* checks above already drive all four Big Bad Bots calls",
+    });
+  }
+  return results;
+}
+
+type LoadedBot = { bot: { decide: (state: GameState) => unknown } } | { failure: ValidationResult };
+
+/** Import the entry point and instantiate `className`, or say why that failed. */
+async function loadBot(entry: string, className: string): Promise<LoadedBot> {
+  let mod: Record<string, unknown>;
+  try {
+    // A file:// URL is required for an ESM dynamic import of an absolute path.
+    mod = (await import(pathToFileURL(path.resolve(entry)).href)) as Record<string, unknown>;
+  } catch (err) {
+    return {
+      failure: {
+        severity: "fail",
+        name: "smoke_test",
+        message: `Failed to import bot: ${(err as Error).message}`,
+      },
+    };
+  }
+
+  const Cls = mod[className];
+  if (typeof Cls !== "function") {
+    return {
+      failure: {
+        severity: "fail",
+        name: "smoke_test",
+        message: `Bot class ${className} not exported from entry point — add \`export { ${className} }\``,
+      },
+    };
+  }
+
+  try {
+    return { bot: new (Cls as { new (): { decide: (state: GameState) => unknown } })() };
+  } catch (err) {
+    return {
+      failure: {
+        severity: "fail",
+        name: "smoke_test",
+        message: `${className}() constructor threw: ${(err as Error).message}`,
+      },
+    };
+  }
+}
+
 function extractClassBlock(source: string, className: string): string | null {
-  const start = source.search(new RegExp(`class\\s+${className}\\s+extends\\s+(?:Bot|ChipzenBot)\\b`));
+  const start = source.search(
+    new RegExp(`class\\s+${className}\\s+extends\\s+(?:${BOT_BASE_PATTERN})\\b`),
+  );
   if (start < 0) return null;
   // Find the opening brace, then scan forward counting braces.
   const braceIdx = source.indexOf("{", start);
@@ -371,41 +514,12 @@ async function smokeTest(
 ): Promise<ValidationResult[]> {
   const results: ValidationResult[] = [];
 
-  let mod: Record<string, unknown>;
-  try {
-    // file:// URL is required for ESM dynamic import of an absolute path.
-    const url = new URL(`file://${path.resolve(entry)}`).toString();
-    mod = (await import(url)) as Record<string, unknown>;
-  } catch (err) {
-    results.push({
-      severity: "fail",
-      name: "smoke_test",
-      message: `Failed to import bot: ${(err as Error).message}`,
-    });
+  const loaded = await loadBot(entry, className);
+  if ("failure" in loaded) {
+    results.push(loaded.failure);
     return results;
   }
-
-  const Cls = mod[className];
-  if (typeof Cls !== "function") {
-    results.push({
-      severity: "fail",
-      name: "smoke_test",
-      message: `Bot class ${className} not exported from entry point — add \`export { ${className} }\``,
-    });
-    return results;
-  }
-
-  let bot: { decide: (state: GameState) => unknown };
-  try {
-    bot = new (Cls as { new (): { decide: (state: GameState) => unknown } })();
-  } catch (err) {
-    results.push({
-      severity: "fail",
-      name: "smoke_test",
-      message: `${className}() constructor threw: ${(err as Error).message}`,
-    });
-    return results;
-  }
+  const bot = loaded.bot;
 
   const mockState = mockGameState();
   const start = performance.now();

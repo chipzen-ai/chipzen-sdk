@@ -25,6 +25,14 @@ kick range) and [Turtle](../packages/python/starters/bigbadbots/turtle/)
 (blocks and punishes). Each folder has its own Dockerfile and a README that
 covers the per-tick time budget and running against prod or staging.
 
+## Big Bad Bots (JavaScript)
+
+[Rusher](../packages/javascript/starters/bigbadbots/rusher/), ported from the
+Python starter to a `BigBadBotsBot` from `@chipzen-ai/bot`, with the same
+IP-protected `bun build --compile` packaging as the JavaScript poker starter.
+Walkthrough:
+[`../docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md`](../docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md).
+
 ## Quick Start (poker)
 
 ### Python

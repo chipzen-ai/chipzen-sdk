@@ -11,10 +11,12 @@ import path from "node:path";
 import { runExternalCli } from "./run_external.js";
 import { scaffoldBot } from "./scaffold.js";
 import {
+  type ValidateGame,
   type ValidationResult,
   validateBot,
   DEFAULT_MAX_UPLOAD_BYTES,
   DEFAULT_TIMEOUT_WARN_MS,
+  VALIDATE_GAMES,
 } from "./validate.js";
 
 const COMMANDS = {
@@ -115,10 +117,23 @@ async function validateCli(args: string[]): Promise<void> {
     console.log("  file_structure  Entry point file (bot.js / bot.mjs / bot.cjs / main.js)");
     console.log("  syntax          Valid JavaScript via `node --check`");
     console.log("  imports         No blocked sandbox modules; warn on fs/fs-promises");
-    console.log("  bot_class       Class extending Bot or ChipzenBot exists");
+    console.log("  bot_class       Class extending Bot, ChipzenBot or BigBadBotsBot exists");
     console.log("  decide_method   Bot class implements decide()");
     console.log("  smoke_test      Bot can be instantiated; decide() returns an Action");
     console.log("  timeout         decide() completes within time limits");
+    console.log("");
+    console.log("A Big Bad Bots bot (a BigBadBotsBot subclass, or --game bigbadbots)");
+    console.log("gets these instead of decide_method / timeout:");
+    console.log("  act_method                   BigBadBotsBot subclass implements act()");
+    console.log("  bigbadbots_choose_body       Every conformance request of each call is");
+    console.log("  bigbadbots_bid               answered, and each answer is judged as the");
+    console.log("  bigbadbots_fit               server judges it: a malformed answer fails,");
+    console.log("  bigbadbots_act               a corrected (illegal) one warns");
+    console.log("  bigbadbots_state_mutation    No handler changes the state it is handed");
+    console.log("  bigbadbots_timing            Answers within timeout_ms and the per-tick");
+    console.log("                               deadline");
+    console.log("  bigbadbots_exit              No handler calls process.exit()");
+    console.log("  bigbadbots_crash_every_tick  act() does not throw on every tick");
     console.log("");
     console.log("With --check-connectivity, four protocol scenarios also run:");
     console.log("  connectivity_full_match    Drive 1 canned match end-to-end");
@@ -137,7 +152,10 @@ async function validateCli(args: string[]): Promise<void> {
       `${DEFAULT_MAX_UPLOAD_BYTES / (1024 * 1024)})`);
     console.log("  --timeout-warn-ms <int>   Warn-threshold for decide() in ms (default: " +
       `${DEFAULT_TIMEOUT_WARN_MS})`);
-    console.log("  --check-connectivity      Run the 4 protocol-conformance scenarios");
+    console.log("  --check-connectivity      Run the 4 protocol-conformance scenarios (poker)");
+    console.log("  --game <auto|nlhe|bigbadbots>");
+    console.log("                            Which game's checks to run (default: auto, which");
+    console.log("                            picks bigbadbots for a BigBadBotsBot subclass)");
     console.log("  --no-color                Disable colored output");
     return;
   }
@@ -149,6 +167,7 @@ async function validateCli(args: string[]): Promise<void> {
       "max-size-mb": { type: "string" },
       "timeout-warn-ms": { type: "string" },
       "check-connectivity": { type: "boolean" },
+      game: { type: "string" },
       "no-color": { type: "boolean" },
     },
     allowPositionals: true,
@@ -167,7 +186,16 @@ async function validateCli(args: string[]): Promise<void> {
     ? parseInt(values["timeout-warn-ms"], 10)
     : DEFAULT_TIMEOUT_WARN_MS;
 
+  const gameArg = values.game ?? "auto";
+  if (gameArg !== "auto" && !(VALIDATE_GAMES as readonly string[]).includes(gameArg)) {
+    console.error(
+      `error: --game must be one of: auto, ${VALIDATE_GAMES.join(", ")} (got ${JSON.stringify(gameArg)})`,
+    );
+    process.exit(2);
+  }
+
   const results = await validateBot(path.resolve(target), {
+    game: gameArg === "auto" ? undefined : (gameArg as ValidateGame),
     entryPoint: values["entry-point"],
     maxUploadBytes: maxBytes,
     timeoutWarnMs: timeoutWarn,

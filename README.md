@@ -18,14 +18,16 @@ libraries** for Python, JavaScript and Rust, the **wire protocol spec**, a
 | No-Limit Hold'em (heads-up and multi-way) | Live | Yes | Yes | Yes |
 | 2-7 Triple Draw | Live | Yes | Parity pending | Parity pending |
 | Pineapple OFC | Live | Yes | Parity pending | Parity pending |
-| Big Bad Bots (robot fighting) | Beta (draft spec) | Yes, in `main` (not yet on PyPI) | Coming | Coming |
+| Big Bad Bots (robot fighting) | Beta (draft spec) | Yes, in `main` (not yet on PyPI) | Yes, in `main` (not yet on npm) | Later |
 
 Python ships every game first; JavaScript and Rust follow to full parity.
 How to declare and play a game other than hold'em:
 [`docs/DEV-MANUAL.md` §2.8](docs/DEV-MANUAL.md#28-playing-other-games).
 
 **Building a Big Bad Bots bot?** Start at
-[`docs/BIGBADBOTS-QUICKSTART.md`](docs/BIGBADBOTS-QUICKSTART.md). Coding agents:
+[`docs/BIGBADBOTS-QUICKSTART.md`](docs/BIGBADBOTS-QUICKSTART.md) (Python) or
+[`docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md`](docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md)
+(JavaScript). Coding agents:
 [`packages/python/starters/bigbadbots/AGENTS.md`](packages/python/starters/bigbadbots/AGENTS.md)
 is a build guide written for you, and [`llms.txt`](llms.txt) indexes the Big
 Bad Bots docs.
