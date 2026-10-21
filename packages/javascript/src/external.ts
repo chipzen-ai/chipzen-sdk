@@ -300,6 +300,7 @@ interface PlayMatchParams {
   clientName: string;
   clientVersion: string;
   safeMode: boolean;
+  supportedGames: readonly string[] | null;
   userAgent: string;
   transport: Transport;
 }
@@ -349,6 +350,7 @@ async function playOneMatch(params: PlayMatchParams): Promise<Record<string, unk
           clientName: params.clientName,
           clientVersion: params.clientVersion,
           safeMode: params.safeMode,
+          supportedGames: params.supportedGames,
         },
         conn.reader,
       );
@@ -387,6 +389,7 @@ interface LobbyOnceParams {
   clientName: string;
   clientVersion: string;
   safeMode: boolean;
+  supportedGames: readonly string[] | null;
   userAgent: string;
   maxMatches: number | null;
   stop: { value: boolean };
@@ -474,6 +477,7 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
           clientName: p.clientName,
           clientVersion: p.clientVersion,
           safeMode: p.safeMode,
+          supportedGames: p.supportedGames,
           userAgent: p.userAgent,
           transport: p.transport,
         }).then(
@@ -543,6 +547,12 @@ export interface RunExternalBotOptions {
   clientVersion?: string;
   /** When `true` (default), a `decide()` throw is folded; `false` propagates a {@link BotDecisionError}. */
   safeMode?: boolean;
+  /**
+   * The `game_type`s declared in each match's `hello` (`supported_games`).
+   * `undefined` declares nothing (poker only), except that a
+   * `BigBadBotsBot` declares `["bigbadbots"]`.
+   */
+  supportedGames?: readonly string[] | null;
   /** Stop after this many matches complete. `undefined` runs until the lobby closes / evict. */
   maxMatches?: number | null;
   /** Override the WS `User-Agent`. Defaults to `chipzen-sdk-js/<version>`. */
@@ -646,6 +656,7 @@ export async function runExternalBot(
         clientName,
         clientVersion,
         safeMode,
+        supportedGames: options.supportedGames ?? null,
         userAgent,
         maxMatches,
         stop,

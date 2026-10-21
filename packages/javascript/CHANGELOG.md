@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Big Bad Bots support: typed models, the parser and the bot loop**
+  (slice 1 of [#151](https://github.com/chipzen-ai/chipzen-sdk/issues/151)).
+  Mirrors the Python SDK's `chipzen.bigbadbots` / `BigBadBotsBot`, with
+  camelCase fields:
+  - `parseBigBadBotsTurnRequest` parses a `turn_request` into
+    `BodyShopState` / `AuctionState` / `FittingState` / `FightState`, picked
+    by `state.phase`. It is strict: a missing or mistyped required field
+    throws `StateParseError`; unknown keys are ignored.
+  - `parseBigBadBotsGameConfig` and the typed, read-only `RuleSet`
+    (`gearup`, `arena`, `rounds`, `forfeit`, `deadline`, plus the full
+    table in `params`), handed to every call as `state.rules`.
+  - `Action.chooseBody`, `Action.bid`, `Action.fit` and `Action.act`.
+  - `BigBadBotsBot`: implement `act()`; `chooseBody()`, `bid()` and `fit()`
+    have legal defaults. It declares `supported_games: ["bigbadbots"]`.
+  - The session loop branches on the server hello's `state_shape`
+    (`stateShapeOf`, `parseTurnRequest`): Big Bad Bots tables get the typed
+    states, the protocol default (`fallbackAction`) on a throw, a bad
+    answer, a parse failure or a request that already waited out its time,
+    and one retry with the default after `action_rejected`. A shape this
+    release does not know ends the session before the client hello.
+  - `RunBotOptions.supportedGames` / `RunExternalBotOptions.supportedGames`.
+  - `runExternalBot` and `chipzen-sdk run-external` play Big Bad Bots with
+    the existing base URL selection (`--env` / `$CHIPZEN_ENV`, default prod).
+
 ## [0.3.1] — 2026-10-18
 
 ### Added
