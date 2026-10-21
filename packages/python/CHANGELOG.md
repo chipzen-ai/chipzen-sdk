@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Big Bad Bots models (`chipzen.bigbadbots`), part 1 of #139.** Typed,
+  frozen models for each Big Bad Bots `turn_request` (`BodyShopState`,
+  `AuctionState`, `FittingState`, `FightState`) and the objects inside them
+  (`Body`, `Part`, `Side`, `SoldLot`, `Fighter`), plus `BigBadBotsGameConfig`
+  for `match_start.game_config`. The parser is strict: a missing or mistyped
+  required field raises `StateParseError`. New `Action.choose_body`,
+  `Action.bid`, `Action.fit` and `Action.act` build the answers.
+- **`parse_turn_request(message, state_shape=...)` and `state_shape_of(hello)`.**
+  Route a `turn_request` on the table's `state_shape`: poker shapes to
+  `GameState`, `bigbadbots` to its models, and anything else raises
+  `UnsupportedStateShapeError` with no fallback (LAYER2-COMMON section 2). The
+  session loop is unchanged; it is wired up with the Big Bad Bots bot class in
+  part 2.
+
 ## [0.4.0] — 2026-09-03
 
 Minor release: the poker-variants surface (2-7 Triple Draw + Pineapple OFC)

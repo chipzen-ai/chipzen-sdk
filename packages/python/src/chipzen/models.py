@@ -17,9 +17,17 @@ See ``docs/protocol/TRANSPORT-PROTOCOL.md`` and
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from chipzen.bigbadbots import (
+    FIGHT_ACTIONS,
+    BigBadBotsTurnState,
+    parse_bigbadbots_turn_request,
+)
+from chipzen.bigbadbots import STATE_SHAPE as BIGBADBOTS_STATE_SHAPE
 
 # ---------------------------------------------------------------------------
 # Lenient coercion helpers for OPTIONAL variant keys
@@ -296,6 +304,82 @@ class Action:
             params={"placements": wire_placements, "discard": wire_discard},
         )
 
+    # ------------------------------------------------------------------
+    # Big Bad Bots actions (docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md
+    # section 4.4). Every one emits a ``params`` object, never a bespoke
+    # top-level key, and ``params`` admits no keys beyond the ones below.
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def choose_body(cls, body: str) -> Action:
+        """Big Bad Bots body shop: buy one body from ``BodyShopState.offer``.
+
+        Emits ``{"action": "choose_body", "params": {"body": <body id>}}``. A
+        body that is not on the offer is corrected to the cheapest one on it,
+        not rejected.
+        """
+        return cls(action="choose_body", params={"body": str(body)})
+
+    @classmethod
+    def bid(cls, amount: int) -> Action:
+        """Big Bad Bots auction: a sealed bid on ``AuctionState.lot``.
+
+        Args:
+            amount: Credits to bid. Clamped by the server to
+                ``0..me.credits``; ``0`` passes.
+
+        Emits ``{"action": "bid", "params": {"amount": <integer>}}``.
+
+        Raises:
+            TypeError: ``amount`` is not an ``int``. The wire wants a JSON
+                integer, and a bid of ``12.0`` is malformed and rejected.
+        """
+        if isinstance(amount, bool) or not isinstance(amount, int):
+            raise TypeError(f"bid amount must be an int, got {amount!r}")
+        return cls(action="bid", params={"amount": amount})
+
+    @classmethod
+    def fit(cls, fitting: Mapping[int | str, str] | None = None) -> Action:
+        """Big Bad Bots fitting: put owned parts into the body's slots.
+
+        Args:
+            fitting: Slot index (into ``FittingState.slots``) to part id. At
+                most one part per slot, of the slot's type. ``None`` or ``{}``
+                fits nothing.
+
+        Emits ``{"action": "fit", "params": {"fit": {"0": "capacitor"}}}``.
+        Slot indexes go out as decimal strings, because JSON object keys are
+        strings. An entry naming a part you do not own, the wrong slot type
+        or a missing slot is dropped by the server; the rest are fitted.
+
+        Raises:
+            ValueError: a slot index is not a non-negative integer.
+        """
+        wire: dict[str, str] = {}
+        for slot, part in (fitting or {}).items():
+            index = str(slot) if not isinstance(slot, bool) else ""
+            if not re.fullmatch(r"0|[1-9][0-9]*", index):
+                raise ValueError(f"fit slot index must be a non-negative integer, got {slot!r}")
+            wire[index] = str(part)
+        return cls(action="fit", params={"fit": wire})
+
+    @classmethod
+    def act(cls, move: str) -> Action:
+        """Big Bad Bots fight: this tick's action, one of the ten fight actions.
+
+        ``move`` is ``"idle"``, ``"move_in"``, ``"move_out"``, ``"block"``,
+        ``"punch_high"``, ``"uppercut"``, ``"kick_high"``, ``"kick_low"``,
+        ``"throw"`` or ``"special"``. Emits ``{"action": <move>, "params":
+        {}}``. A move the fighter cannot perform now plays as ``idle``, or
+        changes nothing while it is busy.
+
+        Raises:
+            ValueError: ``move`` is not a fight action.
+        """
+        if move not in FIGHT_ACTIONS:
+            raise ValueError(f"{move!r} is not a Big Bad Bots fight action ({FIGHT_ACTIONS})")
+        return cls(action=move)
+
 
 @dataclass(slots=True)
 class GameState:
@@ -530,6 +614,77 @@ class GameState:
             in_fantasy_land=_as_bool(state.get("in_fantasy_land")),
             phase_sequence=[str(ph) for ph in _as_list(state.get("phase_sequence"))],
         )
+
+
+# ---------------------------------------------------------------------------
+# Routing on ``state_shape`` (LAYER2-COMMON section 2)
+# ---------------------------------------------------------------------------
+
+#: The ``state_shape`` values :class:`GameState` parses. ``None`` is a table
+#: whose server ``hello`` carries no ``game`` descriptor: NLHE.
+POKER_STATE_SHAPES: frozenset[str | None] = frozenset({None, "27tripledraw", "pineapple"})
+
+
+class UnsupportedStateShapeError(ValueError):
+    """The table's ``state_shape`` is one this SDK release cannot parse.
+
+    LAYER2-COMMON section 2: a client MUST treat an unfamiliar
+    ``state_shape`` as "I cannot parse this table", never as "drop the keys I
+    do not recognise". This is that refusal.
+    """
+
+    def __init__(self, state_shape: object) -> None:
+        self.state_shape = state_shape
+        super().__init__(
+            f"cannot parse state_shape {state_shape!r}: this SDK release does not know it"
+        )
+
+
+def state_shape_of(server_hello: Mapping[str, Any]) -> str | None:
+    """Return the ``state_shape`` a server ``hello`` advertises.
+
+    ``None`` when the ``hello`` has no ``game`` descriptor, which means poker
+    (NLHE). Pass the result to :func:`parse_turn_request`.
+
+    Raises:
+        UnsupportedStateShapeError: the ``game`` descriptor is present but
+            does not carry a string ``state_shape``.
+    """
+    game = server_hello.get("game")
+    if game is None:
+        return None
+    shape = game.get("state_shape") if isinstance(game, Mapping) else None
+    if not isinstance(shape, str):
+        raise UnsupportedStateShapeError(shape)
+    return shape
+
+
+def parse_turn_request(
+    message: dict,
+    *,
+    state_shape: str | None = None,
+    your_seat: int = 0,
+    dealer_seat: int = 0,
+) -> GameState | BigBadBotsTurnState:
+    """Parse a ``turn_request`` into the model for the table's ``state_shape``.
+
+    - ``None`` (NLHE), ``"27tripledraw"`` and ``"pineapple"``: a
+      :class:`GameState`, exactly as :meth:`GameState.from_turn_request`
+      builds it. ``your_seat`` and ``dealer_seat`` are passed through.
+    - ``"bigbadbots"``: the Big Bad Bots model for the call, from
+      :func:`chipzen.bigbadbots.parse_bigbadbots_turn_request`.
+
+    Raises:
+        UnsupportedStateShapeError: any other ``state_shape``. There is no
+            fallback to the poker parser.
+        chipzen.bigbadbots.StateParseError: a Big Bad Bots payload is missing
+            a required field or has a mistyped one.
+    """
+    if state_shape in POKER_STATE_SHAPES:
+        return GameState.from_turn_request(message, your_seat=your_seat, dealer_seat=dealer_seat)
+    if state_shape == BIGBADBOTS_STATE_SHAPE:
+        return parse_bigbadbots_turn_request(message)
+    raise UnsupportedStateShapeError(state_shape)
 
 
 @dataclass(frozen=True, slots=True)
