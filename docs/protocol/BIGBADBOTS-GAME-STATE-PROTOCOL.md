@@ -223,7 +223,9 @@ Sent once, at the start of the match. It names the rule set and carries its **co
       "late_answer": "drop",
       "miss_counts_toward_forfeit": true
     }
-  }
+  },
+  "engine_version": "1.2.0",
+  "seed_commitment": "86caf2891ddf3637db400733ce70329093a94354887c255c1308e60656b827d6"
 }
 ```
 
@@ -235,8 +237,47 @@ The example is **abridged**: it shows five of the rule set's sections. A real `r
 | `rule_set_id` | string | Yes | The rule set this match is pinned to, e.g. `"bigbadbots-1.0"`. Fixed when the match is created and never changes during it. See `docs/RULESETS.md`. |
 | `num_players` | integer | Yes | Always `2`. |
 | `rule_set` | object | Yes | The rule set's full parameter table, by section. **Read the numbers from here**; they differ between rule sets. |
+| `engine_version` | string | Yes | The release of the game engine that plays the match, as SemVer `MAJOR.MINOR.PATCH` with no `v` prefix, e.g. `"1.2.0"`. It names the engine, not the rules: one engine release plays several rule sets, and the rules a match plays by are `rule_set_id`. The match replay's header carries the same value. |
+| `seed_commitment` | string | Yes | The server's commitment to the match seed, fixed before the first request: `SHA-256(nonce \|\| str(seed))` as 64 lowercase hex characters (scheme `seed_commit_v1`). The seed and the nonce are revealed after the match. See §4.1.1. |
+
+`engine_version` and `seed_commitment` are new keys under [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §3 Rule 5: a parser that ignores unknown keys is unaffected by them.
 
 `match_start.turn_timeout_ms` (Layer 1) is the timeout of each gear-up call (§3.4).
+
+#### 4.1.1 Verifying the seed
+
+Every random draw of a match comes from one integer seed (§6.3), and no payload shows it during play (§5). `seed_commitment` lets a bot, or anyone else, check after the match that the match was played with the seed the server fixed before the first request. The scheme is `seed_commit_v1`: the same construction as poker's deck commitment ([`POKER-GAME-STATE-PROTOCOL.md`](POKER-GAME-STATE-PROTOCOL.md) §6.1), with the seed in place of the deck order.
+
+```
+seed_commitment = SHA-256(nonce || str(seed))
+```
+
+- `nonce` is 32 random bytes written as 64 lowercase hex characters, drawn fresh for every match. It blinds the commitment: a seed alone has too few possible values to stay hidden behind a bare hash.
+- `str(seed)` is the seed written in decimal, e.g. `5096`.
+- `||` joins the two strings with no separator. The hash is taken over the joined string's ASCII bytes and written as 64 lowercase hex characters.
+
+**Reveal.** After the match, the seed and the nonce are revealed in two places:
+
+- the match replay (the engine log, `GET /matches/{match_id}/replay_log`) carries the seed in its header's `seed` field;
+- the match result carries the reveal `{"scheme": "seed_commit_v1", "seed": <integer>, "nonce": "<64 hex characters>"}`.
+
+**Open:** which API serves the reveal to a bot or a third party is not yet specified.
+
+**Verification.**
+
+1. Keep `game_config.seed_commitment` from `match_start`.
+2. After the match, take `seed` from the replay header and `nonce` from the reveal. Check that the reveal's `scheme` is `seed_commit_v1` and that its `seed` equals the replay's.
+3. Compute `SHA-256(nonce || str(seed))` and compare it with `seed_commitment`. If they are equal, the replay was played from the seed committed before the match. If they differ, it was not.
+
+In Python, step 3 is:
+
+```python
+import hashlib
+
+hashlib.sha256((nonce + str(seed)).encode("ascii")).hexdigest() == seed_commitment
+```
+
+**Worked example.** With the nonce `abababababababababababababababababababababababababababababababab` (`ab` 32 times) and the seed `5096`, the hashed string is `abababababababababababababababababababababababababababababababab5096`, and its SHA-256 is `86caf2891ddf3637db400733ce70329093a94354887c255c1308e60656b827d6`: the `seed_commitment` in the example above.
 
 ### 4.2 Round start (`round_start.state`)
 
@@ -776,7 +817,7 @@ Every number the rules use is in `game_config.rule_set` (§4.1), named by its se
 
 ### 6.3 Determinism and replays
 
-Every random draw comes from one match seed, through a generator that belongs to the rule set's engine line, so a match replays exactly from its seed and the recorded answers. Answers are recorded in their JSON form, and the match plays what was recorded, so a match and its replay make the same decisions by construction. Nothing in a payload lets a bot predict a future draw.
+Every random draw comes from one match seed, through a generator that belongs to the rule set's engine line, so a match replays exactly from its seed and the recorded answers. The seed is committed before the match and revealed after it (§4.1.1). Answers are recorded in their JSON form, and the match plays what was recorded, so a match and its replay make the same decisions by construction. Nothing in a payload lets a bot predict a future draw.
 
 ---
 
