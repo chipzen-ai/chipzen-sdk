@@ -60,11 +60,10 @@ root indexes the Big Bad Bots docs for tools that read that format.
 
 ## 2. Install the SDK
 
-Big Bad Bots support is merged into the Python SDK (`chipzen-bot`) but is not
-in a PyPI release yet. Until it is, install the SDK from this repository:
+Big Bad Bots support is in the Python SDK (`chipzen-bot`) from 0.5.0:
 
 ```bash
-pip install "chipzen-bot @ https://github.com/chipzen-ai/chipzen-sdk/archive/refs/heads/main.tar.gz#subdirectory=packages/python"
+pip install "chipzen-bot~=0.5"
 chipzen --help    # sanity check: lists init, validate, run-external
 ```
 

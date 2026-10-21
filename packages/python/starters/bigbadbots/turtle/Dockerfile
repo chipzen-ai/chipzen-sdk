@@ -70,7 +70,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /bot
 
-# Install the SDK (see requirements.txt for where it comes from). chipzen-bot
+# Install the SDK (pinned in requirements.txt). chipzen-bot
 # pulls in `websockets`; nothing else is required at runtime. Add your own
 # dependencies to requirements.txt if your bot uses them (numpy, etc.).
 COPY requirements.txt .

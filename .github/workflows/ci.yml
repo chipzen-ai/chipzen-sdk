@@ -300,8 +300,9 @@ jobs:
     # match_end and a clean exit. It also checks the image runs as non-root and
     # holds no .js source.
     #
-    # The Dockerfile builds the SDK from GitHub at CHIPZEN_SDK_REF until an npm
-    # release carries Big Bad Bots; CI points it at the commit under test.
+    # The Dockerfile installs @chipzen-ai/bot from npm at the starter's pin, so
+    # this job checks the starter against the published SDK, not the commit
+    # under test (the SDK itself is covered by the JavaScript jobs).
     name: Big Bad Bots JS starter image (rusher)
     runs-on: ubuntu-latest
     steps:
@@ -320,10 +321,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
       - name: Build the starter image
-        run: |
-          docker build \
-            --build-arg "CHIPZEN_SDK_REF=${{ github.event.pull_request.head.sha || github.sha }}" \
-            -t bbb-js-rusher:ci packages/javascript/starters/bigbadbots/rusher
+        run: docker build -t bbb-js-rusher:ci packages/javascript/starters/bigbadbots/rusher
       - name: The compiled bot plays the published requests
         run: node scripts/check_bigbadbots_js_starter_image.mjs bbb-js-rusher:ci docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md
 

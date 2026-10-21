@@ -99,6 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `supportedGames` doc comment matches the Python `supported_games`
   docstring. `README.md`, `docs/DEV-MANUAL.md` §2.8 and
   `docs/PORTING-BETWEEN-SDKS.md` give the JavaScript name.
+- **The Big Bad Bots Rusher starter installs the SDK from npm**
+  ([#195](https://github.com/chipzen-ai/chipzen-sdk/issues/195)). Its
+  `package.json` depends on `@chipzen-ai/bot` `^0.4.0`, and its Dockerfile
+  is down to the poker starter's single `bun install --production` (it no
+  longer builds the SDK from GitHub at `CHIPZEN_SDK_REF`). The starter README,
+  `docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md` and `llms.txt` drop the
+  build-from-source steps.
 
 ## [0.4.0] — 2026-10-21
 

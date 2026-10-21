@@ -59,28 +59,22 @@ More detail:
 
 ## 2. Install the SDK
 
-Big Bad Bots support is merged into the JavaScript SDK (`@chipzen-ai/bot`)
-but is not in an npm release yet. Until it is, build the SDK from this
-repository:
+Big Bad Bots support is in the JavaScript SDK (`@chipzen-ai/bot`) from 0.4.0.
+The starter's `package.json` already depends on it (`"@chipzen-ai/bot": "^0.4.0"`),
+so `npm install` in step 3 installs it. To add it to a bot folder of your own
+instead:
 
 ```bash
-git clone https://github.com/chipzen-ai/chipzen-sdk.git
-cd chipzen-sdk/packages/javascript
-npm install
-npm run build
-cd ../../..
+npm install @chipzen-ai/bot@^0.4.0
 ```
-
-Once an `@chipzen-ai/bot` release lists Big Bad Bots in its
-[CHANGELOG](../packages/javascript/CHANGELOG.md), skip this step and use
-`npm install @chipzen-ai/bot` in step 3 instead.
 
 ## 3. Copy the starter
 
 ```bash
+git clone https://github.com/chipzen-ai/chipzen-sdk.git
 cp -r chipzen-sdk/packages/javascript/starters/bigbadbots/rusher my-bot
 cd my-bot
-npm install ../chipzen-sdk/packages/javascript
+npm install
 npx chipzen-sdk --help    # sanity check: lists init, validate, run-external
 ls -A    # .dockerignore  Dockerfile  README.md  bot.js  node_modules  package-lock.json  package.json
 ```
@@ -199,10 +193,8 @@ docker save my-bot:v1 | gzip > my-bot.tar.gz
 ls -lh my-bot.tar.gz
 ```
 
-Until the npm release, the Dockerfile builds the SDK from this repository on
-GitHub at a pinned commit (pass `--build-arg CHIPZEN_SDK_REF=<tag or commit>` to
-build another), and it ignores the local `@chipzen-ai/bot` entry step 3 added
-to `package.json`.
+The Dockerfile installs `@chipzen-ai/bot` from npm at the version
+`package.json` pins, so the image does not depend on your `node_modules`.
 
 The upload cap is **250 MB compressed** (the built image is separately capped
 at **200 MB**); this image is roughly 120 MB. The image must run as a
