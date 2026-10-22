@@ -16,7 +16,7 @@ hacking.
 
 ## Big Bad Bots (Python)
 
-Three starters, each a Chipzen house bot rewritten as a short, commented
+Three starters, each a Chipzen platform bot rewritten as a short, commented
 `chipzen.BigBadBotsBot`, live in
 [`../packages/python/starters/bigbadbots/`](../packages/python/starters/bigbadbots/):
 [Rusher](../packages/python/starters/bigbadbots/rusher/) (walks in and jabs),

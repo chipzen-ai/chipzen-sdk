@@ -5,7 +5,7 @@ Fast bodies, fast hands. Rusher buys a quick body, bids hard for the parts it
 wants, then walks straight in, jabs, throws anyone who blocks, and spends its
 special the first time it can.
 
-It is one of the Chipzen house bots, rewritten as a short, readable starter on
+It is one of the Chipzen platform bots, rewritten as a short, readable starter on
 the SDK's :class:`chipzen.BigBadBotsBot`. Change the constants at the top to
 change its taste; change the methods to change how it thinks.
 

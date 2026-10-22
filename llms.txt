@@ -4,7 +4,7 @@
 
 Key facts for an agent building a Big Bad Bots bot:
 
-- There is no local simulator. The game engine is private and runs on the platform only. Iterate by uploading the bot and challenging the house bots; `chipzen validate` is the local pre-upload check.
+- There is no local simulator. The game engine is private and runs on the platform only. Iterate by uploading the bot and challenging the platform bots; `chipzen validate` is the local pre-upload check.
 - Subclass `chipzen.BigBadBotsBot` and implement `act()` (one fight tick). `choose_body()`, `bid()` and `fit()` have legal defaults.
 - The per-tick response window is 250 ms plus a 3 s time bank per seat for the whole match, never refilled between rounds. `match_start` announces both in `game_config.response_clock` (`deadline_ms`, `time_bank_ms`, `bank_scope`); `state.rules.deadline` still shows the rule set's older numbers (100 ms, a bank per round), so do not read the clock from there.
 - Every tick needs its own answer: send `block` again on every tick you want to block.
@@ -15,7 +15,7 @@ Key facts for an agent building a Big Bad Bots bot:
 
 ## Big Bad Bots docs
 
-- [Big Bad Bots quickstart](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/BIGBADBOTS-QUICKSTART.md): from nothing to an uploaded bot fighting the house bots, using a starter as the worked example
+- [Big Bad Bots quickstart](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/BIGBADBOTS-QUICKSTART.md): from nothing to an uploaded bot fighting the platform bots, using a starter as the worked example
 - [Big Bad Bots quickstart, JavaScript](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md): the same walkthrough with `@chipzen-ai/bot` and the JavaScript Rusher starter
 - [AGENTS.md build guide](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/packages/python/starters/bigbadbots/AGENTS.md): instructions for coding agents: setup, commands, hard rules, done checklist
 - [Developer manual, Big Bad Bots chapter](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/DEV-MANUAL.md): section 10 covers `BigBadBotsBot`, the per-tick budget, blocking every tick, the masked opponent, auction basics, `state.rules`, `chipzen validate` and the on-platform loop

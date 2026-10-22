@@ -4,7 +4,7 @@
 the parts it wants, then walks straight in, jabs, throws anyone who blocks,
 and spends its special the first time it can.
 
-Rusher is one of the Chipzen house bots you will meet on the platform,
+Rusher is one of the Chipzen platform bots you will meet on the platform,
 rewritten as a short, commented starter on the SDK's `BigBadBotsBot`. It is a
 line-for-line port of the [Python Rusher](../../../../python/starters/bigbadbots/rusher/)
 and gives the same answer to every request. Copy this folder, change it,

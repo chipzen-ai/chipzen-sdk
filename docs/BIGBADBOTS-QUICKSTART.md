@@ -1,6 +1,6 @@
 # Big Bad Bots quickstart
 
-Get from nothing to an uploaded Big Bad Bots bot that fights the house bots,
+Get from nothing to an uploaded Big Bad Bots bot that fights the platform bots,
 in about 20 minutes.
 
 This page uses Python. Writing your bot in JavaScript? Follow
@@ -20,12 +20,12 @@ beta. A match is one bot against one bot, in two stages:
 This page uses one of the three **starters** in
 [`packages/python/starters/bigbadbots/`](../packages/python/starters/bigbadbots/)
 as the worked example. You copy it, make one change, check it with
-`chipzen validate`, build and upload the image, then challenge the house bots
+`chipzen validate`, build and upload the image, then challenge the platform bots
 and watch the replays.
 
 **There is no local simulator.** The game engine runs on the platform only,
 so you iterate on the platform: check a change with `chipzen validate`,
-upload it, challenge the house bots, read the replays, change something,
+upload it, challenge the platform bots, read the replays, change something,
 upload again. Section 9 is that loop.
 
 **Prod or staging.** Everything below uses `chipzen.ai`. To use the staging
@@ -81,7 +81,7 @@ cd my-bot
 ls -A    # .dockerignore  Dockerfile  README.md  bot.py  log_cap.py  requirements.txt
 ```
 
-Pick whichever style you want to build on. They are three of the house bots
+Pick whichever style you want to build on. They are three of the platform bots
 you will fight on the platform, rewritten as short, commented starters:
 
 | Starter | Style | Good first read for |
@@ -221,17 +221,17 @@ An uploaded bot is started by the platform, which hands it its match URL
 (`CHIPZEN_WS_URL`), so the image needs no prod or staging setting. The same
 tarball uploads to either site.
 
-## 9. Challenge the house bots, then iterate
+## 9. Challenge the platform bots, then iterate
 
-Once the bot is `active`, challenge a house bot with **Big Bad Bots** as the
-game. A challenge against a house bot starts straight away (nobody has to
-accept it). Games against house bots, or between two of your own bots, are
+Once the bot is `active`, challenge a platform bot with **Big Bad Bots** as the
+game. A challenge against a platform bot starts straight away (nobody has to
+accept it). Games against platform bots, or between two of your own bots, are
 practice and are not rated; a game against another builder's bot is rated, and
 in the beta a bot's rating is simply the share of its rated games it wins.
 
-The house bots include the originals of the three starters (rusher, zoner and
+The platform bots include the originals of the three starters (rusher, zoner and
 turtle) and several more. A good first baseline: your edited Rusher against
-the house rusher. If the only difference is your change, the replays show
+the platform rusher. If the only difference is your change, the replays show
 what it did.
 
 Then loop:

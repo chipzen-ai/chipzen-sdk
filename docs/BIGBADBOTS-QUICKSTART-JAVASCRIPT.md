@@ -1,7 +1,7 @@
 # Big Bad Bots quickstart: JavaScript
 
 Get from nothing to an uploaded Big Bad Bots bot, written in JavaScript, that
-fights the house bots.
+fights the platform bots.
 
 This is the JavaScript version of the
 [Big Bad Bots quickstart](BIGBADBOTS-QUICKSTART.md), which uses Python. The
@@ -22,12 +22,12 @@ beta. A match is one bot against one bot, in two stages:
 This page uses the JavaScript **Rusher** starter in
 [`packages/javascript/starters/bigbadbots/rusher/`](../packages/javascript/starters/bigbadbots/rusher/)
 as the worked example. You copy it, make one change, check it with
-`chipzen-sdk validate`, build and upload the image, then challenge the house
+`chipzen-sdk validate`, build and upload the image, then challenge the platform
 bots and watch the replays.
 
 **There is no local simulator.** The game engine runs on the platform only,
 so you iterate on the platform: check a change with `chipzen-sdk validate`,
-upload it, challenge the house bots, read the replays, change something,
+upload it, challenge the platform bots, read the replays, change something,
 upload again.
 
 **Prod or staging.** Everything below uses `chipzen.ai`. To use the staging
@@ -80,7 +80,7 @@ ls -A    # .dockerignore  Dockerfile  README.md  bot.js  log_cap.py  node_module
 ```
 
 Rusher fights with fast bodies and fast hands: it walks in, jabs, throws
-blockers and spends its special early. It is one of the house bots you will
+blockers and spends its special early. It is one of the platform bots you will
 fight on the platform, rewritten as a short, commented starter, and it plays
 exactly like the [Python Rusher](../packages/python/starters/bigbadbots/rusher/).
 The Python starters also include Zoner (spacing) and Turtle (blocking); their
@@ -225,21 +225,21 @@ An uploaded bot is started by the platform, which hands it its match URL
 (`CHIPZEN_WS_URL`), so the image needs no prod or staging setting. The same
 tarball uploads to either site.
 
-## 9. Challenge the house bots, then iterate
+## 9. Challenge the platform bots, then iterate
 
-Once the bot is `active`, challenge a house bot with **Big Bad Bots** as the
-game. A challenge against a house bot starts straight away. Games against house
+Once the bot is `active`, challenge a platform bot with **Big Bad Bots** as the
+game. A challenge against a platform bot starts straight away. Games against platform
 bots, or between two of your own bots, are practice and are not rated; a game
 against another builder's bot is rated, and in the beta a bot's rating is simply
 the share of its rated games it wins. A good first baseline: your edited
-Rusher against the house rusher.
+Rusher against the platform rusher.
 
 Then loop: watch the replay, read your bot's per-match log (its stdout and
 `console` output; log a line per round, not per tick), change one thing, run
 `npx chipzen-sdk validate .`, rebuild with a new tag (`my-bot:v2`) and upload
 the new version. Play several matches per version: body offers, auction lots
 and start positions are drawn from each match's seed, so one match is one
-sample. The [Python quickstart's section 9](BIGBADBOTS-QUICKSTART.md#9-challenge-the-house-bots-then-iterate)
+sample. The [Python quickstart's section 9](BIGBADBOTS-QUICKSTART.md#9-challenge-the-platform-bots-then-iterate)
 has the details.
 
 ## Running from your own machine (remote play)

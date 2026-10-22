@@ -1,7 +1,7 @@
 # Big Bad Bots starters
 
 Three ready-to-run Big Bad Bots bots, one folder each. They are three of the
-Chipzen house bots you will meet on the platform, rewritten as short,
+Chipzen platform bots you will meet on the platform, rewritten as short,
 commented starters on the SDK's `chipzen.BigBadBotsBot`, each with a
 different style:
 

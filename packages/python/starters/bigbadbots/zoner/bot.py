@@ -6,7 +6,7 @@ own high-kick range, where it can hit you and your jab cannot hit it. When you
 wind up, it steps back out of range; when you whiff, it punishes. It never
 brawls and it never throws.
 
-It is one of the Chipzen house bots, rewritten as a short, readable starter on
+It is one of the Chipzen platform bots, rewritten as a short, readable starter on
 the SDK's :class:`chipzen.BigBadBotsBot`. Change the constants at the top to
 change its taste; change the methods to change how it thinks.
 

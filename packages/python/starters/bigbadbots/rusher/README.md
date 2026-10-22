@@ -4,7 +4,7 @@
 the parts it wants, then walks straight in, jabs, throws anyone who blocks,
 and spends its special the first time it can.
 
-Rusher is one of the Chipzen house bots you will meet on the platform,
+Rusher is one of the Chipzen platform bots you will meet on the platform,
 rewritten as a short, commented starter on the SDK's `BigBadBotsBot`. Copy
 this folder, change it, upload it.
 
@@ -118,7 +118,7 @@ Before you build, run `chipzen validate .` in this folder: it hands each
 method real requests from recorded matches and judges every answer the way
 the server does. The `imports: ... os` warning is expected (`main()` reads
 `CHIPZEN_WS_URL`). The platform's review then runs its own checks on the
-upload. After that, challenge the house bots and read the replays (see
+upload. After that, challenge the platform bots and read the replays (see
 [`BIGBADBOTS-QUICKSTART.md`](../../../../../docs/BIGBADBOTS-QUICKSTART.md)
 section 9).
 
