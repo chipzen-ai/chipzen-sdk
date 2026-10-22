@@ -5,20 +5,23 @@
 **Version:** 1.0 draft (Layer 1 protocol version is **unchanged at `1.0`**)
 
 > **Provisional values.** Every number in this document marked **provisional** is a placeholder
-> pending a rules decision. Rule set `bigbadbots-1.0` (frozen with engine `1.0.0`, in `preview`) carries these values,
-> and so does `bigbadbots-1.1` (frozen with engine `1.1.0`, also in `preview`), whose deadline and forfeit sections are unchanged;
-> if a decision changes one, the change ships as a new rule set before any rule set goes live:
+> pending a rules decision. Rule sets `bigbadbots-1.0` to `bigbadbots-1.2` (frozen with engines `1.0.0` to `1.2.0`, all in `preview`)
+> carry these values in their `deadline` and `forfeit` sections; if a decision changes one, the change ships as a new rule set
+> before any rule set goes live. The one exception is the response clock: decision D-20 replaced D-01's per-tick deadline
+> (100 ms) and per-round time bank (3 s, reset every round) with the platform's response clock, which the platform applies
+> over any rule set and announces in `game_config.response_clock` (§3.4, §4.1). The released rule sets are immutable, so
+> their `deadline` section still shows D-01's two numbers; the clock below is what a match runs on.
 >
-> | Value | Placeholder | Decision |
+> | Value | Today | Decision |
 > |---|---|---|
-> | Per-tick deadline | **100 ms** (provisional) | D-01 |
-> | Time bank | **3 s per seat per round**, reset every round (provisional) | D-01 |
+> | Response window | **250 ms** per fight tick | D-20 |
+> | Time bank | **3 s per seat per match**, never refilled | D-20 |
 > | Default action on a missed tick | repeat `block` / `move_in` / `move_out`, otherwise `idle` (provisional) | D-01 |
 > | Disconnect grace | **5 s** of missed ticks, then the seat forfeits the round (provisional) | D-03 |
 > | Match forfeit | **2** forfeited rounds forfeit the match (provisional) | D-03 |
 >
-> All five travel in `match_start.game_config` (§4.1). A bot MUST read them from there and never hard-code
-> them.
+> All five travel in `match_start.game_config` (§4.1): the window and the bank in `response_clock`, the rest in
+> `rule_set`. A bot MUST read them from there and never hard-code them.
 
 ---
 
@@ -125,16 +128,17 @@ The call name is also the `action` string of the gear-up answers; in the fight t
 
 ### 3.3 Pacing
 
-Fight ticks are paced in real time at `rule_set.rounds.ticks_per_second`. Each tick's requests go out on that tick's boundary. A tick resolves when both answers are in or both seats' time has run out, so the pace is an upper bound: a seat drawing on its time bank (§3.4) slows the fight for both seats while it does. Gear-up steps are not paced; the next gear-up step goes out as soon as the previous one resolves.
+Fight ticks are not paced in real time (D-20). The platform records the match as fast as both seats answer, and spectators watch a paced replay of it afterwards. A tick resolves when both answers are in or both seats' time has run out (§3.4), and the next tick's requests go out as soon as it resolves: the response window is a cap, not a pace. `rule_set.rounds.ticks_per_second` sets match time (and the pace of the replay), not wall-clock time. Gear-up steps are not paced either; the next gear-up step goes out as soon as the previous one resolves.
 
-### 3.4 The per-tick deadline and the time bank (provisional)
+### 3.4 The response window and the time bank (D-20)
 
-Every fight `turn_request` carries its deadline in the existing Layer 1 field **`turn_request.timeout_ms`**. No new field is needed.
+Every fight `turn_request` carries its time limit in the existing Layer 1 field **`turn_request.timeout_ms`**. The platform's response clock sets it, and `match_start` announces the clock in **`game_config.response_clock`** (§4.1).
 
-- **Deadline: 100 ms per tick (provisional, D-01).** An answer within the deadline costs nothing.
-- **Time bank: 3 s per seat per round, reset at the start of every round (provisional, D-01).** An answer later than the deadline is paid for from the bank, for the part beyond the deadline, while the bank lasts.
-- **`timeout_ms` = the deadline plus what is left of this seat's bank.** That is the whole time the server will wait for this answer (Layer 1 §8.5: "time remaining to submit an action"). A bot that wants to stay inside the deadline reads `game_config.rule_set.deadline.deadline_ms`; `timeout_ms - deadline_ms` is its bank.
-- **Measurement.** The server measures from sending the request to receiving the answer (Layer 1 §10.2), and rounds up to whole milliseconds: 100.001 ms counts as 101 ms, which is late for a 100 ms deadline.
+- **Response window: 250 ms per fight tick (D-20).** An answer within the window costs nothing. Read it from `game_config.response_clock.deadline_ms`.
+- **Time bank: 3 s per seat per match, never refilled (D-20).** An answer later than the window is paid for from the bank, for the part beyond the window, while the bank lasts. The bank is not reset between rounds: whatever a seat spends is gone for the rest of the match. Read it from `game_config.response_clock.time_bank_ms`; `game_config.response_clock.bank_scope` is `"match"`.
+- **`timeout_ms` = the window plus what is left of this seat's bank.** That is the whole time the server will wait for this answer (Layer 1 §8.5: "time remaining to submit an action"). `timeout_ms - response_clock.deadline_ms` is the seat's bank.
+- **`rule_set.deadline` does not set the clock.** The released rule sets (`bigbadbots-1.0` to `bigbadbots-1.2`) are immutable and still carry D-01's numbers in their `deadline` section (`deadline_ms` 100, `time_bank_ms` 3000, reset every round). The platform applies the response clock over any rule set instead. The rest of the rule set's `deadline` section still applies: `default_action_policy` (§3.5), `late_answer` and `miss_counts_toward_forfeit`.
+- **Measurement.** The server measures from sending the request to receiving the answer (Layer 1 §10.2), and rounds up to whole milliseconds: 250.001 ms counts as 251 ms, which is late for a 250 ms window.
 - **Gear-up calls have no per-tick deadline.** Their `timeout_ms` is the match's `match_start.turn_timeout_ms` (Layer 1 §10.1). The gear-up examples below show 1000 ms, which is illustrative (provisional).
 
 ### 3.5 Missed ticks and the default action (provisional)
@@ -182,7 +186,7 @@ The next `turn_request.state` is authoritative. `turn_result` is a convenience f
 ### 3.9 Disconnects and forfeits (provisional)
 
 - **The tick clock does not stop for a disconnected seat.** Its ticks are misses (§3.5): each plays the default action, and none spends its bank.
-- **Disconnect grace: 5 s (provisional, D-03).** A seat that misses **every tick for 5 s** of match time forfeits the round, and the opponent takes it. The grace is counted in ticks, `rule_set.forfeit.grace_seconds × rule_set.rounds.ticks_per_second` (50 ticks at 10 per second), so the same match replays the same way. Because ticks are paced in real time, it is also 5 s of wall-clock time.
+- **Disconnect grace: 5 s (provisional, D-03).** A seat that misses **every tick for 5 s** of match time forfeits the round, and the opponent takes it. The grace is counted in ticks, `rule_set.forfeit.grace_seconds × rule_set.rounds.ticks_per_second` (50 ticks at 10 per second), so the same match replays the same way. It is match time, not wall-clock time: the platform does not pace ticks (§3.3).
 - **Any answer resets the count**, including one that is rejected or corrected. The check runs after each tick and only while both fighters are standing, so a KO on the same tick takes precedence.
 - **Match forfeit: 2 forfeited rounds (provisional, D-03).** A seat that has forfeited that many rounds forfeits the match, and the opponent wins it however many rounds either had won.
 - If both seats run out of grace on the same tick, the round has no winner and both are charged a forfeit. If both forfeit the match at once, the match is a **no-contest**: it has no winner and no coin flip. How `match_end` encodes a no-contest is open (§4.8).
@@ -223,11 +227,12 @@ Sent once, at the start of the match. It names the rule set and carries its **co
       "late_answer": "drop",
       "miss_counts_toward_forfeit": true
     }
-  }
+  },
+  "response_clock": {"deadline_ms": 250, "time_bank_ms": 3000, "bank_scope": "match"}
 }
 ```
 
-The example is **abridged**: it shows five of the rule set's sections, and leaves out `engine_version` and `seed_commitment` (below). A real `rule_set` carries every section listed in `docs/RULESETS.md`, including the bodies, the parts, the moves and the specials. `forfeit` and `deadline` hold the provisional values of the table at the top of this document.
+The example is **abridged**: it shows five of the rule set's sections, and leaves out `engine_version` and `seed_commitment` (below). A real `rule_set` carries every section listed in `docs/RULESETS.md`, including the bodies, the parts, the moves and the specials. `forfeit` holds the provisional values of the table at the top of this document. `deadline` holds the released rule set's D-01 numbers; the window and bank a match runs on are in `response_clock` (§3.4).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -236,9 +241,10 @@ The example is **abridged**: it shows five of the rule set's sections, and leave
 | `num_players` | integer | Yes | Always `2`. |
 | `rule_set` | object | Yes | The rule set's full parameter table, by section. **Read the numbers from here**; they differ between rule sets. |
 | `engine_version` | string | Yes | The release of the game engine that plays the match, as SemVer `MAJOR.MINOR.PATCH` with no `v` prefix, e.g. `"1.2.0"`. It names the engine, not the rules: one engine release plays several rule sets, and the rules a match plays by are `rule_set_id`. The match replay's header carries the same value. |
+| `response_clock` | object | Yes (see description) | The response clock the fight ticks run on (D-20, §3.4): `deadline_ms` (integer, the response window per fight tick, `250`), `time_bank_ms` (integer, each seat's time bank, `3000`) and `bank_scope` (string, `"match"`: one bank per seat for the whole match, never refilled; `"round"` would mean a bank refilled every round). It overrides the window and bank in `rule_set.deadline`. Every Big Bad Bots match on the platform carries it; if it is ever absent, the rule set's own `deadline` section governs. |
 | `seed_commitment` | string | Yes | The server's commitment to the match seed, fixed before the first request: `SHA-256(nonce \|\| str(seed))` as 64 lowercase hex characters (scheme `seed_commit_v1`). The seed and the nonce are revealed after the match. See §4.1.1. |
 
-`engine_version` and `seed_commitment` are new keys under [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §3 Rule 5: a parser that ignores unknown keys is unaffected by them.
+`engine_version`, `response_clock` and `seed_commitment` are new keys under [`LAYER2-COMMON.md`](LAYER2-COMMON.md) §3 Rule 5: a parser that ignores unknown keys is unaffected by them.
 
 `match_start.turn_timeout_ms` (Layer 1) is the timeout of each gear-up call (§3.4).
 
@@ -481,7 +487,7 @@ The rest of the payload depends on the call. The objects it uses (Body, Part, Si
   "server_ts": "2026-09-29T12:00:00.000Z",
   "seat": 1,
   "request_id": "req_00029",
-  "timeout_ms": 3100,
+  "timeout_ms": 3250,
   "valid_actions": ["idle", "move_in", "move_out", "block", "punch_high", "uppercut", "kick_high", "kick_low", "throw", "special"],
   "state": {
     "phase": "fight",
@@ -541,7 +547,7 @@ The rest of the payload depends on the call. The objects it uses (Body, Part, Si
 }
 ```
 
-Here `timeout_ms` is 3100: the 100 ms deadline plus an untouched 3000 ms bank (both provisional). The opponent is winding up a move, so it shows as `"attack"` with `frames_left: null` (§5).
+Here `timeout_ms` is 3250: the 250 ms response window plus an untouched 3000 ms match bank (§3.4). The opponent is winding up a move, so it shows as `"attack"` with `frames_left: null` (§5).
 
 | Field | Type | Required | Description |
 |---|---|---|---|

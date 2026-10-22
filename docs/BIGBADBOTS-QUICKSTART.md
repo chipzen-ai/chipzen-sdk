@@ -60,10 +60,12 @@ root indexes the Big Bad Bots docs for tools that read that format.
 
 ## 2. Install the SDK
 
-Big Bad Bots support is in the Python SDK (`chipzen-bot`) from 0.5.0:
+Big Bad Bots support is in the Python SDK (`chipzen-bot`) from 0.5.0. The
+Dockerfile check that `chipzen validate` runs in step 6 needs 0.6.0, so
+install 0.6:
 
 ```bash
-pip install "chipzen-bot~=0.5"
+pip install "chipzen-bot~=0.6"
 chipzen --help    # sanity check: lists init, validate, run-external
 ```
 
@@ -156,6 +158,7 @@ Chipzen Bot Validation
   [PASS] bot_class: Found bot class: Rusher
   [PASS] act_method: Rusher.act() implemented
   [PASS] requirements: All requirements are in the allowed package list
+  [PASS] bigbadbots_dockerfile: Dockerfile starts the bot through the log-cap wrapper
   [PASS] smoke_test: Rusher instantiated
   [PASS] bigbadbots_choose_body: choose_body() answered all 10 requests legally
   [PASS] bigbadbots_bid: bid() answered all 63 requests legally
@@ -238,7 +241,8 @@ Then loop:
    ate while blocking, a wind-up you walked into, credits left unspent.
 2. **Read your log.** Your bot's stdout goes to its per-match log, as for any
    uploaded bot ([`DEV-MANUAL.md` §5](DEV-MANUAL.md#5-debugging-a-live-match)).
-   Log a line per round or per match, not per tick (ten a second adds up).
+   Log a line per round or per match, not per tick (a round is hundreds of
+   ticks, and it adds up).
 3. **Change one thing**, then `chipzen validate .`, rebuild with a new tag
    (`my-bot:v2`), and upload the new version.
 4. **Play several matches per version.** Body offers, auction lots and start
@@ -248,9 +252,12 @@ Then loop:
 
 Each has a section in the dev manual chapter.
 
-1. **The per-tick budget is 100 ms**, plus a **3 s time bank** per round
-   (both provisional; read them from `state.rules.deadline`). A slow `act()`
-   spends the bank; an empty bank means defaults. See
+1. **The per-tick budget is 250 ms**, plus a **3 s time bank for the whole
+   match**, never refilled between rounds. The platform announces both in
+   `match_start` as `game_config.response_clock` (`deadline_ms`,
+   `time_bank_ms`, `bank_scope`), not in `state.rules.deadline`, which still
+   shows the rule set's older numbers. A slow `act()` spends the bank for the
+   rest of the match; an empty bank means defaults. See
    [§10.3](DEV-MANUAL.md#103-the-per-tick-budget).
 2. **Send `block` again on every tick you want to block.** There is no
    "hold" action: each tick is a new question, and a tick you skip or miss

@@ -191,7 +191,12 @@ def test_game_config_parses_and_round_trips():
     assert config.rule_set_id == "bigbadbots-1.0"
     assert config.num_players == 2
     assert config.rule_set["deadline"]["deadline_ms"] == 100
-    assert config.to_dict() == _game_config()
+    # ``response_clock`` (D-20, protocol section 3.4) is not modelled yet: a bot
+    # reads it from the raw ``match_start`` message. Everything else round-trips.
+    published = _game_config()
+    assert published["response_clock"]["deadline_ms"] == 250
+    del published["response_clock"]
+    assert config.to_dict() == published
 
 
 def test_game_config_for_another_variant_fails_loudly():

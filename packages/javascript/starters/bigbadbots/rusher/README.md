@@ -68,13 +68,14 @@ your `node_modules`.
 
 ## Time budget and the SDK fallback
 
-The fight runs at 10 ticks a second. Each tick's `turn_request` gives you a
-**100 ms deadline**, plus a **3 s time bank** per round for the occasional
-slow answer (both provisional; see
+Each fight tick's `turn_request` gives you a **250 ms response window**,
+plus a **3 s time bank** for the occasional slow answer. The bank is one pot
+per seat for the whole match and is never refilled between rounds.
+`match_start` announces both in `game_config.response_clock` (see
 [`BIGBADBOTS-GAME-STATE-PROTOCOL.md`](../../../../../docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md)
-section 3.4). `state.timeoutMs` is the deadline plus what is left of your
-bank, and `state.rules.deadline` holds both numbers. Rusher answers in well
-under a millisecond, so the bank is never touched.
+section 3.4); `state.rules.deadline` still shows the rule set's older
+numbers. `state.timeoutMs` is the window plus what is left of your bank.
+Rusher answers in well under a millisecond, so the bank is never touched.
 
 The methods are synchronous and JavaScript cannot interrupt them, so keep
 `act()` fast. The SDK sends the protocol's own default and logs a warning if

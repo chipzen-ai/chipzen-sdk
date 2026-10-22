@@ -1396,21 +1396,25 @@ costs your whole remaining time bank and counts toward the forfeit. See
 
 ### 22. A slow `act()` drains the time bank, then every tick plays the default
 
-**Symptom.** The first few seconds of each round look right, then the robot
-stands still or keeps doing what it did last. The per-match log shows
+**Symptom.** The first part of the match looks right, then the robot stands
+still or keeps doing what it did last, and it does not recover in the next
+round. The per-match log shows
 `Big Bad Bots request ...: no answer within ...ms; sending the protocol
 default`, or `the previous decision is still running`.
 
-**Why it happens.** The per-tick deadline is 100 ms, plus a 3 s bank per
-round (both provisional; `state.rules.deadline`). Every tick slower than the
-deadline is paid from the bank. The SDK waits for `act()` until 20 ms before
+**Why it happens.** The response window is 250 ms per fight tick, plus a 3 s
+time bank per seat for the whole match, never refilled between rounds
+(`game_config.response_clock`; `state.rules.deadline` still shows the rule
+set's older 100 ms and per-round bank). Every tick slower than the window is
+paid from the bank. The SDK waits for `act()` until 20 ms before
 `timeout_ms` runs out, then sends the default; it cannot interrupt your
 method, so while a slow call is still running, later ticks get the default
-too. Once the bank is empty, every tick slower than 100 ms is a default.
+too. Once the bank is empty, every tick slower than 250 ms is a default for
+the rest of the match.
 
-**Detect.** `chipzen validate` warns on `bigbadbots_timing` when `act()` goes
-over the deadline on the fixtures. Override `on_decision_latency(latency_ms)`
-to see live numbers.
+**Detect.** `chipzen validate` warns on `bigbadbots_timing` when `act()` takes
+over 100 ms on the fixtures (stricter than the window). Override
+`on_decision_latency(latency_ms)` to see live numbers.
 
 **Fix.** Move setup into `on_match_start()` (call `super()` first): build
 lookup tables from `state.rules` once. Keep `act()` to arithmetic over the

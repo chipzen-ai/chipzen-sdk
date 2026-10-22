@@ -1218,7 +1218,7 @@ other's answer before it submits its own. There is no turn order.
 | Body shop | `choose_body()` | `body_shop` | `BodyShopState` | 1 |
 | One auction lot | `bid()` | `auction` | `AuctionState` | one per lot (`state.rules.gearup.auction_lots`, 6 today) |
 | Fitting | `fit()` | `fitting` | `FittingState` | 1 |
-| One fight tick | `act()` | `fight` | `FightState` | one per tick, `state.rules.rounds.ticks_per_second` (10) a second, every round |
+| One fight tick | `act()` | `fight` | `FightState` | one per tick, `state.rules.rounds.ticks_per_second` (10) per second of match time, every round |
 
 The fight is a best-of-three: the first seat to `rounds.rounds_to_win` round
 wins takes the match, and drawn rounds extend it up to `rounds.max_rounds`. A
@@ -1306,18 +1306,44 @@ Every state also has `request_id`, `timeout_ms`, `valid_actions`, `phase` and
 
 ### 10.3 The per-tick budget
 
-Fight ticks are paced in real time, 10 a second. Every fight request carries
-its deadline in `state.timeout_ms`:
+A fight has 10 ticks per second of match time, but the platform does not
+wait out a tick: it plays the fight as fast as both bots answer, and
+spectators watch a paced replay afterwards. Every fight request carries its
+time limit in `state.timeout_ms`. The numbers come from the platform's
+response clock (decision D-20), which `match_start` announces in
+`game_config.response_clock`:
 
 | Value | Today | Where to read it |
 |---|---|---|
-| Per-tick deadline | **100 ms** (provisional) | `state.rules.deadline.deadline_ms` |
-| Time bank | **3 s per seat per round**, refilled at the start of every round (provisional) | `state.rules.deadline.time_bank_ms` |
-| What this request will wait for | deadline plus what is left of your bank | `state.timeout_ms` |
-| What is left of your bank | | `state.timeout_ms - state.rules.deadline.deadline_ms` |
+| Response window | **250 ms** per fight tick | `game_config.response_clock.deadline_ms` |
+| Time bank | **3 s per seat per match**, never refilled | `game_config.response_clock.time_bank_ms` (`bank_scope` is `"match"`) |
+| What this request will wait for | window plus what is left of your bank | `state.timeout_ms` |
+| What is left of your bank | | `state.timeout_ms - response_clock.deadline_ms` |
 
-- **An answer inside the deadline costs nothing.** An answer later than the
-  deadline is paid for from the bank, for the part beyond the deadline.
+**Do not read the clock from `state.rules.deadline`.** The released rule
+sets (`bigbadbots-1.0` to `bigbadbots-1.2`) are frozen and still carry the
+older provisional numbers there: 100 ms per tick and a 3 s bank refilled
+every round. The platform applies the response clock over any rule set. The
+rest of the `deadline` section still applies: `default_action_policy` (the
+default on a missed tick, §10.4), `late_answer` and
+`miss_counts_toward_forfeit`. See [`RULESETS.md` §6](RULESETS.md#6-playing-and-testing-against-a-rule-set)
+and protocol §3.4.
+
+The SDK does not parse `response_clock` yet. Read it from the raw
+`match_start` message in `on_match_start()`:
+
+```python
+def on_match_start(self, match_info: dict) -> None:
+    super().on_match_start(match_info)  # fills self.rules and state.rules
+    clock = match_info["game_config"].get("response_clock") or {}
+    self.window_ms = clock.get("deadline_ms", 250)
+    self.match_bank_ms = clock.get("time_bank_ms", 3000)
+```
+
+- **An answer inside the window costs nothing.** An answer later than the
+  window is paid for from the bank, for the part beyond the window. The bank
+  is one pot for the whole match: what you spend in round 1 is gone in
+  round 3.
 - **The server measures from sending the request to receiving your answer**,
   rounded up to whole milliseconds, so the network hop is inside the budget.
 - **A late answer is dropped**, never applied to a later tick. The tick plays
@@ -1336,18 +1362,21 @@ method, so while a timed-out call is still running, every later request is
 answered with the default without calling your method again.
 
 So a slow `act()` does not just lose one tick. It spends the bank, and once
-the bank is empty, every tick slower than 100 ms plays the default.
+the bank is empty (for the rest of the match, not just the round), every
+tick slower than 250 ms plays the default.
 
-**Staying inside 100 ms:**
+**Staying inside the window:**
 
 - Do the expensive work once. Read `state.rules` into lookup tables in
   `on_match_start()` (call `super()` first), not on every tick.
 - Keep `act()` to arithmetic over the state. No file or network I/O, no model
   loading, no imports.
-- Do not log on every tick. Ten lines a second fills your log and costs time.
+- Do not log on every tick. A round is hundreds of ticks; a line per tick
+  fills your log and costs time.
 - Watch `on_decision_latency(latency_ms)`, and keep an eye on the
   `bigbadbots_timing` line of `chipzen validate`, which warns when `act()`
-  goes over the per-tick deadline.
+  takes over 100 ms (the rule set's number, so stricter than the 250 ms
+  window).
 
 ### 10.4 One answer per tick: send `block` again every tick
 
@@ -1504,7 +1533,7 @@ the changelog are in [`RULESETS.md`](RULESETS.md). The launch rule set is
 | `arena` | `width`, `start_x`, `start_jitter`, `min_separation` |
 | `rounds` | `ticks_per_second`, `round_ticks`, `rounds_to_win`, `max_rounds`, `timeout_tiebreak`, the optional closing-wall keys (`stall_close_after`, `stall_close_rate`, `stall_min_width`), and `closing_walls` (whether the rule set has them) |
 | `forfeit` | `grace_seconds`, `rounds_for_match` |
-| `deadline` | `deadline_ms`, `time_bank_ms`, `default_action_policy`, `late_answer`, `miss_counts_toward_forfeit` |
+| `deadline` | `deadline_ms`, `time_bank_ms`, `default_action_policy`, `late_answer`, `miss_counts_toward_forfeit`. The platform overrides `deadline_ms` and `time_bank_ms` with `game_config.response_clock` (§10.3). |
 | `["section"]` | Any section of the full table, read-only: `attributes`, `slot_types`, `bodies`, `parts`, `moves`, `specials`, `fighter`, `combat`, `special_effects`, and the five above. [`RULESETS.md` §4](RULESETS.md#4-the-parameter-table) lists what each holds. |
 
 The full table travels in every `match_start`, so the bodies, parts and
@@ -1565,7 +1594,7 @@ speaks the protocol some other way, add `--game bigbadbots`.
 | `act_method` | The class implements `act()`. |
 | `bigbadbots_choose_body`, `bigbadbots_bid`, `bigbadbots_fit`, `bigbadbots_act` | Every request in the conformance fixtures (real `turn_request`s from recorded matches, all four calls) gets an answer, judged as the server judges it. **Malformed** (the server would reject it) fails; **corrected** (well-shaped but not legal, so the server would fix it and log a violation) warns. |
 | `bigbadbots_state_mutation` | No method changes the state it is handed. |
-| `bigbadbots_timing` | Every answer arrives within `timeout_ms`; warns when `act()` goes over the per-tick deadline. |
+| `bigbadbots_timing` | Every answer arrives within `timeout_ms`; warns when `act()` takes over the rule set's 100 ms `deadline_ms` (stricter than the platform's 250 ms window, §10.3). |
 | `bigbadbots_exit` | No method raises `SystemExit` or another `BaseException`. |
 | `bigbadbots_crash_every_tick` | `act()` does not crash on every tick. |
 | `bigbadbots_dockerfile` | Only when the folder has a `Dockerfile`: its final stage copies `log_cap.py` to `/opt/chipzen/log_cap.py` and its ENTRYPOINT is `["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]` (`python3` in the JavaScript starter), so the image starts through the platform's log-cap wrapper. The platform's review rejects an image that does not. |
