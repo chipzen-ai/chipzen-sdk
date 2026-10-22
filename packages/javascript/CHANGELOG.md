@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-22
+
 ### Added
 
 - **The Big Bad Bots starter starts through the platform's log-cap wrapper.**
@@ -424,6 +426,7 @@ and
 
 Apache-2.0.
 
+[0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.5.0
 [0.4.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.4.0
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.3.1
 [0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.3.0
