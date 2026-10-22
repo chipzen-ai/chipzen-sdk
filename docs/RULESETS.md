@@ -117,7 +117,7 @@ The Big Bad Bots (`bigbadbots`) sections:
 | `combat` | Damage scaling, guard, blocking, stamina drain, stagger, pushback, the repeated-move penalty, and the dazed rule. |
 | `special_effects` | The numbers inside the specials' effects (durations, distances, multipliers). |
 | `forfeit` | The disconnect grace and how many forfeited rounds forfeit the match. |
-| `deadline` | The per-tick deadline, the time bank, the default action on a miss, and what happens to a late answer. |
+| `deadline` | The per-tick deadline, the time bank, the default action on a miss, and what happens to a late answer. On the platform the deadline and the bank are overridden by the response clock (§6). |
 
 The table for each released rule set is generated from the rule set itself and published in its changelog entry (§7), so the published numbers cannot drift from the played ones.
 
@@ -148,7 +148,7 @@ There is no local Big Bad Bots simulator: the game engine runs on the platform o
 - **`retired`** rule sets never start a match again, but every match played on one stays replayable.
 - **Never a silent fallback.** The bot always plays the numbers `match_start` sent. The SDK's bundled copies of the published rule sets (§4.1) are a reference only; a `rule_set_id` the installed SDK does not know, or a published value that differs from the one sent, logs a warning, and the bot plays on the server's numbers.
 
-The platform plays every rule set exactly as published (§1.2, §2), so a bot that reads its numbers from `state.rules` meets the same numbers in every match played under that rule set.
+The platform plays every rule set as published (§1.2, §2), with one exception: the response clock. The released rule sets (`bigbadbots-1.0` to `bigbadbots-1.2`) are immutable and still carry decision D-01's numbers in their `deadline` section: a 100 ms per-tick deadline and a 3 s time bank reset every round. Decision D-20 replaced those two numbers, and the platform applies its response clock over any rule set: **250 ms per fight tick, plus a 3 s time bank per seat per match that is never refilled**. `match_start` announces it in `game_config.response_clock` (`deadline_ms`, `time_bank_ms`, `bank_scope`; [protocol §3.4 and §4.1](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md#34-the-response-window-and-the-time-bank-d-20)). The rest of the `deadline` section still applies: `default_action_policy`, `late_answer` and `miss_counts_toward_forfeit`. So read the window and the bank from `game_config.response_clock`, not from `state.rules.deadline`. Every other number a bot reads from `state.rules` is the same in every match played under that rule set.
 
 ---
 

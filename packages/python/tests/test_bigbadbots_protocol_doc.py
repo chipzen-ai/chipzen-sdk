@@ -13,8 +13,10 @@ document and holds them to what the document says about them:
 * every ``turn_action`` is a closed Layer 1 bot message whose ``params`` have
   the section 4.4 shape, and answers a published ``turn_request``;
 * the masks of section 5 hold in the published payloads;
-* the provisional numbers in the document's front table are the numbers in the
-  published ``game_config``, and ``timeout_ms`` is the deadline plus the bank;
+* the numbers in the document's front table are the numbers in the published
+  ``game_config`` (the D-20 response clock in ``response_clock``, the
+  provisional ones in ``rule_set``), and ``timeout_ms`` is the response window
+  plus the bank;
 * the size caps hold;
 * **a stock SDK client that declares ``bigbadbots`` parses every Big Bad Bots message
   without throwing**, driven through the real session loop, and answers with
@@ -243,24 +245,31 @@ def test_game_config_names_the_rule_set_and_is_not_the_variant():
 def test_the_provisional_table_matches_the_published_game_config():
     text = DOC.read_text(encoding="utf-8")
     table = text.split("## Overview", 1)[0]
-    rule_set = _game_config()["rule_set"]
+    config = _game_config()
+    clock, rule_set = config["response_clock"], config["rule_set"]
     deadline, forfeit = rule_set["deadline"], rule_set["forfeit"]
 
-    assert "**100 ms** (provisional)" in table and deadline["deadline_ms"] == 100
-    assert "**3 s per seat per round**" in table and deadline["time_bank_ms"] == 3000
+    # D-20: the response clock, announced in game_config.response_clock.
+    assert "**250 ms** per fight tick" in table and clock["deadline_ms"] == 250
+    assert "**3 s per seat per match**" in table and clock["time_bank_ms"] == 3000
+    assert clock["bank_scope"] == "match"
+    # The released rule set still carries D-01's numbers, and the table says so.
+    assert "(100 ms)" in table and deadline["deadline_ms"] == 100
+    assert "(3 s, reset every round)" in table and deadline["time_bank_ms"] == 3000
     assert "**5 s** of missed ticks" in table and forfeit["grace_seconds"] == 5
     assert "**2** forfeited rounds" in table and forfeit["rounds_for_match"] == 2
     assert deadline["default_action_policy"] == "repeat_block_or_move"
-    # Every row of the table carries the marker.
-    rows = [line for line in table.splitlines() if line.startswith("> | ") and "D-0" in line]
+    rows = [line for line in table.splitlines() if re.match(r"> \| .* \| D-\d+ \|$", line)]
     assert len(rows) == 5
-    assert all("provisional" in row for row in rows)
+    # The D-20 rows are decided; every other row carries the provisional marker.
+    assert [row for row in rows if "D-20" in row] == rows[:2]
+    assert all("provisional" in row for row in rows[2:])
 
 
-def test_act_timeout_is_the_deadline_plus_an_untouched_bank():
-    deadline = _game_config()["rule_set"]["deadline"]
+def test_act_timeout_is_the_response_window_plus_an_untouched_bank():
+    clock = _game_config()["response_clock"]
     act = _requests()["act"]
-    assert act["timeout_ms"] == deadline["deadline_ms"] + deadline["time_bank_ms"]
+    assert act["timeout_ms"] == clock["deadline_ms"] + clock["time_bank_ms"]
 
 
 def test_the_grace_in_ticks_is_the_documented_fifty():

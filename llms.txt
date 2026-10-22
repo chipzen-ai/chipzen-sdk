@@ -6,12 +6,12 @@ Key facts for an agent building a Big Bad Bots bot:
 
 - There is no local simulator. The game engine is private and runs on the platform only. Iterate by uploading the bot and challenging the house bots; `chipzen validate` is the local pre-upload check.
 - Subclass `chipzen.BigBadBotsBot` and implement `act()` (one fight tick). `choose_body()`, `bid()` and `fit()` have legal defaults.
-- The per-tick deadline is 100 ms plus a 3 s time bank per round (provisional). Read them from `state.rules.deadline`.
+- The per-tick response window is 250 ms plus a 3 s time bank per seat for the whole match, never refilled between rounds. `match_start` announces both in `game_config.response_clock` (`deadline_ms`, `time_bank_ms`, `bank_scope`); `state.rules.deadline` still shows the rule set's older numbers (100 ms, a bank per round), so do not read the clock from there.
 - Every tick needs its own answer: send `block` again on every tick you want to block.
 - While the opponent winds up a move it shows only as `"attack"` in phase `"startup"`.
 - Read every number from `state.rules` (the rule set the match is played under); never hard-code one.
-- Big Bad Bots support is in `chipzen-bot` 0.5.0 and later on PyPI: `pip install "chipzen-bot~=0.5"`.
-- JavaScript: Big Bad Bots support is in `@chipzen-ai/bot` 0.4.0 and later on npm: `npm install @chipzen-ai/bot@^0.4.0`. The JavaScript names are the Python ones in camelCase (`chooseBody()`, `state.me.strikeRange`).
+- Big Bad Bots support is in `chipzen-bot` 0.5.0 and later on PyPI; the Dockerfile check in `chipzen validate` needs 0.6.0: `pip install "chipzen-bot~=0.6"`.
+- JavaScript: Big Bad Bots support is in `@chipzen-ai/bot` 0.4.0 and later on npm; the Dockerfile check in `chipzen-sdk validate` needs 0.5.0: `npm install @chipzen-ai/bot@^0.5.0`. The JavaScript names are the Python ones in camelCase (`chooseBody()`, `state.me.strikeRange`).
 
 ## Big Bad Bots docs
 

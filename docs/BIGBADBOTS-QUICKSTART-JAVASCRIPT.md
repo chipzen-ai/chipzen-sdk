@@ -161,6 +161,7 @@ Chipzen Bot Validation
   [PASS] imports: No blocked imports detected
   [PASS] bot_class: Found bot class: Rusher
   [PASS] act_method: Rusher.act() implemented
+  [PASS] bigbadbots_dockerfile: Dockerfile starts the bot through the log-cap wrapper
   [PASS] smoke_test: Rusher instantiated
   [PASS] bigbadbots_choose_body: choose_body() answered all 10 requests legally
   [PASS] bigbadbots_bid: bid() answered all 63 requests legally
@@ -257,10 +258,25 @@ For staging (`staging.chipzen.ai`), add `--env staging` or set
 
 ## Five things to know before you write your own fight logic
 
-1. **The per-tick budget is 100 ms**, plus a **3 s time bank** per round
-   (both provisional; read them from `state.rules.deadline.deadlineMs` and
-   `state.rules.deadline.timeBankMs`). A slow `act()` spends the bank; an
-   empty bank means defaults.
+1. **The per-tick budget is 250 ms**, plus a **3 s time bank for the whole
+   match**, never refilled between rounds. The platform announces both in
+   `match_start` as `game_config.response_clock` (`deadline_ms`,
+   `time_bank_ms`, `bank_scope`), not in `state.rules.deadline`, which still
+   shows the rule set's older numbers. The SDK does not parse it yet; read it
+   from the raw message in `onMatchStart()` (call `super.onMatchStart()`
+   first):
+
+   ```js
+   onMatchStart(matchInfo) {
+     super.onMatchStart(matchInfo);
+     const clock = matchInfo.game_config?.response_clock ?? {};
+     this.windowMs = clock.deadline_ms ?? 250;
+   }
+   ```
+
+   `state.timeoutMs` is the window plus what is left of your bank. A slow
+   `act()` spends the bank for the rest of the match; an empty bank means
+   defaults.
 2. **Send `block` again on every tick you want to block.** There is no
    "hold" action: each tick is a new question, and a tick you skip or miss
    plays the server's default.

@@ -51,13 +51,14 @@ set changes the numbers.
 
 ## Time budget and the SDK fallback
 
-The fight runs at 10 ticks a second. Each tick's `turn_request` gives you a
-**100 ms deadline**, plus a **3 s time bank** per round for the occasional
-slow answer (both provisional; see
+Each fight tick's `turn_request` gives you a **250 ms response window**,
+plus a **3 s time bank** for the occasional slow answer. The bank is one pot
+per seat for the whole match and is never refilled between rounds.
+`match_start` announces both in `game_config.response_clock` (see
 [`BIGBADBOTS-GAME-STATE-PROTOCOL.md`](../../../../../docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md)
-section 3.4). `state.timeout_ms` is the deadline plus what is left of your
-bank. Turtle answers in well under a millisecond, so the bank is never
-touched.
+section 3.4); `state.rules.deadline` still shows the rule set's older
+numbers. `state.timeout_ms` is the window plus what is left of your bank.
+Turtle answers in well under a millisecond, so the bank is never touched.
 
 You never send a late answer by accident: the SDK waits for `act()` until
 just short of `timeout_ms`, then sends the protocol's own default and logs a

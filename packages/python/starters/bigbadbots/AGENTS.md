@@ -27,8 +27,9 @@ fetch an engine, or measure win rate locally. Your local gate is
 ## Setup
 
 ```bash
-# The SDK. Big Bad Bots support is in chipzen-bot 0.5.0 and later.
-pip install "chipzen-bot~=0.5"
+# The SDK. Big Bad Bots support is in chipzen-bot 0.5.0 and later; the
+# Dockerfile check in `chipzen validate` needs 0.6.0.
+pip install "chipzen-bot~=0.6"
 
 # A starter to build on (pick rusher, zoner or turtle).
 git clone https://github.com/chipzen-ai/chipzen-sdk.git
@@ -94,11 +95,15 @@ asked at the same moment and neither sees the other's answer first.
 3. **Answer every tick.** `block` protects only on the tick it is sent; to
    keep blocking, return `block` again on the next tick. Keep any multi-tick
    plan on `self` and re-check it in `act()`.
-4. **Stay under the per-tick deadline**, `state.rules.deadline.deadline_ms`
-   (100 ms today, provisional). The 3 s per-round time bank is for
+4. **Stay under the per-tick response window**, 250 ms, announced in
+   `match_start` as `game_config.response_clock.deadline_ms` (not
+   `state.rules.deadline.deadline_ms`, which still shows the rule set's
+   older 100 ms). The 3 s time bank (`response_clock.time_bank_ms`) is one
+   pot for the whole match, never refilled between rounds, and is for
    emergencies; a slow `act()` drains it and then every slow tick plays the
-   default. In `act()`: no file or network I/O, no imports, no model loading,
-   no logging on every tick. Precompute in `on_match_start()`.
+   default for the rest of the match. In `act()`: no file or network I/O, no
+   imports, no model loading, no logging on every tick. Precompute in
+   `on_match_start()`.
 5. **Read every number from `state.rules`; hard-code none.** Typed sections:
    `state.rules.gearup`, `.arena`, `.rounds`, `.forfeit`, `.deadline`. The
    full table: `state.rules["moves"]`, `["specials"]`, `["bodies"]`,
