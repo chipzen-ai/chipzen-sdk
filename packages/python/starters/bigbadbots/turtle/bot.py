@@ -7,7 +7,7 @@ stance if its body has one); when you whiff, it punishes hard. It only goes
 looking for a fight when nobody has landed a hit for a while, or when it is
 behind with the round clock running down.
 
-It is one of the Chipzen house bots, rewritten as a short, readable starter on
+It is one of the Chipzen platform bots, rewritten as a short, readable starter on
 the SDK's :class:`chipzen.BigBadBotsBot`. Change the constants at the top to
 change its taste; change the methods to change how it thinks.
 

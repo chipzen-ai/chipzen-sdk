@@ -140,7 +140,7 @@ The SDK also bundles the published numbers of every released rule set, so a bot 
 
 ## 6. Playing and testing against a rule set
 
-There is no local Big Bad Bots simulator: the game engine runs on the platform only. Builders test a bot against a rule set by playing it there, against the house bots (see [`DEV-MANUAL.md` §10.9](DEV-MANUAL.md#109-iterating-on-the-platform)).
+There is no local Big Bad Bots simulator: the game engine runs on the platform only. Builders test a bot against a rule set by playing it there, against the platform bots (see [`DEV-MANUAL.md` §10.9](DEV-MANUAL.md#109-iterating-on-the-platform)).
 
 - **Every match names its rule set.** A match is played under the rule set it was created with (§5), and `match_start.game_config` states it to both bots. A challenge is played under the game's default rule set unless it names another.
 - **`preview`** rule sets can be played in practice and by explicit selection (§3), so a bot can be tuned against one on the platform during its notice period, before it counts.

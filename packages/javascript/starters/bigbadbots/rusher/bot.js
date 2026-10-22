@@ -5,7 +5,7 @@
  * it wants, then walks straight in, jabs, throws anyone who blocks, and spends
  * its special the first time it can.
  *
- * It is one of the Chipzen house bots, rewritten as a short, readable starter
+ * It is one of the Chipzen platform bots, rewritten as a short, readable starter
  * on the SDK's `BigBadBotsBot`. It plays exactly like the Python starter in
  * `packages/python/starters/bigbadbots/rusher/bot.py`. Change the constants at
  * the top to change its taste; change the methods to change how it thinks.

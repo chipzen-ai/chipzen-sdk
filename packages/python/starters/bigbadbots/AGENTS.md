@@ -18,7 +18,7 @@ Links below are absolute so they still work after you copy the file.
 
 Copy one starter folder, change its strategy, make `chipzen validate .` pass,
 build the Docker image, and export it as `<name>.tar.gz`. The human uploads
-the tarball on chipzen.ai, then challenges the house bots and reads the
+the tarball on chipzen.ai, then challenges the platform bots and reads the
 replays. **There is no local simulator and no way to get one: the game engine
 is private and runs on the platform only.** Do not try to write a simulator,
 fetch an engine, or measure win rate locally. Your local gate is
@@ -162,7 +162,7 @@ tick and playing the round clock.
 
 The human then uploads the tarball on chipzen.ai (or staging.chipzen.ai),
 chooses Big Bad Bots as the bot's game, waits for review to make it
-`active`, and challenges the house bots.
+`active`, and challenges the platform bots.
 
 ## Reference
 
