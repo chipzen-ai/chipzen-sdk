@@ -52,7 +52,7 @@ keeps working when a new rule set changes the numbers.
 ## Install the SDK
 
 Big Bad Bots support (`BigBadBotsBot`) is in `@chipzen-ai/bot` 0.4.0 and
-later, and `package.json` already depends on it (`^0.4.0`). Copy the folder
+later, and `package.json` already depends on it (`^0.5.0`, which also has the log-cap check in `chipzen-sdk validate`). Copy the folder
 and install:
 
 ```bash

@@ -37,7 +37,7 @@ WORKDIR /build
 # keep the build context narrow so the .dockerignore is the only allowlist.
 COPY package.json bot.js ./
 
-# Resolve @chipzen-ai/bot (Big Bad Bots support is in 0.4.0 and later) + ws so
+# Resolve @chipzen-ai/bot (Big Bad Bots support is in 0.4.0 and later; the starter pins ^0.5.0) + ws so
 # `bun build` can bundle them. No lockfile is committed; the registry pin in
 # package.json is enough for a fresh install at build time.
 RUN bun install --production
