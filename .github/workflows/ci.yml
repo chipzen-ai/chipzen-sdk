@@ -224,6 +224,23 @@ jobs:
       - name: Check the protocol doc against the committed digest
         run: python scripts/protocol_doc_hash.py --check
 
+  log-cap-mirror:
+    # Every Big Bad Bots image starts through the platform's per-match log-cap
+    # wrapper (log_cap.py). Its canonical home is the platform repo; this repo
+    # carries a byte-identical reference copy (packages/common/log_cap.py,
+    # pinned by its .sha256) plus one copy in each Big Bad Bots starter, so a
+    # starter folder copied out of the repo still builds. The platform repo
+    # pins the same digest, so a one-sided change goes red on one side.
+    name: Log-cap wrapper mirror guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check every log_cap.py copy against the pin
+        run: python scripts/log_cap_hash.py --check
+
   python-starter-image:
     # `docker build -t my-bot .` is the canonical packaging step QUICKSTART.md
     # tells every Python bot author to run, and nothing in CI ever ran it. Both
@@ -290,6 +307,8 @@ jobs:
             -v "$PWD/docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md:/tmp/doc.md:ro" \
             -e PYTHONPATH=/bot \
             --entrypoint python "bbb-${{ matrix.starter }}:ci" /tmp/check.py /tmp/doc.md
+      - name: The image starts through the log-cap wrapper, and a capped run is capped
+        run: bash scripts/check_log_cap_image.sh "bbb-${{ matrix.starter }}:ci" python
 
   bigbadbots-js-starter-image:
     # The JavaScript Big Bad Bots starter (issue #151) compiles bot.js and the
@@ -324,6 +343,8 @@ jobs:
         run: docker build -t bbb-js-rusher:ci packages/javascript/starters/bigbadbots/rusher
       - name: The compiled bot plays the published requests
         run: node scripts/check_bigbadbots_js_starter_image.mjs bbb-js-rusher:ci docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md
+      - name: The image starts through the log-cap wrapper, and a capped run is capped
+        run: bash scripts/check_log_cap_image.sh bbb-js-rusher:ci python3
 
   reference-bot:
     name: Reference bot (lint)

@@ -76,7 +76,7 @@ cp -r chipzen-sdk/packages/javascript/starters/bigbadbots/rusher my-bot
 cd my-bot
 npm install
 npx chipzen-sdk --help    # sanity check: lists init, validate, run-external
-ls -A    # .dockerignore  Dockerfile  README.md  bot.js  node_modules  package-lock.json  package.json
+ls -A    # .dockerignore  Dockerfile  README.md  bot.js  log_cap.py  node_modules  package-lock.json  package.json
 ```
 
 Rusher fights with fast bodies and fast hands: it walks in, jabs, throws
@@ -88,8 +88,8 @@ The Python starters also include Zoner (spacing) and Turtle (blocking); their
 
 The folder is self-contained: the bot, `package.json`, an IP-protected
 `Dockerfile` (it compiles `bot.js` and the SDK into one executable with
-`bun build --compile`, so the image holds no readable source), `.dockerignore`
-and a README.
+`bun build --compile`, so the image holds no readable source), `log_cap.py`
+(see section 7), `.dockerignore` and a README.
 
 ## 4. Read the bot
 
@@ -196,8 +196,13 @@ ls -lh my-bot.tar.gz
 The Dockerfile installs `@chipzen-ai/bot` from npm at the version
 `package.json` pins, so the image does not depend on your `node_modules`.
 
+Big Bad Bots bots run through the platform's log-cap wrapper (`log_cap.py` in
+your folder), which caps how much your bot can log in one match and drops the
+rest. The starter's Dockerfile already makes it the image's ENTRYPOINT, so do
+not change the ENTRYPOINT or `log_cap.py`; put your own bot command in `CMD`.
+
 The upload cap is **250 MB compressed** (the built image is separately capped
-at **200 MB**); this image is roughly 120 MB. The image must run as a
+at **200 MB**); this image is roughly 130 MB. The image must run as a
 non-root user; the starter's Dockerfile already sets one. To check:
 
 ```bash

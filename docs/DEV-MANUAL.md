@@ -806,7 +806,9 @@ in private container storage, and runs a smoke test before approval.
 Your image must:
 
 1. **Have an `ENTRYPOINT`** that runs your bot. `CMD` is ignored by the
-   executor; `ENTRYPOINT` is not. See [`examples/reference-bot/Dockerfile`](../examples/reference-bot/Dockerfile):
+   executor; `ENTRYPOINT` is not. (Big Bad Bots images are the exception:
+   their ENTRYPOINT is the platform's log-cap wrapper, which runs the bot
+   command you put in `CMD`. See §10.9.) See [`examples/reference-bot/Dockerfile`](../examples/reference-bot/Dockerfile):
    ```dockerfile
    ENTRYPOINT ["python", "-u", "/bot/bot.py"]
    ```
@@ -1566,6 +1568,7 @@ speaks the protocol some other way, add `--game bigbadbots`.
 | `bigbadbots_timing` | Every answer arrives within `timeout_ms`; warns when `act()` goes over the per-tick deadline. |
 | `bigbadbots_exit` | No method raises `SystemExit` or another `BaseException`. |
 | `bigbadbots_crash_every_tick` | `act()` does not crash on every tick. |
+| `bigbadbots_dockerfile` | Only when the folder has a `Dockerfile`: its final stage copies `log_cap.py` to `/opt/chipzen/log_cap.py` and its ENTRYPOINT is `["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]` (`python3` in the JavaScript starter), so the image starts through the platform's log-cap wrapper. The platform's review rejects an image that does not. |
 
 The file, syntax, import, requirements and size checks run as for any bot.
 `--check-connectivity` drives the poker protocol only; for a Big Bad Bots bot
@@ -1582,7 +1585,11 @@ loop is:
 
 1. **Check:** `chipzen validate .`
 2. **Build and export:** `docker build -t my-bot:vN .` then
-   `docker save my-bot:vN | gzip > my-bot.tar.gz` (§7).
+   `docker save my-bot:vN | gzip > my-bot.tar.gz` (§7). Big Bad Bots bots
+   run through the platform's log-cap wrapper (`log_cap.py` in each starter
+   folder), which caps how much a bot can log in one match. The starters'
+   Dockerfiles make it the ENTRYPOINT, so keep that ENTRYPOINT and
+   `log_cap.py` as they are and put your bot command in `CMD`.
 3. **Upload** on `chipzen.ai` and choose **Big Bad Bots** as the bot's game.
    Review moves it from `pending_review` to `active` (§8.3).
 4. **Challenge the house bots** with Big Bad Bots as the game. A challenge

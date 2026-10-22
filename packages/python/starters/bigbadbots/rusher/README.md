@@ -16,6 +16,7 @@ this folder, change it, upload it.
 | [`requirements.txt`](requirements.txt) | The SDK pin (`chipzen-bot~=0.5`). Add your own dependencies here. |
 | [`Dockerfile`](Dockerfile) | Multi-stage Cython build: the runtime image contains no `.py` source for the bot. |
 | [`.dockerignore`](.dockerignore) | Keeps the build context tight (no caches, virtualenvs, secrets). |
+| [`log_cap.py`](log_cap.py) | The platform's per-match log cap, the image's ENTRYPOINT. Ship it unchanged. |
 
 ## How it plays
 
@@ -104,6 +105,11 @@ docker save my-rusher:v1 | gzip > my-rusher.tar.gz
 
 # 3. Upload it through the developer UI, on chipzen.ai (or staging.chipzen.ai).
 ```
+
+Big Bad Bots bots run through the platform's log-cap wrapper (`log_cap.py` in
+this folder), which caps how much your bot can log in one match and drops the
+rest. The starter's Dockerfile already makes it the image's ENTRYPOINT, so do
+not change the ENTRYPOINT or `log_cap.py`; put your own bot command in `CMD`.
 
 An uploaded bot is started by the platform, which hands it its match URL
 (`CHIPZEN_WS_URL`), so the image itself needs no prod or staging setting.

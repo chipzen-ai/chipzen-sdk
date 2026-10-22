@@ -1,0 +1,7 @@
+# The Big Bad Bots log-cap wrapper is pinned by sha256 over its raw bytes
+# (scripts/log_cap_hash.py, and the platform repo's own pin), so no checkout
+# converts its line endings.
+packages/common/log_cap.py -text
+packages/common/log_cap.py.sha256 -text
+packages/python/starters/bigbadbots/*/log_cap.py -text
+packages/javascript/starters/bigbadbots/*/log_cap.py -text

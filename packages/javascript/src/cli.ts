@@ -134,6 +134,8 @@ async function validateCli(args: string[]): Promise<void> {
     console.log("                               deadline");
     console.log("  bigbadbots_exit              No handler calls process.exit()");
     console.log("  bigbadbots_crash_every_tick  act() does not throw on every tick");
+    console.log("  bigbadbots_dockerfile        With a Dockerfile in the folder: the image");
+    console.log("                               starts through the log-cap wrapper");
     console.log("");
     console.log("With --check-connectivity, four protocol scenarios also run:");
     console.log("  connectivity_full_match    Drive 1 canned match end-to-end");

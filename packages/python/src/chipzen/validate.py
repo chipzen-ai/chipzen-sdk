@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import json
 import os
 import sys
 import time
@@ -346,6 +347,7 @@ def _check_bigbadbots(
             ("pass", "requirements", "No requirements.txt (only stdlib + SDK will be available)")
         )
 
+    results.extend(check_bigbadbots_dockerfile(bot_dir))
     results.extend(_with_bot(bot_dir, entry_point, class_name, _run_bigbadbots))
     if check_connectivity:
         results.append(
@@ -357,6 +359,147 @@ def _check_bigbadbots(
             )
         )
     return results
+
+
+# ---------------------------------------------------------------------------
+# Big Bad Bots image: the log-cap wrapper
+# ---------------------------------------------------------------------------
+
+#: Where a Big Bad Bots image keeps the platform's log-cap wrapper.
+LOG_CAP_SCRIPT = "/opt/chipzen/log_cap.py"
+
+#: The ENTRYPOINTs a Big Bad Bots image may use: the wrapper, with the bot
+#: command as CMD. ``python`` in the Python starters, ``python3`` in the
+#: JavaScript one (a Debian Python that only runs the wrapper).
+BIGBADBOTS_ENTRYPOINTS: tuple[tuple[str, ...], ...] = (
+    ("python", "-I", "-S", "-u", LOG_CAP_SCRIPT, "--"),
+    ("python3", "-I", "-S", "-u", LOG_CAP_SCRIPT, "--"),
+)
+
+_LOG_CAP_FIX = (
+    "Copy log_cap.py from a Big Bad Bots starter folder into this folder, keep the "
+    f"starter's `COPY log_cap.py {LOG_CAP_SCRIPT}` line and its ENTRYPOINT "
+    f"{json.dumps(list(BIGBADBOTS_ENTRYPOINTS[0]))}, and put your bot command in CMD."
+)
+
+
+def _dockerfile_instructions(text: str) -> list[tuple[str, str]]:
+    """``(KEYWORD, arguments)`` per instruction, comments and line continuations resolved."""
+    instructions: list[tuple[str, str]] = []
+    current = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.endswith("\\"):
+            current += line[:-1] + " "
+            continue
+        instructions.append(_instruction(current + line))
+        current = ""
+    if current.strip():
+        instructions.append(_instruction(current))
+    return instructions
+
+
+def _instruction(text: str) -> tuple[str, str]:
+    parts = text.strip().split(None, 1)
+    return parts[0].upper(), parts[1].strip() if len(parts) > 1 else ""
+
+
+def _copy_operands(arguments: str) -> tuple[list[str], list[str]]:
+    """``(flags, operands)`` of a COPY / ADD, in shell or JSON form."""
+    words = arguments.split()
+    flags = []
+    while words and words[0].startswith("--"):
+        flags.append(words.pop(0))
+    rest = " ".join(words)
+    if rest.startswith("["):
+        try:
+            parsed = json.loads(rest)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list) and all(isinstance(part, str) for part in parsed):
+            return flags, parsed
+    return flags, words
+
+
+def check_bigbadbots_dockerfile(bot_dir: Path) -> list[tuple[Severity, str, str]]:
+    """Check a Big Bad Bots bot's ``Dockerfile`` starts the bot through the log-cap wrapper.
+
+    Every Big Bad Bots bot runs under the platform's per-match log cap, and the
+    platform's review rejects an image whose ENTRYPOINT does not run it. With no
+    ``Dockerfile`` in ``bot_dir`` there is nothing to check. Otherwise the final
+    build stage must copy ``log_cap.py`` to :data:`LOG_CAP_SCRIPT` (from a file
+    that exists in the build context) and set one of
+    :data:`BIGBADBOTS_ENTRYPOINTS`, exec form.
+    """
+    dockerfile = bot_dir / "Dockerfile"
+    if not dockerfile.is_file():
+        return []
+    instructions = _dockerfile_instructions(dockerfile.read_text(encoding="utf-8"))
+    starts = [i for i, (keyword, _) in enumerate(instructions) if keyword == "FROM"]
+    final_stage = instructions[starts[-1] + 1 :] if starts else instructions
+
+    problems: list[str] = []
+    copied = False
+    for keyword, arguments in final_stage:
+        if keyword not in ("COPY", "ADD"):
+            continue
+        flags, operands = _copy_operands(arguments)
+        if len(operands) < 2:
+            continue
+        sources, destination = operands[:-1], operands[-1]
+        if destination == LOG_CAP_SCRIPT:
+            wrapper_sources = sources
+        elif destination.rstrip("/") == "/opt/chipzen":
+            wrapper_sources = [s for s in sources if s.rsplit("/", 1)[-1] == "log_cap.py"]
+        else:
+            continue
+        if not wrapper_sources:
+            continue
+        copied = True
+        from_context = not any(flag.startswith("--from") for flag in flags)
+        for source in wrapper_sources:
+            if from_context and not (bot_dir / source).is_file():
+                problems.append(
+                    f"the Dockerfile copies {source} to {LOG_CAP_SCRIPT}, but there is no "
+                    f"{source} in {bot_dir}"
+                )
+    if not copied:
+        problems.append(
+            f"the Dockerfile's final stage does not copy log_cap.py to {LOG_CAP_SCRIPT}"
+        )
+
+    entrypoints = [arguments for keyword, arguments in final_stage if keyword == "ENTRYPOINT"]
+    if not entrypoints:
+        problems.append("the Dockerfile's final stage sets no ENTRYPOINT")
+    else:
+        found = entrypoints[-1]
+        try:
+            parsed = json.loads(found)
+        except json.JSONDecodeError:
+            parsed = None
+        if not isinstance(parsed, list) or tuple(parsed) not in BIGBADBOTS_ENTRYPOINTS:
+            problems.append(f"its ENTRYPOINT is {found}")
+
+    if problems:
+        return [
+            (
+                "fail",
+                "bigbadbots_dockerfile",
+                "Big Bad Bots images must start through the log-cap wrapper: "
+                + "; ".join(problems)
+                + ". "
+                + _LOG_CAP_FIX,
+            )
+        ]
+    return [
+        (
+            "pass",
+            "bigbadbots_dockerfile",
+            "Dockerfile starts the bot through the log-cap wrapper",
+        )
+    ]
 
 
 def _run_bigbadbots(bot: object) -> list[tuple[Severity, str, str]]:
@@ -763,6 +906,8 @@ def validate_cli(args: list[str] | None = None) -> None:
             "  bigbadbots_exit            No handler raises SystemExit or another\n"
             "                             BaseException\n"
             "  bigbadbots_crash_every_tick  act() does not crash on every tick\n"
+            "  bigbadbots_dockerfile      With a Dockerfile in the folder: the image\n"
+            "                             starts through the log-cap wrapper\n"
             "\n"
             "The validator is a courtesy linter: it catches the most common\n"
             "upload-blocking issues before you ship. The authoritative gate is\n"

@@ -17,6 +17,7 @@
 """
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -162,7 +163,14 @@ def _timed(fn, state):
 
 @pytest.mark.parametrize("name", STARTERS)
 def test_starter_has_its_files(name):
-    expected = {"bot.py", "requirements.txt", "Dockerfile", ".dockerignore", "README.md"}
+    expected = {
+        "bot.py",
+        "requirements.txt",
+        "Dockerfile",
+        ".dockerignore",
+        "README.md",
+        "log_cap.py",
+    }
     actual = {p.name for p in (STARTERS_DIR / name).iterdir() if p.is_file()}
     assert expected <= actual, f"{name} is missing {expected - actual}"
 
@@ -507,7 +515,23 @@ def test_dockerfile_compiles_then_strips_source_and_runs_as_non_root(name):
     assert "cythonize -i bot.py && rm bot.py" in text
     assert "COPY --from=builder /build/*.so /bot/" in text
     assert "USER 10001" in text and "useradd" in text
-    assert 'ENTRYPOINT ["python", "-c", "from bot import main; main()"]' in text
+    # The bot runs under the platform's log-cap wrapper; the bot command is CMD.
+    assert "COPY log_cap.py /opt/chipzen/log_cap.py" in text
+    assert "chmod 0444 /opt/chipzen/log_cap.py" in text
+    assert 'ENTRYPOINT ["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]' in text
+    assert 'CMD ["python", "-u", "-c", "from bot import main; main()"]' in text
+
+
+@pytest.mark.parametrize("name", STARTERS)
+def test_starter_ships_the_pinned_log_cap_wrapper(name):
+    """Each starter's log_cap.py is the SDK's pinned copy, byte for byte."""
+    common = STARTERS_DIR.parents[2] / "common"
+    pinned = (common / "log_cap.py.sha256").read_text(encoding="utf-8").strip()
+    copy = (STARTERS_DIR / name / "log_cap.py").read_bytes()
+    assert hashlib.sha256(copy).hexdigest() == pinned, (
+        f"{name}/log_cap.py differs from packages/common/log_cap.py; run "
+        "`python scripts/log_cap_hash.py --sync` from the repo root"
+    )
 
 
 @pytest.mark.parametrize("name", STARTERS)

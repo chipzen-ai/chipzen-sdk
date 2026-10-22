@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Big Bad Bots starter starts through the platform's log-cap wrapper.**
+  The platform caps how much a Big Bad Bots bot may log in one match with a
+  small stdlib-only Python wrapper, `log_cap.py`, that must be the image's
+  ENTRYPOINT (the platform's review rejects an image that does not start
+  through it). The JavaScript `rusher` starter ships `log_cap.py` next to its
+  Dockerfile, installs the slimmest Debian Python that runs it
+  (`python3-minimal` + `libpython3.11-stdlib`, about 10 MB compressed), and
+  sets `ENTRYPOINT ["python3", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]`
+  with `CMD ["dumb-init", "/bot/bot"]`.
+- **`chipzen-sdk validate` checks a Big Bad Bots bot's Dockerfile** (new check
+  `bigbadbots_dockerfile`), the same check as the Python SDK's: with a
+  `Dockerfile` in the bot's folder, its final stage must copy `log_cap.py` to
+  `/opt/chipzen/log_cap.py` and set the wrapper ENTRYPOINT. Poker bots are not
+  checked.
 - **Pineapple OFC parity with the Python SDK**
   ([#175](https://github.com/chipzen-ai/chipzen-sdk/issues/175)). The SDK
   now plays a Pineapple OFC table (`state_shape: "pineapple"`) instead of

@@ -14,8 +14,13 @@
 # Export:  docker save my-bigbadbots-bot:test | gzip > my-bigbadbots-bot.tar.gz
 #
 # Build context for this directory should be small (bot.js + package.json +
-# this file). The .dockerignore alongside this file keeps node_modules,
-# caches, and lockfile metadata out.
+# log_cap.py + this file). The .dockerignore alongside this file keeps
+# node_modules, caches, and lockfile metadata out.
+#
+# log_cap.py is the platform's per-match log cap, and it is this image's
+# ENTRYPOINT: every Big Bad Bots bot runs under it, and the platform's review
+# rejects an image that does not start through it. Do not edit log_cap.py or
+# change the ENTRYPOINT; change CMD (your bot command) instead.
 
 # -----------------------------------------------------------------------------
 # Stage 1: bundle + compile the bot. The .js source lives only in this stage
@@ -47,7 +52,8 @@ RUN bun build --compile --minify --sourcemap=none --target=bun-linux-x64 \
     && rm -rf node_modules
 
 # -----------------------------------------------------------------------------
-# Stage 2: Runtime. Only the compiled binary + ENTRYPOINT.
+# Stage 2: Runtime. Only the compiled binary + the log-cap wrapper as
+# ENTRYPOINT.
 # No .js source for the bot's strategy is present.
 # -----------------------------------------------------------------------------
 # Base pinned by digest. Tag: debian:12-slim (matches the glibc the Bun
@@ -56,8 +62,13 @@ FROM debian:12-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea
 
 # CA certs are needed for outbound TLS (the platform's WebSocket endpoint is
 # wss://). dumb-init reaps any subprocesses cleanly on container exit.
+# python3-minimal + libpython3.11-stdlib run only the log-cap wrapper (a
+# stdlib-only script); the bot never uses them. That pair is the slimmest
+# Debian Python that runs it: python3-minimal alone lacks modules the
+# wrapper imports (dataclasses, ctypes).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates dumb-init \
+        python3-minimal libpython3.11-stdlib \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /bot
@@ -66,11 +77,22 @@ WORKDIR /bot
 COPY --from=builder /build/bot /bot/bot
 RUN chmod +x /bot/bot
 
+# The platform's per-match log cap. It lives outside /bot, owned by root and
+# read-only, so nothing the bot does can replace it.
+COPY log_cap.py /opt/chipzen/log_cap.py
+
 # Run as non-root (defense in depth: the platform also applies seccomp and
 # cap-drop on top of this). Review rejects an image that runs as root.
 RUN groupadd --system --gid 10001 bot \
     && useradd --system --uid 10001 --gid bot --home-dir /bot --shell /usr/sbin/nologin bot \
-    && chown -R bot:bot /bot
+    && chown -R bot:bot /bot \
+    && chmod 0444 /opt/chipzen/log_cap.py
 USER 10001
 
-ENTRYPOINT ["dumb-init", "/bot/bot"]
+# Every Big Bad Bots bot runs under the log cap: the ENTRYPOINT is the
+# wrapper, and the bot command is the CMD it runs. Keep this ENTRYPOINT
+# exactly as it is (the platform's review checks it); change only CMD.
+# `-I -S` keep the wrapper's own Python isolated from the bot's files and
+# environment; the bot command still gets the full environment.
+ENTRYPOINT ["python3", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]
+CMD ["dumb-init", "/bot/bot"]
