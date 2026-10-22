@@ -9,8 +9,9 @@
  * over a real WebSocket, the way the platform does:
  *
  * - the image runs as a non-root user and holds no .js source in /bot;
- * - the container starts from its ENTRYPOINT with `CHIPZEN_WS_URL` and
- *   `CHIPZEN_TOKEN`, authenticates, and answers a Big Bad Bots `hello` with
+ * - the container starts from its ENTRYPOINT (the log-cap wrapper, running the
+ *   bot as its CMD under the platform's per-match limits) with `CHIPZEN_WS_URL`
+ *   and `CHIPZEN_TOKEN`, authenticates, and answers a Big Bad Bots `hello` with
  *   `supported_games: ["bigbadbots"]`;
  * - after `match_start` (the protocol doc's published `game_config`), it answers
  *   each published `turn_request` of BIGBADBOTS-GAME-STATE-PROTOCOL.md (body
@@ -184,6 +185,13 @@ async function main([image, docPath]) {
       `CHIPZEN_WS_URL=ws://host.docker.internal:${port}/ws/match/${MATCH_ID}/bot`,
       "-e",
       "CHIPZEN_TOKEN=ci-token",
+      // The per-match log-cap limits the platform hands every Big Bad Bots
+      // seat, so the match runs with the log-cap wrapper as the bot's parent
+      // process, as it does on the platform.
+      "-e",
+      "CHIPZEN_LOG_CAP_LINES=3000",
+      "-e",
+      "CHIPZEN_LOG_CAP_BYTES=262144",
       image,
     ],
     { stdio: ["ignore", "inherit", "inherit"] },

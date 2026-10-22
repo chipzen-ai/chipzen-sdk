@@ -12,7 +12,8 @@ different style:
 | [`turtle/`](turtle/) | Armour and patience: blocks, waits for a mistake, punishes it hard. |
 
 Each folder is self-contained (bot, `requirements.txt`, `Dockerfile`,
-`.dockerignore`, README), so copy one folder and work from there. The
+`.dockerignore`, README and `log_cap.py`, the platform's log-cap wrapper
+the image starts through), so copy one folder and work from there. The
 constants at the top of each `bot.py` are its taste; change them and the bot
 plays differently.
 

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Big Bad Bots images start through the platform's log-cap wrapper.**
+  The platform caps how much a Big Bad Bots bot may log in one match with a
+  small stdlib-only wrapper, `log_cap.py`, that must be the image's
+  ENTRYPOINT (the platform's review rejects an image that does not start
+  through it). `rusher`, `zoner` and `turtle` now ship `log_cap.py` next to
+  their Dockerfile (a pinned copy of `packages/common/log_cap.py`), copy it to
+  `/opt/chipzen/log_cap.py` (root-owned, 0444), and set
+  `ENTRYPOINT ["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]`
+  with the bot command as `CMD`.
+- **`chipzen validate` checks a Big Bad Bots bot's Dockerfile** (new check
+  `bigbadbots_dockerfile`). When the bot's folder has a `Dockerfile`, its final
+  stage must copy `log_cap.py` to `/opt/chipzen/log_cap.py` and set that
+  ENTRYPOINT (`python` or `python3`); otherwise validate fails with the fix.
+  Poker bots are not checked.
+
 ### Changed
 
 - **The Big Bad Bots starters pin the PyPI release**

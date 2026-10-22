@@ -7,6 +7,7 @@
  * engine gave its answer, and `checkBigBadBotsTurnAction` must agree on each.
  */
 
+import { createHash } from "node:crypto";
 import { promises as fs, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -16,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { type BigBadBotsTurnState, type FightState } from "../src/bigbadbots.js";
 import { BigBadBotsBot } from "../src/bigbadbots_bot.js";
+import { checkBigBadBotsDockerfile } from "../src/bigbadbots_dockerfile.js";
 import {
   BIGBADBOTS_CALLS,
   BIGBADBOTS_VALIDATE_GAME_CONFIG,
@@ -456,7 +458,14 @@ describe("the JavaScript Rusher starter", () => {
 
   it("ships the files a starter needs, and a non-root, digest-pinned Dockerfile", () => {
     const files = readdirSync(STARTER).sort();
-    expect(files).toEqual([".dockerignore", "Dockerfile", "README.md", "bot.js", "package.json"]);
+    expect(files).toEqual([
+      ".dockerignore",
+      "Dockerfile",
+      "README.md",
+      "bot.js",
+      "log_cap.py",
+      "package.json",
+    ]);
     const dockerfile = readFileSync(path.join(STARTER, "Dockerfile"), "utf-8");
     const froms = [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map((m) => m[1]!);
     expect(froms.length).toBe(2);
@@ -465,5 +474,143 @@ describe("the JavaScript Rusher starter", () => {
     const pkg = JSON.parse(readFileSync(path.join(STARTER, "package.json"), "utf-8")) as Json;
     expect(pkg.type).toBe("module");
     expect(pkg.main).toBe("bot.js");
+  });
+
+  it("runs the bot under the pinned log-cap wrapper, with the bot command as CMD", () => {
+    const dockerfile = readFileSync(path.join(STARTER, "Dockerfile"), "utf-8");
+    expect(dockerfile).toContain("COPY log_cap.py /opt/chipzen/log_cap.py");
+    expect(dockerfile).toContain("chmod 0444 /opt/chipzen/log_cap.py");
+    expect(dockerfile).toMatch(
+      /^ENTRYPOINT \["python3", "-I", "-S", "-u", "\/opt\/chipzen\/log_cap.py", "--"\]$/m,
+    );
+    expect(dockerfile).toMatch(/^CMD \["dumb-init", "\/bot\/bot"\]$/m);
+    const pinned = readFileSync(path.join(REPO, "packages", "common", "log_cap.py.sha256"), "utf-8").trim();
+    const copy = readFileSync(path.join(STARTER, "log_cap.py"));
+    expect(createHash("sha256").update(copy).digest("hex")).toBe(pinned);
+  });
+
+  it("passes the Dockerfile check with its Dockerfile and wrapper in the folder", async () => {
+    const dir = await starterCopy();
+    for (const name of ["Dockerfile", "log_cap.py"]) {
+      await fs.copyFile(path.join(STARTER, name), path.join(dir, name));
+    }
+    const results = await validateBot(dir);
+    expect(fails(results)).toEqual([]);
+    expect(byName(results, "bigbadbots_dockerfile")[0]?.severity).toBe("pass");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Dockerfile must start the bot through the log-cap wrapper
+// ---------------------------------------------------------------------------
+
+describe("the Big Bad Bots Dockerfile check", () => {
+  const GOOD_ENTRYPOINT = 'ENTRYPOINT ["python3", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]';
+  const GOOD = [
+    "# syntax=docker/dockerfile:1.7",
+    "FROM oven/bun:1-debian AS builder",
+    "COPY package.json bot.js ./",
+    "",
+    "FROM debian:12-slim",
+    "COPY --from=builder /build/bot /bot/bot",
+    "COPY log_cap.py /opt/chipzen/log_cap.py",
+    "RUN groupadd --system --gid 10001 bot \\",
+    "    && chmod 0444 /opt/chipzen/log_cap.py",
+    "USER 10001",
+    GOOD_ENTRYPOINT,
+    'CMD ["dumb-init", "/bot/bot"]',
+    "",
+  ].join("\n");
+
+  async function dirWith(name: string, dockerfile: string | null, wrapper = true): Promise<string> {
+    const dir = path.join(workDir, `dockerfile_${name}`);
+    await fs.mkdir(dir, { recursive: true });
+    if (dockerfile !== null) await fs.writeFile(path.join(dir, "Dockerfile"), dockerfile, "utf-8");
+    if (wrapper) await fs.writeFile(path.join(dir, "log_cap.py"), "# the wrapper\n", "utf-8");
+    return dir;
+  }
+
+  it("passes the starter's own Dockerfile and both interpreter spellings", async () => {
+    expect((await checkBigBadBotsDockerfile(STARTER))[0]?.severity).toBe("pass");
+    expect((await checkBigBadBotsDockerfile(await dirWith("good", GOOD)))[0]?.severity).toBe("pass");
+    const python = GOOD.replace('["python3", "-I"', '["python", "-I"');
+    expect((await checkBigBadBotsDockerfile(await dirWith("python", python)))[0]?.severity).toBe(
+      "pass",
+    );
+    const intoDir = GOOD.replace(
+      "COPY log_cap.py /opt/chipzen/log_cap.py",
+      "COPY --chmod=0444 log_cap.py /opt/chipzen/",
+    );
+    expect((await checkBigBadBotsDockerfile(await dirWith("intodir", intoDir)))[0]?.severity).toBe(
+      "pass",
+    );
+  });
+
+  it("checks nothing without a Dockerfile", async () => {
+    expect(await checkBigBadBotsDockerfile(await dirWith("none", null))).toEqual([]);
+  });
+
+  it.each([
+    ['ENTRYPOINT ["dumb-init", "/bot/bot"]', "dumb-init"],
+    ['ENTRYPOINT ["python3", "-u", "/opt/chipzen/log_cap.py", "--"]', '"-u"'],
+    ["ENTRYPOINT python3 -I -S -u /opt/chipzen/log_cap.py --", "python3 -I"],
+  ])("fails %s with the fix", async (entrypoint, shown) => {
+    const dir = await dirWith(`ep_${shown.replace(/\W/g, "")}`, GOOD.replace(GOOD_ENTRYPOINT, entrypoint));
+    const [result] = await checkBigBadBotsDockerfile(dir);
+    expect(result?.severity).toBe("fail");
+    expect(result?.message).toMatch(/^Big Bad Bots images must start through the log-cap wrapper: /);
+    expect(result?.message).toContain(shown);
+    expect(result?.message).toContain('["python3","-I","-S","-u","/opt/chipzen/log_cap.py","--"]');
+    expect(result?.message).toContain("CMD");
+  });
+
+  it("fails a final stage with no ENTRYPOINT, no wrapper copy, or no wrapper file", async () => {
+    const noEntrypoint = await dirWith("noep", GOOD.replace(GOOD_ENTRYPOINT + "\n", ""));
+    expect((await checkBigBadBotsDockerfile(noEntrypoint))[0]?.message).toContain("sets no ENTRYPOINT");
+    const noCopy = await dirWith("nocopy", GOOD.replace("COPY log_cap.py /opt/chipzen/log_cap.py\n", ""));
+    expect((await checkBigBadBotsDockerfile(noCopy))[0]?.message).toContain("does not copy log_cap.py");
+    const builderOnly = await dirWith(
+      "builderonly",
+      GOOD.replace("COPY log_cap.py /opt/chipzen/log_cap.py\n", "").replace(
+        "COPY package.json bot.js ./",
+        "COPY package.json bot.js ./\nCOPY log_cap.py /opt/chipzen/log_cap.py",
+      ),
+    );
+    expect((await checkBigBadBotsDockerfile(builderOnly))[0]?.severity).toBe("fail");
+    const noFile = await dirWith("nofile", GOOD, false);
+    expect((await checkBigBadBotsDockerfile(noFile))[0]?.message).toContain("there is no log_cap.py");
+  });
+
+  it("is part of validateBot for a Big Bad Bots bot, and not for a poker bot", async () => {
+    const b3 = await writeBot(
+      "bbb_bad_dockerfile",
+      `
+import { Action, BigBadBotsBot } from "@chipzen-ai/bot";
+
+export class Blocker extends BigBadBotsBot {
+  act(state) {
+    return Action.act("block");
+  }
+}
+`,
+    );
+    await fs.writeFile(path.join(b3, "Dockerfile"), 'FROM debian:12-slim\nENTRYPOINT ["/bot/bot"]\n');
+    expect(byName(await validateBot(b3), "bigbadbots_dockerfile")[0]?.severity).toBe("fail");
+
+    const poker = await writeBot(
+      "poker_with_dockerfile",
+      `
+import { Action, Bot } from "@chipzen-ai/bot";
+
+export class Folder extends Bot {
+  decide(state) {
+    return Action.fold();
+  }
+}
+`,
+    );
+    await fs.writeFile(path.join(poker, "Dockerfile"), 'FROM node:22\nENTRYPOINT ["node", "bot.js"]\n');
+    const results = await validateBot(poker);
+    expect(byName(results, "bigbadbots_dockerfile")).toEqual([]);
   });
 });

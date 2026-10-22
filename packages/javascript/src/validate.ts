@@ -11,6 +11,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { checkBigBadBotsDockerfile } from "./bigbadbots_dockerfile.js";
 import { runBigBadBotsChecks, type BigBadBotsCheckable } from "./bigbadbots_validate.js";
 import { type GameState } from "./models.js";
 import { runConformanceChecks } from "./conformance.js";
@@ -251,6 +252,7 @@ async function checkDirectory(
   if (game === "bigbadbots") {
     results.push(
       ...(await checkBigBadBots(
+        dir,
         entry,
         source,
         botClassName,
@@ -410,6 +412,7 @@ function botBaseGame(source: string, className: string): ValidateGame | null {
 
 /** The Big Bad Bots half of `checkDirectory`, after the bot class is found. */
 async function checkBigBadBots(
+  dir: string,
   entry: string,
   source: string,
   className: string,
@@ -423,6 +426,8 @@ async function checkBigBadBots(
   const methodResult = checkMethod(source, className, isBigBadBotsBot ? "act" : "decide");
   results.push(methodResult);
   if (methodResult.severity === "fail") return results;
+
+  results.push(...(await checkBigBadBotsDockerfile(dir)));
 
   const loaded = await loadBot(entry, className);
   if ("failure" in loaded) {

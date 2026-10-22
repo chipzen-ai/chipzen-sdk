@@ -37,7 +37,7 @@ cd my-bot
 ```
 
 Each starter folder holds `bot.py`, `requirements.txt`, `Dockerfile`,
-`.dockerignore` and `README.md`. Keep that layout.
+`.dockerignore`, `log_cap.py` and `README.md`. Keep that layout.
 
 ## Commands
 
@@ -116,9 +116,15 @@ asked at the same moment and neither sees the other's answer first.
 9. **Fittings:** one part per slot, and the part's `slot` must equal
    `state.slots[index]`. Wrong entries are dropped.
 10. **Keep the Dockerfile's packaging intact:** the Cython compile step
-    (`cythonize -i bot.py && rm bot.py`), `USER 10001`, and the
-    `ENTRYPOINT`. Add dependencies to `requirements.txt` only if needed;
-    `chipzen validate` checks them against the platform's allow-list.
+    (`cythonize -i bot.py && rm bot.py`), `USER 10001`, the
+    `COPY log_cap.py /opt/chipzen/log_cap.py` line and the `ENTRYPOINT`.
+    The ENTRYPOINT is the platform's log-cap wrapper, which caps how much
+    the bot can log in one match; the platform's review rejects an image
+    that does not start through it. Never edit `log_cap.py` or the
+    ENTRYPOINT; the bot command is `CMD`. Add dependencies to
+    `requirements.txt` only if needed; `chipzen validate` checks them
+    against the platform's allow-list, and checks the Dockerfile's
+    ENTRYPOINT.
 11. **Keep `main()`** in `bot.py` as the starter has it. The platform runs
     the image and passes the match URL in `CHIPZEN_WS_URL`.
 

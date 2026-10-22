@@ -13,8 +13,13 @@
 # Export:  docker save my-bigbadbots-bot:test | gzip > my-bigbadbots-bot.tar.gz
 #
 # Build context for this directory should be small (bot.py +
-# requirements.txt + this file). The .dockerignore alongside this
-# file keeps caches, virtualenvs, and __pycache__ out.
+# requirements.txt + log_cap.py + this file). The .dockerignore alongside
+# this file keeps caches, virtualenvs, and __pycache__ out.
+#
+# log_cap.py is the platform's per-match log cap, and it is this image's
+# ENTRYPOINT: every Big Bad Bots bot runs under it, and the platform's review
+# rejects an image that does not start through it. Do not edit log_cap.py or
+# change the ENTRYPOINT; change CMD (your bot command) instead.
 
 # -----------------------------------------------------------------------------
 # Stage 1: Cython compilation. The .py source lives only in this stage and is
@@ -56,7 +61,8 @@ COPY bot.py .
 RUN cythonize -i bot.py && rm bot.py
 
 # -----------------------------------------------------------------------------
-# Stage 2: Runtime. Only the compiled .so + runtime deps + ENTRYPOINT.
+# Stage 2: Runtime. Only the compiled .so + runtime deps + the log-cap
+# wrapper as ENTRYPOINT.
 # No .py source for the bot's strategy is present.
 # -----------------------------------------------------------------------------
 FROM python:3.12-slim@sha256:dd29372629eeba2dd003fd9e9d35a5b8236c44727875a0364254b5127af88e65
@@ -83,14 +89,26 @@ RUN pip install -r requirements.txt \
 # architecture suffix.
 COPY --from=builder /build/*.so /bot/
 
+# The platform's per-match log cap (stdlib only). It lives outside /bot,
+# owned by root and read-only, so nothing the bot does can replace it.
+COPY log_cap.py /opt/chipzen/log_cap.py
+
 # Run as non-root (defense in depth: the platform also applies seccomp
 # and cap-drop on top of this).
 RUN groupadd --system --gid 10001 bot && \
     useradd --system --uid 10001 --gid bot --home-dir /bot --shell /usr/sbin/nologin bot && \
-    chown -R bot:bot /bot
+    chown -R bot:bot /bot && \
+    chmod 0444 /opt/chipzen/log_cap.py
 USER 10001
 
-# ENTRYPOINT calls main() from the compiled bot module. The .py source
-# isn't present so we can't python bot.py directly; the import path
-# resolves to bot.<abi>.so via Python's standard module loader.
-ENTRYPOINT ["python", "-c", "from bot import main; main()"]
+# Every Big Bad Bots bot runs under the log cap: the ENTRYPOINT is the
+# wrapper, and the bot command is the CMD it runs. Keep this ENTRYPOINT
+# exactly as it is (the platform's review checks it); change only CMD.
+# `-I -S` keep the wrapper's own Python isolated from the bot's files and
+# environment; the bot command still gets the full environment.
+ENTRYPOINT ["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]
+
+# CMD calls main() from the compiled bot module. The .py source isn't
+# present so we can't python bot.py directly; the import path resolves to
+# bot.<abi>.so via Python's standard module loader.
+CMD ["python", "-u", "-c", "from bot import main; main()"]

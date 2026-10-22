@@ -76,7 +76,7 @@ the same program.
 git clone https://github.com/chipzen-ai/chipzen-sdk.git
 cp -r chipzen-sdk/packages/python/starters/bigbadbots/rusher my-bot
 cd my-bot
-ls -A    # .dockerignore  Dockerfile  README.md  bot.py  requirements.txt
+ls -A    # .dockerignore  Dockerfile  README.md  bot.py  log_cap.py  requirements.txt
 ```
 
 Pick whichever style you want to build on. They are three of the house bots
@@ -90,7 +90,7 @@ you will fight on the platform, rewritten as short, commented starters:
 
 Each folder is self-contained: the bot, `requirements.txt`, an IP-protected
 `Dockerfile` (it compiles `bot.py` to a Cython `.so`, so the image holds no
-readable source), `.dockerignore` and a README. This page uses Rusher.
+readable source), `log_cap.py` (see section 7), `.dockerignore` and a README. This page uses Rusher.
 
 ## 4. Read the bot
 
@@ -189,6 +189,11 @@ docker build -t my-bot:v1 .
 docker save my-bot:v1 | gzip > my-bot.tar.gz
 ls -lh my-bot.tar.gz    # roughly 45 MB
 ```
+
+Big Bad Bots bots run through the platform's log-cap wrapper (`log_cap.py` in
+your folder), which caps how much your bot can log in one match and drops the
+rest. The starter's Dockerfile already makes it the image's ENTRYPOINT, so do
+not change the ENTRYPOINT or `log_cap.py`; put your own bot command in `CMD`.
 
 The upload cap is **250 MB compressed** (the built image is separately capped
 at **200 MB**). The image must run as a non-root user; the starter's

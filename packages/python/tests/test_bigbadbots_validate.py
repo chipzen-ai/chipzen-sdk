@@ -609,3 +609,155 @@ def test_requirements_accept_direct_references_by_package_name(tmp_path, line, o
     (tmp_path / "requirements.txt").write_text(line + "\n")
     [(sev, _, _)] = _check_requirements(tmp_path / "requirements.txt")
     assert (sev == "pass") is ok
+
+
+# ---------------------------------------------------------------------------
+# The Dockerfile must start the bot through the log-cap wrapper
+# ---------------------------------------------------------------------------
+
+_B3_BOT = """\
+from chipzen import Action, BigBadBotsBot
+
+class Fighter(BigBadBotsBot):
+    def act(self, state):
+        return Action.act("idle")
+"""
+
+_GOOD_DOCKERFILE = """\
+# syntax=docker/dockerfile:1.7
+FROM python:3.12-slim AS builder
+COPY bot.py .
+ENTRYPOINT ["python", "bot.py"]
+
+FROM python:3.12-slim
+WORKDIR /bot
+COPY log_cap.py /opt/chipzen/log_cap.py
+RUN groupadd --system --gid 10001 bot && \\
+    useradd --system --uid 10001 --gid bot bot && \\
+    chmod 0444 /opt/chipzen/log_cap.py
+USER 10001
+ENTRYPOINT ["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]
+CMD ["python", "-u", "-c", "from bot import main; main()"]
+"""
+
+
+def _b3_dir(tmp_path, dockerfile: str | None, *, wrapper: bool = True) -> Path:
+    (tmp_path / "bot.py").write_text(_B3_BOT)
+    if wrapper:
+        (tmp_path / "log_cap.py").write_text("# the wrapper\n")
+    if dockerfile is not None:
+        (tmp_path / "Dockerfile").write_text(dockerfile)
+    return tmp_path
+
+
+def _dockerfile_entry(results):
+    return _entries(results, "bigbadbots_dockerfile")
+
+
+@pytest.mark.parametrize("name", STARTERS)
+def test_every_starter_dockerfile_passes_the_log_cap_check(name):
+    from chipzen.validate import check_bigbadbots_dockerfile
+
+    [(severity, _, message)] = check_bigbadbots_dockerfile(STARTERS_DIR / name)
+    assert severity == "pass", message
+
+
+def test_the_javascript_starter_dockerfile_passes_the_log_cap_check():
+    from chipzen.validate import check_bigbadbots_dockerfile
+
+    js = Path(__file__).parents[2] / "javascript" / "starters" / "bigbadbots" / "rusher"
+    [(severity, _, message)] = check_bigbadbots_dockerfile(js)
+    assert severity == "pass", message
+
+
+def test_a_good_dockerfile_passes(tmp_path):
+    results = validate_bot(_b3_dir(tmp_path, _GOOD_DOCKERFILE))
+    assert [sev for sev, _ in _dockerfile_entry(results)] == ["pass"]
+
+
+def test_no_dockerfile_means_no_dockerfile_check(tmp_path):
+    results = validate_bot(_b3_dir(tmp_path, None))
+    assert _dockerfile_entry(results) == []
+
+
+def test_the_python3_entrypoint_is_accepted(tmp_path):
+    dockerfile = _GOOD_DOCKERFILE.replace('["python", "-I"', '["python3", "-I"')
+    results = validate_bot(_b3_dir(tmp_path, dockerfile))
+    assert [sev for sev, _ in _dockerfile_entry(results)] == ["pass"]
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "shown"),
+    [
+        ('ENTRYPOINT ["python", "-c", "from bot import main; main()"]', '"-c"'),
+        ('ENTRYPOINT ["python", "-u", "/opt/chipzen/log_cap.py", "--"]', '"-u"'),
+        ("ENTRYPOINT python -I -S -u /opt/chipzen/log_cap.py --", "python -I"),
+        ('ENTRYPOINT ["dumb-init", "/bot/bot"]', "dumb-init"),
+    ],
+)
+def test_a_wrong_entrypoint_fails_with_the_fix(tmp_path, entrypoint, shown):
+    dockerfile = _GOOD_DOCKERFILE.replace(
+        'ENTRYPOINT ["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]', entrypoint
+    )
+    results = validate_bot(_b3_dir(tmp_path, dockerfile))
+    [(severity, message)] = _dockerfile_entry(results)
+    assert severity == "fail"
+    assert message.startswith("Big Bad Bots images must start through the log-cap wrapper:")
+    assert shown in message
+    assert '["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]' in message
+    assert "CMD" in message
+
+
+def test_a_missing_entrypoint_in_the_final_stage_fails(tmp_path):
+    dockerfile = _GOOD_DOCKERFILE.replace(
+        'ENTRYPOINT ["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]\n', ""
+    )
+    [(severity, message)] = _dockerfile_entry(validate_bot(_b3_dir(tmp_path, dockerfile)))
+    assert severity == "fail" and "sets no ENTRYPOINT" in message
+
+
+def test_a_dockerfile_that_does_not_copy_the_wrapper_fails(tmp_path):
+    dockerfile = _GOOD_DOCKERFILE.replace("COPY log_cap.py /opt/chipzen/log_cap.py\n", "")
+    [(severity, message)] = _dockerfile_entry(validate_bot(_b3_dir(tmp_path, dockerfile)))
+    assert severity == "fail" and "does not copy log_cap.py" in message
+
+
+def test_a_wrapper_copied_only_in_the_builder_stage_fails(tmp_path):
+    dockerfile = _GOOD_DOCKERFILE.replace("COPY log_cap.py /opt/chipzen/log_cap.py\n", "").replace(
+        "COPY bot.py .\n", "COPY bot.py .\nCOPY log_cap.py /opt/chipzen/log_cap.py\n"
+    )
+    [(severity, _)] = _dockerfile_entry(validate_bot(_b3_dir(tmp_path, dockerfile)))
+    assert severity == "fail"
+
+
+def test_a_missing_wrapper_file_fails(tmp_path):
+    results = validate_bot(_b3_dir(tmp_path, _GOOD_DOCKERFILE, wrapper=False))
+    [(severity, message)] = _dockerfile_entry(results)
+    assert severity == "fail" and "there is no log_cap.py" in message
+
+
+def test_a_copy_into_the_directory_counts(tmp_path):
+    dockerfile = _GOOD_DOCKERFILE.replace(
+        "COPY log_cap.py /opt/chipzen/log_cap.py", "COPY --chmod=0444 log_cap.py /opt/chipzen/"
+    )
+    results = validate_bot(_b3_dir(tmp_path, dockerfile))
+    assert [sev for sev, _ in _dockerfile_entry(results)] == ["pass"]
+
+
+def test_a_poker_bot_dockerfile_is_not_checked(tmp_path):
+    _write(
+        tmp_path,
+        """\
+        from chipzen import Bot, GameState, Action
+
+        class MyBot(Bot):
+            def decide(self, state: GameState) -> Action:
+                return Action.fold()
+        """,
+    )
+    (tmp_path / "Dockerfile").write_text(
+        'FROM python:3.12-slim\nENTRYPOINT ["python", "main.py"]\n'
+    )
+    results = validate_bot(tmp_path)
+    assert _dockerfile_entry(results) == []
+    assert _no_fails(results)
