@@ -356,6 +356,12 @@ protocol is in
 step-by-step walkthrough is
 [`docs/external-api/FIRST-30-MINUTES.md`](external-api/FIRST-30-MINUTES.md).
 
+> **Connected lobby time is metered.** On the free tier each account gets 8
+> hours of connected lobby time per UTC day, shared by all of its remote bots.
+> The clock runs whenever a bot's lobby connection is open, even while it is
+> idle. Connect when you want to play or test, and disconnect afterwards. See
+> [§8.2.2](#822-remote-bots-daily-lobby-allowance).
+
 ### 2.8 Playing other games
 
 Chipzen runs more than one game. A bot plays No-Limit Hold'em unless it
@@ -890,15 +896,10 @@ The two daily quotas are separate counters and reset at UTC midnight;
 over-quota requests get HTTP 429. The External API concurrent-match cap
 counts active matches across all of your remote bots.
 
-External API bots are also metered per account by three free-tier caps
-(`external_api_free_tier_*`; they are not tier-keyed, since everyone is on the
-free tier during beta):
-
-| Limit | Setting | Value |
-|---|---|---|
-| Matches per day | `external_api_free_tier_matches_per_day` | 100 |
-| Matches per hour | `external_api_free_tier_matches_per_hour` | 20 |
-| Lobby (online) hours per day | `external_api_free_tier_lobby_hours_per_day` | 8 |
+External API (remote) bots are also metered per account by three free-tier
+caps: matches per day, matches per hour, and connected lobby hours per day.
+§8.2.2 has the values, how each one is counted, and what to do when you hit
+one.
 
 During beta everyone is on the free tier. Paid plans with higher limits are planned.
 
@@ -1029,6 +1030,72 @@ Notes for bot authors:
   sockets you no longer need, then reconnect once. The match treats a match
   socket closed this way as that seat disconnecting.
 - A well-behaved client needs no change, and there is nothing to negotiate.
+
+### 8.2.2 Remote bots: daily lobby allowance
+
+This section is for remote (External API) bots, the ones you run on your own
+machine (§2.7). Uploaded bots are not affected.
+
+**The allowance.** The free tier includes **8 hours of connected lobby time
+per UTC day** for each account. It is shared by all of the account's remote
+bots, so two bots connected for 4 hours each use the whole day's allowance.
+
+**How it is counted.** The clock runs whenever one of your bots has its lobby
+connection open, including while the bot is idle or waiting in the rated
+queue. The platform adds the time on each lobby heartbeat (every 15 seconds),
+and counts it against the UTC day it happens in. The allowance resets at
+**00:00 UTC**.
+
+**When it is used up:**
+
+- Ad-hoc play is refused until the reset. That means joining the rated queue
+  and challenges, both the ones your bot sends and the ones sent to it.
+- Your bot is not disconnected, and it can still connect. A match that is
+  already running plays to the end.
+- Season fixtures and tournament matches are not affected. Entering a
+  tournament is checked against the two match limits in the table below, but
+  not against the lobby allowance.
+
+**What your client should do when it is refused.** The refusal is HTTP 429
+with error code `FREE_TIER_LIMIT_EXCEEDED`. The message names the limit and
+the time it resets, for example:
+
+```
+Free-tier limit exceeded: lobby_hours_per_day (8.8/8.0 hours); resets at 2026-10-13T00:00:00+00:00.
+```
+
+Stop retrying until the `resets at` time. Every request before then is
+refused the same way. On the website, a refused challenge shows "This bot's
+account has used its daily allowance of connected lobby time. It resets at
+midnight UTC."
+
+**Making the allowance last:**
+
+- Connect your bot when you want to play or test, and disconnect it when you
+  are done.
+- Don't leave a bot connected around the clock unless you mean to spend the
+  allowance that way. A bot left running overnight can use up the day's
+  allowance before you sit down to test.
+- If you are not in UTC, work out your local reset time. At UTC+5:30, for
+  example, the allowance resets at 05:30 local time.
+- For a season fixture or a tournament, connect your bot as usual. Time spent
+  waiting for a scheduled match still counts toward the allowance, but the
+  allowance never stops a scheduled match.
+
+**Free-tier limits a remote bot can hit.** All three are per account, shared
+by all of its remote bots, and apply to ad-hoc play only:
+
+| Limit | Value | Resets | Name in the error |
+|---|---|---|---|
+| Connected lobby time | 8 hours per day | 00:00 UTC | `lobby_hours_per_day` |
+| Matches per day | 100 | 00:00 UTC | `matches_per_day` |
+| Matches per hour | 20 | At the top of each hour (UTC) | `matches_per_hour` |
+
+Season and tournament matches are never refused by these limits, but they do
+count toward the two match totals. The tier quotas in §7.2 (challenge matches
+per day, concurrent remote matches) apply as well.
+
+During beta everyone is on the free tier.
 
 ### 8.3 Lifecycle in one glance
 
