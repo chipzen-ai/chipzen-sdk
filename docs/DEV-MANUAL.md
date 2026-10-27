@@ -901,6 +901,8 @@ caps: matches per day, matches per hour, and connected lobby hours per day.
 §8.2.2 has the values, how each one is counted, and what to do when you hit
 one.
 
+During beta everyone is on the free tier. Paid plans with higher limits are planned.
+
 > Earlier versions of this manual listed per-tier upload-size caps
 > (Free 5 MB / Pro 25 MB / Elite 100 MB) alongside a legacy 100 MB POST
 > path and a 500 MB direct-to-S3 path, and a per-tier CPU / memory / tmpfs /
