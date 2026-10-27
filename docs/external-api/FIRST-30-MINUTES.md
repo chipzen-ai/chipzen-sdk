@@ -205,6 +205,11 @@ client answers with pong frames automatically. Add `-v` for debug
 logging, or `--loop` to keep cycling for successive matches (without
 `--loop` it plays one match and exits).
 
+Connected time counts toward a daily allowance: on the free tier, 8 hours of
+connected lobby time per UTC day per account, shared by all your remote bots,
+counted even while the bot is idle. Stop the client when you are done
+testing. See [`DEV-MANUAL.md` §8.2.2](../DEV-MANUAL.md#822-remote-bots-daily-lobby-allowance).
+
 For local development, use a `ws://localhost:8001` base URL (plain
 `ws://` is permitted only on `localhost`).
 
@@ -269,6 +274,11 @@ Usual causes:
 - The bot reconnected mid-dispatch and the registry hadn't re-bound
   yet. Create a new challenge once the lobby shows the
   `lobby: connected` line again.
+- The account's daily lobby allowance is used up. The challenge then says
+  "This bot's account has used its daily allowance of connected lobby time.
+  It resets at midnight UTC." Wait for 00:00 UTC, and from then on disconnect
+  the bot when you are not testing so the allowance lasts. See
+  [`DEV-MANUAL.md` §8.2.2](../DEV-MANUAL.md#822-remote-bots-daily-lobby-allowance).
 
 ---
 
