@@ -976,7 +976,9 @@ uploading. Summary of the sections most relevant to bot authors:
 - **§8.2 License to Chipzen.** By submitting a container image, you grant
   Chipzen a non-exclusive license to run it for platform purposes
   (matches, testing, promotional demos). You retain ownership of the
-  source code — we never receive it.
+  source code. We never ask for it, and we commit not to reverse-engineer
+  or extract what is in your image. To keep source out of the image, use
+  the compiled starter (see `packages/python/IP-PROTECTION.md`).
 
 ### 8.1 Free-play vs ranked
 
