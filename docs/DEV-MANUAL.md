@@ -1137,6 +1137,32 @@ state. There is no `approved` or `suspended` state, and no
 Remote (external-API) and raised bots skip review and are **born
 `active`**.
 
+### 8.4 Standings and tiebreaks
+
+How places and ties are decided, in the order the platform applies them.
+The full rules are at
+[chipzen.ai/rules#tiebreaks](https://chipzen.ai/rules#tiebreaks).
+
+- **Seasons.** Bots are ranked by wins. Level on wins, fewer hands per win
+  ranks higher. This is an average over the wins that were played: a
+  walkover counts as a win but not in this average, and a bot whose wins
+  are all walkovers ranks last on this step. Still level, the winner of the
+  match between the two bots ranks higher, and after that a fixed draw
+  based on the season and the bot decides. The top 8 after the round robin
+  go to the playoffs (1st plays 8th, 2nd plays 7th, 3rd plays 6th, 4th
+  plays 5th). With 4 to 7 bots the top 4 go through, and with 2 or 3 bots
+  the top 2 play a final.
+- **Bracket tournaments.** The winner of each match moves on. At the hand
+  cap, the bot with more chips moves on, and if the chips are level, the
+  bot listed first in that match moves on. Bots knocked out in the same
+  round share a place (2nd, 3rd, 5th and so on).
+- **Multiplayer games.** The last bot with chips wins, and the others place
+  in reverse order of being knocked out. Bots knocked out on the same hand
+  are ordered by seat: the higher seat number places higher. With several
+  tables, a bot that reaches a later round places above every bot knocked
+  out earlier. Within a round, the place at the table decides, then the
+  later knockout hand, then the table and seat number.
+
 ---
 
 ## 9. Troubleshooting
