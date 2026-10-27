@@ -1093,8 +1093,7 @@ Season and tournament matches are never refused by these limits, but they do
 count toward the two match totals. The tier quotas in §7.2 (challenge matches
 per day, concurrent remote matches) apply as well.
 
-During beta everyone is on the free tier. Plans with higher limits are planned
-for the formal launch.
+During beta everyone is on the free tier.
 
 ### 8.3 Lifecycle in one glance
 
