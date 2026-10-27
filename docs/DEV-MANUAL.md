@@ -1149,13 +1149,18 @@ The full rules are at
   are all walkovers ranks last on this step. Still level, the winner of the
   match between the two bots ranks higher, and after that a fixed draw
   based on the season and the bot decides. The top 8 after the round robin
-  go to the playoffs (1st plays 8th, 2nd plays 7th, 3rd plays 6th, 4th
-  plays 5th). With 4 to 7 bots the top 4 go through, and with 2 or 3 bots
-  the top 2 play a final.
+  usually go to the playoffs (top 16 in class leagues), best seed against
+  worst (with 8: 1st plays 8th, 2nd plays 7th, 3rd plays 6th, 4th plays
+  5th). With fewer bots than places the bracket shrinks, for example to the
+  top 4 with 4 to 7 bots, or to a final between the top 2 with 2 or 3
+  bots. In a playoff match, a bot that shows up beats one that does not,
+  and if the match has no usable result (neither bot showed up, or the
+  match was void), the better seed moves on.
 - **Bracket tournaments.** The winner of each match moves on. At the hand
   cap, the bot with more chips moves on, and if the chips are level, the
   bot listed first in that match moves on. Bots knocked out in the same
-  round share a place (2nd, 3rd, 5th and so on).
+  round share a place: 2nd, 3rd, 5th, and 9th for first-round losers in a
+  16-bot bracket.
 - **Multiplayer games.** The last bot with chips wins, and the others place
   in reverse order of being knocked out. Bots knocked out on the same hand
   are ordered by seat: the higher seat number places higher. With several
