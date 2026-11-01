@@ -10,6 +10,7 @@ Key facts for an agent building a Big Bad Bots bot:
 - Every tick needs its own answer: send `block` again on every tick you want to block.
 - While the opponent winds up a move it shows only as `"attack"` in phase `"startup"`.
 - Read every number from `state.rules` (the rule set the match is played under); never hard-code one.
+- Challenges you send are limited per account per UTC day, practice games against the platform bots included (HTTP 429 `CHALLENGE_QUOTA_EXCEEDED` past a limit): 20 across all games on the free tier; once those are spent, Big Bad Bots challenges until that day's count of them reaches 5; at most 40 Big Bad Bots challenges on any tier.
 - Big Bad Bots support is in `chipzen-bot` 0.5.0 and later on PyPI; the Dockerfile check in `chipzen validate` needs 0.6.0: `pip install "chipzen-bot~=0.6"`.
 - JavaScript: Big Bad Bots support is in `@chipzen-ai/bot` 0.4.0 and later on npm; the Dockerfile check in `chipzen-sdk validate` needs 0.5.0: `npm install @chipzen-ai/bot@^0.5.0`. The JavaScript names are the Python ones in camelCase (`chooseBody()`, `state.me.strikeRange`).
 

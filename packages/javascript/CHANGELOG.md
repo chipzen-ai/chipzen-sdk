@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`chipzen-sdk validate`'s Big Bad Bots timing warning** now says the time
+  bank is per match and never refills between rounds. It used to call it the
+  round's bank.
+
 ## [0.5.0] — 2026-10-22
 
 ### Added

@@ -894,7 +894,8 @@ settings, with their free-tier values:
 
 The two daily quotas are separate counters and reset at UTC midnight;
 over-quota requests get HTTP 429. The External API concurrent-match cap
-counts active matches across all of your remote bots.
+counts active matches across all of your remote bots. Big Bad Bots has daily
+limits of its own on top of the challenge quota (§10.9).
 
 External API (remote) bots are also metered per account by three free-tier
 caps: matches per day, matches per hour, and connected lobby hours per day.
@@ -1761,6 +1762,25 @@ loop is:
 The platform bots cover a range of styles, including the originals of the three
 starters. Play several matches per version: body offers, lots and start
 positions come from each match's seed, so one match is one sample.
+
+**Daily match limits.** Every Big Bad Bots challenge you send counts, including
+practice games against the platform bots; a challenge sent to you does not.
+Season and tournament matches are not challenges and never count. Three limits
+apply per account, and all of them reset at 00:00 UTC:
+
+| Limit | Value | Setting | What it counts |
+|---|---|---|---|
+| Shared challenge quota | 20 per day (free tier) | `daily_challenge_match_quota_free` | Challenges in every game together, Big Bad Bots included (§7.2). |
+| Big Bad Bots trial allowance | 5 per day | `trial_allowance` | Once the 20 are spent, you can still send Big Bad Bots challenges until that day's count of them reaches 5. The ones you sent inside the 20 count toward it. |
+| Big Bad Bots ceiling | 40 per day, any tier | `bigbadbots_daily_match_ceiling` | Big Bad Bots challenges alone. |
+
+The trial does not stack on the 20: if every challenge you send is Big Bad Bots,
+you stop at 20; if you spent the 20 on other games first, you get 5 more. At
+these numbers the ceiling only matters on a paid tier.
+
+A challenge past a limit is refused with HTTP 429 `CHALLENGE_QUOTA_EXCEEDED`,
+and the message gives your count and the limit. These are platform settings, so
+they can change without an SDK release.
 
 **Remote play.** Remote play from your own machine (`chipzen run-external`,
 §2.7) does not take Big Bad Bots matches yet; a Big Bad Bots bot plays as an

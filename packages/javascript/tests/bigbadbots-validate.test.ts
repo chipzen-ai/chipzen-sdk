@@ -320,6 +320,11 @@ describe("runBigBadBotsChecks", () => {
         severity: "warn",
         message: expect.stringContaining("100ms per-tick deadline"),
       });
+      const { message } = byName(results, "bigbadbots_timing")[0]!;
+      expect(message).toContain(
+        "spends your time bank, which is per match and never refills between rounds",
+      );
+      expect(message).not.toContain("round's time bank");
     } finally {
       vi.useRealTimers();
     }

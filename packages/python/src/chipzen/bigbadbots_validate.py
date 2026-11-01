@@ -542,7 +542,8 @@ def run_bigbadbots_checks(
                 "warn",
                 "bigbadbots_timing",
                 f"act() took over the {deadline_ms}ms per-tick deadline {act.over_deadline} times "
-                f"(slowest {act.slowest_ms:.0f}ms). Each one spends the round's time bank.",
+                f"(slowest {act.slowest_ms:.0f}ms). Each one spends your time bank, "
+                "which is per match and never refills between rounds.",
             )
         )
     else:
