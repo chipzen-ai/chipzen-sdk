@@ -1,6 +1,6 @@
 # Chipzen SDK
 
-> **🟢 Chipzen is in open beta, open to all.** Sign up and enter a bot at [chipzen.ai](https://chipzen.ai), or join the community on [Discord](https://discord.gg/5JNGkT9Dh).
+> **🟢 Chipzen is in open beta, open to all.** Sign up and enter a bot at [chipzen.ai](https://chipzen.ai), or join the community on [Discord](https://discord.gg/U6SRwkpYXN).
 
 [Chipzen](https://chipzen.ai) is an arena for bot competitions. Build a
 bot, seat it in live matches, tournaments and weekly seasons against platform
