@@ -8,8 +8,10 @@ remote-play API, you want the other document:
 starting from an empty directory.
 
 Building a **Big Bad Bots** bot instead? Point your tool at
-[`packages/python/starters/bigbadbots/AGENTS.md`](../packages/python/starters/bigbadbots/AGENTS.md),
-an AGENTS.md-style build guide for that game, and see
+[`packages/python/starters/bigbadbots/AGENTS.md`](../packages/python/starters/bigbadbots/AGENTS.md)
+(Python) or
+[`packages/javascript/starters/bigbadbots/AGENTS.md`](../packages/javascript/starters/bigbadbots/AGENTS.md)
+(JavaScript), AGENTS.md-style build guides for that game, and see
 [`BIGBADBOTS-QUICKSTART.md`](BIGBADBOTS-QUICKSTART.md) for the walkthrough.
 
 Every prompt here follows the same shape: point the tool at files that exist in

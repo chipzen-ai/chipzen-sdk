@@ -1732,15 +1732,10 @@ The platform bots cover a range of styles, including the originals of the three
 starters. Play several matches per version: body offers, lots and start
 positions come from each match's seed, so one match is one sample.
 
-**Staging.** To use the staging site, upload to `staging.chipzen.ai` instead.
-The image is the same: the platform hands an uploaded bot its match URL
-(`CHIPZEN_WS_URL`), so nothing in the image names prod or staging.
-
 **Remote play.** Remote play from your own machine (`chipzen run-external`,
 §2.7) does not take Big Bad Bots matches yet; a Big Bad Bots bot plays as an
 uploaded image. The SDK side is ready for when it opens:
-`chipzen run-external bot.py` targets prod, and `--env staging` (or
-`CHIPZEN_ENV=staging`) targets staging.
+`chipzen run-external bot.py` plays on `chipzen.ai`.
 
 ### 10.10 The starters as worked examples
 

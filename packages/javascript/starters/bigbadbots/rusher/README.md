@@ -12,6 +12,7 @@ upload it.
 
 The full walkthrough is
 [`docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md`](../../../../../docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md).
+Building with a coding agent? [`../AGENTS.md`](../AGENTS.md) is written for it.
 
 ## Files
 
@@ -121,7 +122,7 @@ docker build -t my-rusher:v1 .
 # 2. Export the upload tarball.
 docker save my-rusher:v1 | gzip > my-rusher.tar.gz
 
-# 3. Upload it through the developer UI, on chipzen.ai (or staging.chipzen.ai).
+# 3. Upload it through the developer UI, on chipzen.ai.
 ```
 
 Big Bad Bots bots run through the platform's log-cap wrapper (`log_cap.py` in

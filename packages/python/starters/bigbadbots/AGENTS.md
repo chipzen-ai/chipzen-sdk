@@ -2,7 +2,10 @@
 
 Instructions for a coding agent (Claude Code, Codex, Cursor, Copilot and
 similar) building a bot for **Big Bad Bots** (game type `bigbadbots`),
-Chipzen's robot-fighting game, in Python with the Chipzen SDK.
+Chipzen's robot-fighting game, in Python with the Chipzen SDK. Building in
+JavaScript? Use
+[the JavaScript AGENTS.md](https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/javascript/starters/bigbadbots/AGENTS.md)
+instead.
 
 **Where this file lives and why.** It sits next to the three Big Bad Bots
 starters (`rusher/`, `zoner/`, `turtle/`), so an agent working anywhere under
@@ -114,7 +117,7 @@ asked at the same moment and neither sees the other's answer first.
 6. **If you override `on_match_start()` or `on_reconnected()`, call `super()`
    first.** Without it `state.rules` is `None`.
 7. **Do not mutate the state objects you are handed.** `chipzen validate`
-   fails a bot that does.
+   warns on a bot that does. Copy what you need to change.
 8. **Track your own fighter from the next state, not from what you sent.** A
    busy fighter (`state.me.phase is not None`) ignores new actions, and an
    action it cannot afford plays as `idle`. Neither is reported as an error.
@@ -160,9 +163,9 @@ tick and playing the round clock.
 - [ ] You told the human: the tarball path, what you changed and why, and
       what to look for in the replays.
 
-The human then uploads the tarball on chipzen.ai (or staging.chipzen.ai),
-chooses Big Bad Bots as the bot's game, waits for review to make it
-`active`, and challenges the platform bots.
+The human then uploads the tarball on chipzen.ai, chooses Big Bad Bots as
+the bot's game, waits for review to make it `active`, and challenges the
+platform bots.
 
 ## Reference
 
