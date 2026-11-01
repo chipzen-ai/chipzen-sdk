@@ -383,6 +383,31 @@ describe("Big Bad Bots session", () => {
     expect(warnings()).toMatch(/decide\(\) threw; sending the protocol default/);
   });
 
+  // #187: a poker bot at a Big Bad Bots table must not stall anywhere in the match.
+  it.each([
+    ["throws", () => { throw new TypeError("not a poker state"); }],
+    ["answers with a poker action", () => Action.fold()],
+  ])("a poker bot that %s gets a default for every request of a whole match", async (_name, decide) => {
+    class PokerBot extends Bot {
+      decide(): Action {
+        return decide();
+      }
+    }
+    const calls = ["choose_body", ...Array(6).fill("bid"), "fit", ...Array(60).fill("act")];
+    const turns = calls.map((call, n) => request(call, { requestId: `req_${n}` }));
+
+    const { ws, end } = await play(new PokerBot(), [b3Hello(), ...turns, matchEnd()]);
+
+    expect(end).not.toBeNull();
+    expect(ws.actions.map((m) => m.request_id)).toEqual(turns.map((t) => t.request_id));
+    expect(ws.actions.map((m) => m.action)).toEqual([
+      "choose_body",
+      ...Array(6).fill("bid"),
+      "fit",
+      ...Array(60).fill("idle"),
+    ]);
+  });
+
   it("a throw repeats the applied block from turn_result within the round", async () => {
     const { ws } = await play(new Thrower(), [
       b3Hello(),
