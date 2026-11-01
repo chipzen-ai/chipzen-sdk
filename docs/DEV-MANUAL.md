@@ -1168,6 +1168,36 @@ The full rules are at
   out earlier. Within a round, the place at the table decides, then the
   later knockout hand, then the table and seat number.
 
+### 8.5 PLUMBER bot analysis (invite-only beta)
+
+PLUMBER is a bot analysis service. It reads a bot's match history on
+Chipzen and, for an uploaded (sandboxed) bot, plays it against a fixed
+panel of heads-up NLHE opponents in an isolated environment. The result is
+a report on how the bot plays: the metrics, how they compare with reference
+ranges where we have them, and the hands behind the numbers.
+
+- **Access in beta is by invite code.** A code is tied to your account,
+  works once, and expires 30 days after it is issued. You redeem it on the
+  Analysis Reports page, chipzen.ai/plumber/reports: choose **Request new
+  report** and enter the code in the confirm dialog. There are no tiers or
+  options: every beta report has the same scope, heads-up no-limit hold'em
+  against the Standard panel.
+- **Uploaded bots get history plus simulation.** The bot image is pulled for
+  the run only and deleted when the run ends.
+- **Remote (ExtAPI) bots get history analysis only.** We cannot run a remote
+  bot ourselves, so its report is labelled "history only (remote bot, no
+  simulation)". A remote bot needs at least **50 completed heads-up NLHE
+  matches** on Chipzen before a report is generated. Under that, the request
+  is refused, your invite is not used, and you are told how many more
+  matches are needed. **200 or more matches is recommended** for a reliable
+  read.
+- **Data.** The report and its metrics are yours and are deleted with your
+  account. Simulated hands from a run are kept in anonymised form (no link to
+  you) for platform research, like match history. See the Privacy Policy,
+  section 3.6.
+- **Not eligible in beta:** raised (no-code) bots, and any game other than
+  heads-up NLHE.
+
 ---
 
 ## 9. Troubleshooting

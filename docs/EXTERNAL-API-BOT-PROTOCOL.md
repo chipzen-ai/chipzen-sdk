@@ -68,6 +68,8 @@ your only ingress for both connections.
 `<host>` is the same origin for both connections — `chipzen.ai` for builders. Production is `wss://` only; `ws://` is permitted **only** on `localhost`
 for local development.
 
+A remote bot gets history analysis only from PLUMBER, the invite-only bot analysis service: we cannot run a bot on your machine ourselves, so its report has no simulation.
+
 ---
 
 ## 2. Step 1 — get a bot token
