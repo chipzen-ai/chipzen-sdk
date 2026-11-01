@@ -506,6 +506,40 @@ async def test_raise_sends_the_default_not_a_fold(caplog):
     assert "sending the protocol default" in caplog.text
 
 
+class _PokerBot(ChipzenBot):
+    """A poker strategy at a Big Bad Bots table: reads a field only poker states have."""
+
+    def decide(self, state):
+        return Action.raise_to(state.your_seat)
+
+
+class _FoldingPokerBot(ChipzenBot):
+    """A poker strategy that answers with a poker action whatever it is asked."""
+
+    def decide(self, state):
+        return Action.fold()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bot_class", [_PokerBot, _FoldingPokerBot])
+async def test_a_poker_bot_gets_a_default_for_every_request_of_a_whole_match(bot_class):
+    """#187: it must not stall anywhere in the gear-up or the fight."""
+    calls = ["choose_body", *["bid"] * 6, "fit", *["act"] * 60]
+    turns = []
+    for number, call in enumerate(calls):
+        turn = _request(call, request_id=f"req_{number}")
+        turn.pop("seq", None)  # the loop skips a seq that does not advance
+        turns.append(turn)
+
+    ws, end = await _play(bot_class(), _bbb_session(*turns))
+
+    assert end is not None
+    sent = ws.of_type("turn_action")
+    assert [m["request_id"] for m in sent] == [t["request_id"] for t in turns]
+    assert [m["action"] for m in sent] == ["choose_body", *["bid"] * 6, "fit", *["idle"] * 60]
+    assert all(m["params"] == {"amount": 0} for m in sent[1:7])
+
+
 @pytest.mark.asyncio
 async def test_raise_repeats_the_applied_block_from_turn_result_within_the_round():
     result = _fight_turn_result()
