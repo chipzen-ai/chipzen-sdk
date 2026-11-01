@@ -32,6 +32,8 @@ Python starter to a `BigBadBotsBot` from `@chipzen-ai/bot`, with the same
 IP-protected `bun build --compile` packaging as the JavaScript poker starter.
 Walkthrough:
 [`../docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md`](../docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md).
+Coding agents:
+[`../packages/javascript/starters/bigbadbots/AGENTS.md`](../packages/javascript/starters/bigbadbots/AGENTS.md).
 
 ## Quick Start (poker)
 

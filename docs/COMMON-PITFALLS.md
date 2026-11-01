@@ -79,6 +79,7 @@
 27. [Assuming an action you sent was performed](#27-assuming-an-action-you-sent-was-performed)
 28. [Wasting credits in the auction](#28-wasting-credits-in-the-auction)
 29. [Fitting a part into the wrong slot](#29-fitting-a-part-into-the-wrong-slot)
+30. [A Dockerfile that does not start through the log-cap wrapper](#30-a-dockerfile-that-does-not-start-through-the-log-cap-wrapper)
 
 ---
 
@@ -1370,7 +1371,7 @@ stderr is unbuffered by default.
 
 ## Big Bad Bots pitfalls
 
-Entries 21 to 29 are specific to Big Bad Bots (`bigbadbots`), the
+Entries 21 to 30 are specific to Big Bad Bots (`bigbadbots`), the
 robot-fighting game. The full reference is
 [`DEV-MANUAL.md` §10](DEV-MANUAL.md#10-big-bad-bots), and the walkthrough is
 [`BIGBADBOTS-QUICKSTART.md`](BIGBADBOTS-QUICKSTART.md). There is no local
@@ -1527,6 +1528,28 @@ applied. Slot indexes are positions in `state.slots`, not slot type names.
 **Fix.** Build the fitting from `state.slots` and `state.owned`: for each
 slot index, pick an owned part whose `slot` equals `state.slots[index]`, one
 part per slot.
+
+### 30. A Dockerfile that does not start through the log-cap wrapper
+
+**Symptom.** `chipzen validate` fails `bigbadbots_dockerfile` with
+`Big Bad Bots images must start through the log-cap wrapper: ...`, or the
+platform's review rejects the upload.
+
+**Why it happens.** Every Big Bad Bots bot runs under the platform's log-cap
+wrapper (`log_cap.py`), which caps how much a bot can log in one match. The
+review rejects an image that does not start through it. The usual causes:
+you wrote your own Dockerfile, replaced the starter's `ENTRYPOINT` with your
+bot command, or dropped the `COPY log_cap.py /opt/chipzen/log_cap.py` line
+or the `log_cap.py` file. There are no public base images that add it for
+you; it comes from the starter folder.
+
+**Fix.** Start from a starter folder and keep three things as they are:
+`log_cap.py` (unchanged), the `COPY log_cap.py /opt/chipzen/log_cap.py` line
+in the final build stage, and the `ENTRYPOINT`, which is
+`["python", "-I", "-S", "-u", "/opt/chipzen/log_cap.py", "--"]` in the Python
+starters and the same with `python3` in the JavaScript starter. Put your own
+bot command in `CMD`. Run `chipzen validate .` (or `npx chipzen-sdk validate .`)
+before every build: it reads the Dockerfile and names what is missing.
 
 ---
 

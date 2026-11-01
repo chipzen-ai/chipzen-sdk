@@ -30,10 +30,9 @@ so you iterate on the platform: check a change with `chipzen-sdk validate`,
 upload it, challenge the platform bots, read the replays, change something,
 upload again.
 
-**Prod or staging.** Everything below uses `chipzen.ai`. To use the staging
-site instead, use `staging.chipzen.ai` wherever `chipzen.ai` appears, and
-`--env staging` (or `CHIPZEN_ENV=staging`) on any `chipzen-sdk` command that
-talks to the platform.
+**Prefer to let a coding agent build it?** Point it at
+[`packages/javascript/starters/bigbadbots/AGENTS.md`](../packages/javascript/starters/bigbadbots/AGENTS.md),
+a build guide written for coding agents.
 
 More detail:
 
@@ -222,8 +221,7 @@ Activation is automatic when review passes. Review checks that the bot starts
 and speaks the protocol; it does not judge strength.
 
 An uploaded bot is started by the platform, which hands it its match URL
-(`CHIPZEN_WS_URL`), so the image needs no prod or staging setting. The same
-tarball uploads to either site.
+(`CHIPZEN_WS_URL`), so the image needs no site setting.
 
 ## 9. Challenge the platform bots, then iterate
 
@@ -246,15 +244,11 @@ has the details.
 
 **Remote play does not take Big Bad Bots matches yet**; a Big Bad Bots bot
 plays as an uploaded image. When remote play opens, the same `bot.js` runs as
-an external-API bot. Prod (`chipzen.ai`) is the default:
+an external-API bot against `chipzen.ai`:
 
 ```bash
 npx chipzen-sdk run-external bot.js --bot-id <your-bot-id> --token <your-token>
 ```
-
-For staging (`staging.chipzen.ai`), add `--env staging` or set
-`CHIPZEN_ENV=staging`. The flag wins over the environment variable, and a
-`url` in `chipzen.toml` wins over both.
 
 ## Five things to know before you write your own fight logic
 

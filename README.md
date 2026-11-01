@@ -33,8 +33,10 @@ Declaring the games on the connection (the client `hello`'s
 [`docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md`](docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md)
 (JavaScript). Coding agents:
 [`packages/python/starters/bigbadbots/AGENTS.md`](packages/python/starters/bigbadbots/AGENTS.md)
-is a build guide written for you, and [`llms.txt`](llms.txt) indexes the Big
-Bad Bots docs.
+(Python) and
+[`packages/javascript/starters/bigbadbots/AGENTS.md`](packages/javascript/starters/bigbadbots/AGENTS.md)
+(JavaScript) are build guides written for you, and [`llms.txt`](llms.txt)
+indexes the Big Bad Bots docs.
 
 **Works with your AI agent via MCP:** [`chipzen-mcp`](packages/mcp/)
 lets an MCP-capable agent play hold'em on Chipzen with no protocol code.

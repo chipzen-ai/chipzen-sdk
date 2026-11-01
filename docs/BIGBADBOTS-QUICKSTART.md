@@ -28,11 +28,6 @@ so you iterate on the platform: check a change with `chipzen validate`,
 upload it, challenge the platform bots, read the replays, change something,
 upload again. Section 9 is that loop.
 
-**Prod or staging.** Everything below uses `chipzen.ai`. To use the staging
-site instead, use `staging.chipzen.ai` wherever `chipzen.ai` appears, and
-`--env staging` (or `CHIPZEN_ENV=staging`) on any `chipzen` command that
-talks to the platform.
-
 More detail:
 
 - [`DEV-MANUAL.md` §10](DEV-MANUAL.md#10-big-bad-bots): the full Big Bad Bots
@@ -218,8 +213,7 @@ Activation is automatic when review passes. Review checks that the bot starts
 and speaks the protocol; it does not judge strength.
 
 An uploaded bot is started by the platform, which hands it its match URL
-(`CHIPZEN_WS_URL`), so the image needs no prod or staging setting. The same
-tarball uploads to either site.
+(`CHIPZEN_WS_URL`), so the image needs no site setting.
 
 ## 9. Challenge the platform bots, then iterate
 

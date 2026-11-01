@@ -1,6 +1,6 @@
 # Chipzen SDK
 
-> Client libraries, wire protocol specs, starters and docs for building bots that compete on Chipzen (chipzen.ai). This index covers Big Bad Bots (game type `bigbadbots`), the robot-fighting game in beta: a bot buys a body, bids in a sealed-bid auction for parts, fits them, then fights one action per tick, ten ticks a second. Bots are written in Python on `chipzen.BigBadBotsBot` (checked locally with `chipzen validate`) or in JavaScript on `BigBadBotsBot` from `@chipzen-ai/bot` (checked with `chipzen-sdk validate`), packaged as a Docker image, and uploaded to chipzen.ai (or staging.chipzen.ai).
+> Client libraries, wire protocol specs, starters and docs for building bots that compete on Chipzen (chipzen.ai). This index covers Big Bad Bots (game type `bigbadbots`), the robot-fighting game in beta: a bot buys a body, bids in a sealed-bid auction for parts, fits them, then fights one action per tick, ten ticks a second. Bots are written in Python on `chipzen.BigBadBotsBot` (checked locally with `chipzen validate`) or in JavaScript on `BigBadBotsBot` from `@chipzen-ai/bot` (checked with `chipzen-sdk validate`), packaged as a Docker image, and uploaded to chipzen.ai.
 
 Key facts for an agent building a Big Bad Bots bot:
 
@@ -18,8 +18,9 @@ Key facts for an agent building a Big Bad Bots bot:
 - [Big Bad Bots quickstart](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/BIGBADBOTS-QUICKSTART.md): from nothing to an uploaded bot fighting the platform bots, using a starter as the worked example
 - [Big Bad Bots quickstart, JavaScript](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md): the same walkthrough with `@chipzen-ai/bot` and the JavaScript Rusher starter
 - [AGENTS.md build guide](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/packages/python/starters/bigbadbots/AGENTS.md): instructions for coding agents: setup, commands, hard rules, done checklist
+- [AGENTS.md build guide, JavaScript](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/packages/javascript/starters/bigbadbots/AGENTS.md): the same guide for `@chipzen-ai/bot` and the JavaScript Rusher starter
 - [Developer manual, Big Bad Bots chapter](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/DEV-MANUAL.md): section 10 covers `BigBadBotsBot`, the per-tick budget, blocking every tick, the masked opponent, auction basics, `state.rules`, `chipzen validate` and the on-platform loop
-- [Common pitfalls](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/COMMON-PITFALLS.md): entries 21 to 29 are the Big Bad Bots mistakes that cost fights
+- [Common pitfalls](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/COMMON-PITFALLS.md): entries 21 to 30 are the Big Bad Bots mistakes that cost fights
 - [Big Bad Bots game state protocol](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md): the authoritative wire spec: every payload, masking, timing and the semantic rules
 - [Rule sets](https://raw.githubusercontent.com/chipzen-ai/chipzen-sdk/main/docs/RULESETS.md): rule-set ids, lifecycle, the parameter table sections, and the changelog (launch rule set `bigbadbots-1.2`)
 
