@@ -448,6 +448,9 @@ def test_a_slow_act_is_reported():
 
     entries = _entries(_run(act=act), "bigbadbots_timing")
     assert [sev for sev, _ in entries] == ["warn"]
+    message = entries[0][1]
+    assert "spends your time bank, which is per match and never refills between rounds" in message
+    assert "round's time bank" not in message
 
 
 # ---------------------------------------------------------------------------

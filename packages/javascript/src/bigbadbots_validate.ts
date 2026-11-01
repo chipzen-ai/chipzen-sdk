@@ -710,7 +710,8 @@ export async function runBigBadBotsChecks(
         name: "bigbadbots_timing",
         message:
           `act() took over the ${DEADLINE_MS}ms per-tick deadline ${act.overDeadline} times ` +
-          `(slowest ${act.slowestMs.toFixed(0)}ms). Each one spends the round's time bank.`,
+          `(slowest ${act.slowestMs.toFixed(0)}ms). Each one spends your time bank, ` +
+          "which is per match and never refills between rounds.",
       });
     } else {
       const slowest = Math.max(...BIGBADBOTS_CALLS.map((call) => reports[call].slowestMs));

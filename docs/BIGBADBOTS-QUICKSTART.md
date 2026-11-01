@@ -242,6 +242,12 @@ Then loop:
 4. **Play several matches per version.** Body offers, auction lots and start
    positions are drawn from each match's seed, so one match is one sample.
 
+Challenges you send are limited per account per UTC day, and practice games
+against the platform bots count, so plan your test runs around them. On the
+free tier you have 20 across all games, and 5 Big Bad Bots matches for the day
+if you spent those 20 on other games first. See
+[§10.9](DEV-MANUAL.md#109-iterating-on-the-platform).
+
 ## Five things to know before you write your own fight logic
 
 Each has a section in the dev manual chapter.

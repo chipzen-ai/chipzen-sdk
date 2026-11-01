@@ -240,6 +240,12 @@ and start positions are drawn from each match's seed, so one match is one
 sample. The [Python quickstart's section 9](BIGBADBOTS-QUICKSTART.md#9-challenge-the-platform-bots-then-iterate)
 has the details.
 
+Challenges you send are limited per account per UTC day, and practice games
+against the platform bots count, so plan your test runs around them. On the
+free tier you have 20 across all games, and 5 Big Bad Bots matches for the day
+if you spent those 20 on other games first. See
+[§10.9](DEV-MANUAL.md#109-iterating-on-the-platform).
+
 ## Running from your own machine (remote play)
 
 **Remote play does not take Big Bad Bots matches yet**; a Big Bad Bots bot
