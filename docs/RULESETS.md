@@ -8,7 +8,6 @@
 >
 > | Value | Placeholder | Decision |
 > |---|---|---|
-> | Notice period before a new rule set goes live | **14 days** (provisional) | D-13 |
 > | Rating continuity | ratings **continue across minor versions**; a **major version starts a new rating track** (provisional) | D-13 |
 
 ---
@@ -78,16 +77,16 @@ Each rule set is in one of four states. The state is looked up **when a match is
 | `deprecated` | no, except competitions already pinned to it | yes, until its retirement date | yes |
 | `retired` | no | no | **yes, forever** |
 
-- **`preview`** is a rule set that has been announced and is inside its notice period. Bots can practise against it before it counts.
+- **`preview`** is a rule set that has been published but is not live yet. Bots can practise against it before it counts.
 - **`live`** is the default for new matches. Normally one rule set per game is live.
 - **`deprecated`** is a rule set that has been superseded. Its retirement date is published when it is deprecated.
 - **`retired`** rule sets never start a match again, but every match played on one stays replayable and verifiable.
 
 Transitions happen at published UTC timestamps. A rule set is never announced before builders can play it on the platform (§6).
 
-### 3.1 Notice period (provisional)
+### 3.1 Introducing a rule set
 
-**A new rule set is announced at least 14 days before it goes live (provisional, D-13).** It is in `preview` for the whole notice period: from the announcement until its live date. The live date and the notice are published together with the rule set's changelog entry (§7).
+Chipzen may introduce a new rule set at any time; a new rule set may be published in preview before it goes live, and the SDK release that carries it is the notice.
 
 ---
 
@@ -143,7 +142,7 @@ The SDK also bundles the published numbers of every released rule set, so a bot 
 There is no local Big Bad Bots simulator: the game engine runs on the platform only. Builders test a bot against a rule set by playing it there, against the platform bots (see [`DEV-MANUAL.md` §10.9](DEV-MANUAL.md#109-iterating-on-the-platform)).
 
 - **Every match names its rule set.** A match is played under the rule set it was created with (§5), and `match_start.game_config` states it to both bots. A challenge is played under the game's default rule set unless it names another.
-- **`preview`** rule sets can be played in practice and by explicit selection (§3), so a bot can be tuned against one on the platform during its notice period, before it counts.
+- **`preview`** rule sets can be played in practice and by explicit selection (§3), so a bot can be tuned against one on the platform before it counts.
 - **`deprecated`** rule sets can still be played, until their published retirement date.
 - **`retired`** rule sets never start a match again, but every match played on one stays replayable.
 - **Never a silent fallback.** The bot always plays the numbers `match_start` sent. The SDK's bundled copies of the published rule sets (§4.1) are a reference only; a `rule_set_id` the installed SDK does not know, or a published value that differs from the one sent, logs a warning, and the bot plays on the server's numbers.
@@ -160,7 +159,7 @@ One entry per rule set, newest first. Each entry gives the id, its lifecycle dat
 
 - **State:** `preview`. Frozen with engine `1.2.0` (chipzen-ai/bigbadbots-engine tag `v1.2.0`, engine line `v1`) on 2026-10-08. This is the rule set chosen for launch.
 - **sha256** (canonical JSON, as in every log header): `5e1f453c8f02dc3196cdf6a262e30a6147a1b5d4f472d4ec117e87bab42ac3ca`.
-- **Live date:** not set. Its `deadline` and `forfeit` sections are the same as 1.0's, so it stays in `preview` until D-01, D-03 and D-16 are confirmed (chipzen-ai/Chipzen#5089). The notice period (§3.1) starts when a live date is announced.
+- **Live date:** not set. Its `deadline` and `forfeit` sections are the same as 1.0's, so it stays in `preview` until D-01, D-03 and D-16 are confirmed (chipzen-ai/Chipzen#5089).
 - **Parameter table:** to be generated from the released file and published here (#138).
 - **Changes from `bigbadbots-1.1`** (6 changes, 7 values):
   - **No closing walls.** The three closing-wall keys (`rounds.stall_close_after`, `stall_close_rate`, `stall_min_width`) are left out, so the arena never narrows. `rounds.timeout_tiebreak` stays `"damage"` and a round is still 600 ticks (60 s): a round that reaches the time limit goes to the side that dealt more damage.
@@ -190,7 +189,7 @@ One entry per rule set, newest first. Each entry gives the id, its lifecycle dat
 - **State:** `preview`. Frozen with engine `1.0.0` (chipzen-ai/bigbadbots-engine tag `v1.0.0`, engine line `v1`) on 2026-10-03.
 - **sha256** (canonical JSON, as in every log header): `edc31048adeac8ed315a31a923e92f889c95ffde473d478f492ec0107de916a2`.
 - **Content:** the same numbers as the retired `fighter-1.0`, under the new id: the code as played (**provisional, D-04**). Every table is identical; only `rule_set_id` and the notes differ, so the sha256 and the golden replays are new.
-- **Live date:** not set. It stays in `preview` until the provisional decisions D-01, D-03, D-04 and D-16 are confirmed (chipzen-ai/Chipzen#5089). The notice period (§3.1) starts when a live date is announced.
+- **Live date:** not set. It stays in `preview` until the provisional decisions D-01, D-03, D-04 and D-16 are confirmed (chipzen-ai/Chipzen#5089).
 - **Parameter table:** to be generated from the released file and published here (#138).
 - **Changes:** the first Big Bad Bots rule set under the `bigbadbots` id. No rule changes from `fighter-1.0`.
 
