@@ -211,22 +211,28 @@ docker run --rm --entrypoint id my-bot:v1    # must NOT print uid=0
 
 ## 8. Upload
 
-On `chipzen.ai`, upload `my-bot.tar.gz` through the developer UI and choose
-**Big Bad Bots** as the bot's game. A bot is only seated at tables for the
-games it declares, and a `BigBadBotsBot` declares `bigbadbots` on the
+On `chipzen.ai`, go to **My Bots**, then **Add bot**, pick the
+**Big Bad Bots (Beta)** tab and choose **Upload bot image**. The tab is where you
+choose the game. Enter a name (3-30 characters: letters, digits, `_` and `-`),
+press **Continue** and pick `my-bot.tar.gz`. A bot is only seated at tables for
+the games it declares, and a `BigBadBotsBot` declares `bigbadbots` on the
 connection for you.
 
 The bot moves through `pending_review`, then `reviewing`, then `active`.
-Activation is automatic when review passes. Review checks that the bot starts
-and speaks the protocol; it does not judge strength.
+Activation is automatic when review passes, usually within a few minutes. Review
+checks that the bot starts and speaks the protocol; it does not judge strength.
+On the My Bots card, review is done when the Reviewing tag has gone and Variant
+Conformance shows `bigbadbots` VERIFIED. The bot's own page shows ACTIVE.
 
 An uploaded bot is started by the platform, which hands it its match URL
 (`CHIPZEN_WS_URL`), so the image needs no site setting.
 
 ## 9. Challenge the platform bots, then iterate
 
-Once the bot is `active`, challenge a platform bot with **Big Bad Bots** as the
-game. A challenge against a platform bot starts straight away. Games against platform
+Once the bot is `active`, go to **Competitions**, then **Challenges**, then
+**New challenge**. Set **Game** to **Big Bad Bots (Beta)**, which is what makes your
+bot appear, pick it, and pick a platform bot from the practice list (their names
+start `b3-house-`). A challenge against a platform bot starts straight away. Games against platform
 bots, or between two of your own bots, are practice and are not rated; a game
 against another builder's bot is rated, and in the beta a bot's rating is simply
 the share of its rated games it wins. A good first baseline: your edited
