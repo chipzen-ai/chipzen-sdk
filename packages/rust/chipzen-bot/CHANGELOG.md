@@ -126,6 +126,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The poker starter's `table_position` no longer counts busted seats.** A busted seat
+  stays in `opponent_stacks` with a stack of 0, so the old offset from the button was wrong
+  once anyone had gone out. It now counts the seats still in, and treats two players
+  left at any table as heads-up. See `POKER-GAME-STATE-PROTOCOL.md` section 5.9.
+
 - **`GameState.your_seat` and `dealer_seat` are tracked through the
   session** (the Rust analog of
   [#194](https://github.com/chipzen-ai/chipzen-sdk/issues/194)). A hold'em

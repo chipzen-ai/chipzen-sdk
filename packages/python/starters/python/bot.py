@@ -19,23 +19,40 @@ from chipzen import Action, Bot, GameState
 from chipzen.client import run_bot
 
 
-def table_position(your_seat: int, dealer_seat: int, num_players: int) -> str:
-    """Derive your seat's table position from the button.
+def live_seats(
+    your_seat: int, dealer_seat: int, opponent_stacks: list[int], action_history: list[dict]
+) -> list[int]:
+    """The seats still in the match, in seat order.
 
-    The protocol is multiway-shaped: ``opponent_stacks`` is a LIST, so the
-    table size is ``len(opponent_stacks) + 1``. Combined with ``your_seat`` and
-    ``dealer_seat`` (both already on the parsed ``GameState``), that is
-    everything you need to know where you sit:
-
-        seats_after_button = (your_seat - dealer_seat) % num_players
-
-    Heads-up is the special case the scaffold default below was written for: the
-    button posts the small blind and acts first preflop. See
-    docs/protocol/POKER-GAME-STATE-PROTOCOL.md section 5.9.
+    A busted seat stays in ``opponent_stacks`` with a stack of 0, so the list's
+    length counts chairs, not players. A seat all-in this hand also shows 0, but
+    has an entry in ``action_history``. A busted seat has neither.
     """
+    others = [seat for seat in range(len(opponent_stacks) + 1) if seat != your_seat]
+    acted = {entry.get("seat") for entry in action_history}
+    live = {your_seat, dealer_seat}
+    live.update(
+        seat
+        for seat, stack in zip(others, opponent_stacks, strict=True)
+        if stack > 0 or seat in acted
+    )
+    return sorted(live)
+
+
+def table_position(
+    your_seat: int, dealer_seat: int, opponent_stacks: list[int], action_history: list[dict]
+) -> str:
+    """Derive your seat's table position from the button, among the seats still in.
+
+    Heads-up is the special case the scaffold default below was written for: with
+    two players left, at a table of any size, the button posts the small blind and
+    acts first preflop. See docs/protocol/POKER-GAME-STATE-PROTOCOL.md section 5.9.
+    """
+    live = live_seats(your_seat, dealer_seat, opponent_stacks, action_history)
+    num_players = len(live)
     if num_players <= 1:
         return "button"
-    sab = (your_seat - dealer_seat) % num_players
+    sab = (live.index(your_seat) - live.index(dealer_seat)) % num_players
     if num_players == 2:
         return "button_sb" if sab == 0 else "big_blind"
     if sab == 0:
@@ -78,11 +95,12 @@ class MyBot(Bot):
         #
         # Seat-count-aware: opponent_stacks is a LIST of every other seat
         # (length N-1), so this bot keeps running unchanged at a 3-6 player
-        # table. your_seat + dealer_seat give your position. When you add real
+        # table. table_position counts the seats still in. When you add real
         # strategy, iterate / aggregate opponent_stacks instead of assuming a
         # single opponent (reading opponent_stacks[0] sees only one neighbor).
-        num_players = len(state.opponent_stacks) + 1
-        _position = table_position(state.your_seat, state.dealer_seat, num_players)
+        _position = table_position(
+            state.your_seat, state.dealer_seat, state.opponent_stacks, state.action_history
+        )
 
         # Notice, once, any action name this starter cannot build a payload
         # for. This is a NO-LIMIT HOLD'EM bot; it is not a variant bot, and it

@@ -229,9 +229,10 @@ already seat-indexed. The catch is behavioral, not a crash:
   rejected action, this kind of bug stays invisible until you inspect results.
 - **Table size.** Read it from `match_start`'s `game_config.num_players`, or
   derive it from any turn state as `len(opponent_stacks) + 1`.
-- **Position.** Derive your seat's offset from the button with
-  `seats_after_button = (your_seat - dealer_seat) % num_players` (`0` is the
-  button; in heads-up the button is the small blind). The full taxonomy and a
+- **Position.** Count your seat's offset from the button among the seats still
+  in, not around the whole table: a busted seat stays in `opponent_stacks` with a
+  stack of `0`. `0` is the button; with two players left, at a table of any size,
+  the button is the small blind. The full taxonomy, the formula and a
   worked example live in
   [`POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md) Section
   5.9, and the reference starters in `packages/<lang>/starters/` show the
