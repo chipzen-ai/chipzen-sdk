@@ -372,7 +372,7 @@ declares otherwise.
 | No-Limit Hold'em (heads-up and multi-way) | `poker` | Live | [`POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md) |
 | 2-7 Triple Draw | `draw27` | Live | [`DRAW27-GAME-STATE-PROTOCOL.md`](protocol/DRAW27-GAME-STATE-PROTOCOL.md) |
 | Pineapple OFC | `ofc` | Live | [`OFC-GAME-STATE-PROTOCOL.md`](protocol/OFC-GAME-STATE-PROTOCOL.md) |
-| Big Bad Bots (robot fighting) | `bigbadbots` | Beta. Launch rule set `bigbadbots-1.2` ([`RULESETS.md`](RULESETS.md)); build guide in §10 | [`BIGBADBOTS-GAME-STATE-PROTOCOL.md`](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md) |
+| Big Bad Bots (robot fighting) | `bigbadbots` | Beta. Launch rule set `bigbadbots-1.3` ([`RULESETS.md`](RULESETS.md)); build guide in §10 | [`BIGBADBOTS-GAME-STATE-PROTOCOL.md`](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md) |
 
 [`LAYER2-COMMON.md`](protocol/LAYER2-COMMON.md) covers what every game
 shares.
@@ -1355,7 +1355,7 @@ The fight is a best-of-three: the first seat to `rounds.rounds_to_win` round
 wins takes the match, and drawn rounds extend it up to `rounds.max_rounds`. A
 round ends on a KO, at the tick limit (`rounds.round_ticks`, 600 ticks or
 60 s), or by forfeit. At the tick limit, `rounds.timeout_tiebreak` decides:
-`"damage"` (the launch rule set, `bigbadbots-1.2`) gives the round to the
+`"damage"` (the launch rule set, `bigbadbots-1.3`) gives the round to the
 seat that dealt more damage in it; `"hp_pct"` (or absent, `bigbadbots-1.0`)
 to the higher share of max HP.
 
@@ -1451,10 +1451,11 @@ response clock (decision D-20), which `match_start` announces in
 | What this request will wait for | window plus what is left of your bank | `state.timeout_ms` |
 | What is left of your bank | | `state.timeout_ms - response_clock.deadline_ms` |
 
-**Do not read the clock from `state.rules.deadline`.** The released rule
-sets (`bigbadbots-1.0` to `bigbadbots-1.2`) are frozen and still carry the
-older provisional numbers there: 100 ms per tick and a 3 s bank refilled
-every round. The platform applies the response clock over any rule set. The
+**Do not read the clock from `state.rules.deadline`.** `bigbadbots-1.0` to
+`bigbadbots-1.2` are frozen and still carry the older provisional numbers
+there: 100 ms per tick and a 3 s bank refilled every round. `bigbadbots-1.3`
+carries 250 ms and 3 s, but a rule set can't say the bank lasts the whole
+match. The platform applies the response clock over any rule set. The
 rest of the `deadline` section still applies: `default_action_policy` (the
 default on a missed tick, §10.4), `late_answer` and
 `miss_counts_toward_forfeit`. See [`RULESETS.md` §6](RULESETS.md#6-playing-and-testing-against-a-rule-set)
@@ -1567,7 +1568,7 @@ When the move is revealed is the rule set's `combat.intent_reveal`:
 - `"on_active"` (or absent, `bigbadbots-1.0`): on the tick the move becomes
   active, which is the tick it hits, so a `block` answered on that tick still
   counts.
-- `"after_hit"` (`bigbadbots-1.1` and `bigbadbots-1.2`, the launch rule set):
+- `"after_hit"` (`bigbadbots-1.1` to `bigbadbots-1.3`, the launch rule set):
   the first active tick still shows as a wind-up, and the move is revealed
   from the tick after. **You cannot block a strike on sight.** You decide
   while it is still `"attack"`.
@@ -1652,14 +1653,14 @@ arena, the round length, the deadline. A balance patch is a new rule set with
 a new id, never a code change, so **a bot that reads its numbers from the
 rule set keeps working when they change**. The id scheme, the lifecycle and
 the changelog are in [`RULESETS.md`](RULESETS.md). The launch rule set is
-`bigbadbots-1.2`.
+`bigbadbots-1.3`.
 
 `state.rules` (a `chipzen.bigbadbots_rules.RuleSet`, the same object as
 `self.rules`) holds the rule set `match_start` sent:
 
 | Attribute | What it holds |
 |---|---|
-| `id` | The rule-set id, for example `"bigbadbots-1.2"`. Fixed for the whole match. |
+| `id` | The rule-set id, for example `"bigbadbots-1.3"`. Fixed for the whole match. |
 | `gearup` | `budget`, `body_offer_size`, `auction_lots` |
 | `arena` | `width`, `start_x`, `start_jitter`, `min_separation` |
 | `rounds` | `ticks_per_second`, `round_ticks`, `rounds_to_win`, `max_rounds`, `timeout_tiebreak`, the optional closing-wall keys (`stall_close_after`, `stall_close_rate`, `stall_min_width`), and `closing_walls` (whether the rule set has them) |
@@ -1701,10 +1702,10 @@ rule set:
 ```python
 from chipzen.bigbadbots_rules import published_rule_set, published_rule_set_ids
 
-published_rule_set_ids()                  # ('bigbadbots-1.0', 'bigbadbots-1.1', 'bigbadbots-1.2')
-entry = published_rule_set("bigbadbots-1.2")
-entry.state, entry.engine, entry.sha256   # 'preview', '1.2.0', '5e1f...'
-entry.sections["deadline"]["deadline_ms"] # 100
+published_rule_set_ids()                  # ('bigbadbots-1.0', 'bigbadbots-1.1', 'bigbadbots-1.2', 'bigbadbots-1.3')
+entry = published_rule_set("bigbadbots-1.3")
+entry.state, entry.engine, entry.sha256   # 'preview', '1.3.0', 'e2d1...'
+entry.sections["deadline"]["deadline_ms"] # 250
 ```
 
 The bundle holds the published sections (`gearup`, `arena`, `rounds`,

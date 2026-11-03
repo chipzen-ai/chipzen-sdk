@@ -25,9 +25,10 @@ import { RULESETS_URL, StateParseError, type RuleSet } from "./bigbadbots.js";
 import ruleSet10 from "./data/bigbadbots/rulesets/bigbadbots-1.0.json" with { type: "json" };
 import ruleSet11 from "./data/bigbadbots/rulesets/bigbadbots-1.1.json" with { type: "json" };
 import ruleSet12 from "./data/bigbadbots/rulesets/bigbadbots-1.2.json" with { type: "json" };
+import ruleSet13 from "./data/bigbadbots/rulesets/bigbadbots-1.3.json" with { type: "json" };
 
 /** The bundled rule-set files, as JSON. One per released rule set. */
-const BUNDLED_FILES: readonly unknown[] = [ruleSet10, ruleSet11, ruleSet12];
+const BUNDLED_FILES: readonly unknown[] = [ruleSet10, ruleSet11, ruleSet12, ruleSet13];
 
 /**
  * A released rule set as published in `docs/RULESETS.md`, bundled with the SDK.

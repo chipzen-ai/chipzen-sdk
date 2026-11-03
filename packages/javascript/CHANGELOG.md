@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Big Bad Bots rule set `bigbadbots-1.3`, bundled for offline lookup: `bigbadbots-1.2` with a 250 ms
+  `deadline.deadline_ms` and the part `strider` renamed `long_legs`. The server's numbers still win.
+
 ### Fixed
 
 - **`chipzen-sdk validate`'s Big Bad Bots timing warning** now says the time

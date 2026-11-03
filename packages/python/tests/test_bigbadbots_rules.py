@@ -141,11 +141,18 @@ def _changelog() -> dict[str, str]:
 def test_bundles_every_released_bigbadbots_rule_set_and_nothing_else():
     released = [i for i in _changelog() if i.startswith("bigbadbots-")]
     assert published_rule_set_ids() == tuple(sorted(released))
-    assert published_rule_set_ids() == ("bigbadbots-1.0", "bigbadbots-1.1", "bigbadbots-1.2")
+    assert published_rule_set_ids() == (
+        "bigbadbots-1.0",
+        "bigbadbots-1.1",
+        "bigbadbots-1.2",
+        "bigbadbots-1.3",
+    )
     assert sorted(p.stem for p in RULESET_DIR.glob("*.json")) == list(published_rule_set_ids())
 
 
-@pytest.mark.parametrize("rule_set_id", ["bigbadbots-1.0", "bigbadbots-1.1", "bigbadbots-1.2"])
+@pytest.mark.parametrize(
+    "rule_set_id", ["bigbadbots-1.0", "bigbadbots-1.1", "bigbadbots-1.2", "bigbadbots-1.3"]
+)
 def test_bundled_metadata_matches_the_changelog(rule_set_id):
     entry = published_rule_set(rule_set_id)
     assert isinstance(entry, PublishedRuleSet)
@@ -156,7 +163,9 @@ def test_bundled_metadata_matches_the_changelog(rule_set_id):
     assert f"**State:** `{entry.state}`" in text
 
 
-@pytest.mark.parametrize("rule_set_id", ["bigbadbots-1.0", "bigbadbots-1.1", "bigbadbots-1.2"])
+@pytest.mark.parametrize(
+    "rule_set_id", ["bigbadbots-1.0", "bigbadbots-1.1", "bigbadbots-1.2", "bigbadbots-1.3"]
+)
 def test_bundled_files_hold_only_the_published_sections(rule_set_id):
     entry = published_rule_set(rule_set_id)
     assert set(entry.sections) == PUBLISHED_SECTIONS
@@ -344,13 +353,13 @@ async def test_an_unknown_rule_set_warns_and_plays_on_the_servers_numbers(caplog
     table["deadline"]["deadline_ms"] = 75
     bot = RulesReader()
     with caplog.at_level(logging.WARNING, logger="chipzen"):
-        ws, end = await _play(bot, _session(_config("bigbadbots-1.3", table)))
+        ws, end = await _play(bot, _session(_config("bigbadbots-9.9", table)))
 
     assert end == _match_end()
     (warning,) = _rule_set_warnings(caplog)
-    assert "'bigbadbots-1.3' is not one this SDK release knows" in warning
+    assert "'bigbadbots-9.9' is not one this SDK release knows" in warning
     # Never substituted: the bot plays the numbers match_start sent.
-    assert bot.rules.id == "bigbadbots-1.3"
+    assert bot.rules.id == "bigbadbots-9.9"
     assert bot.rules.published is None
     assert bot.rules.deadline.deadline_ms == 75
     assert bot.rules.rounds.closing_walls
