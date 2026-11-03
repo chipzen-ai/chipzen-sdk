@@ -272,7 +272,12 @@ describe("game config and rule set", () => {
     .sort();
 
   it("the Python SDK bundles the rule sets this test reads", () => {
-    expect(published).toEqual(["bigbadbots-1.0.json", "bigbadbots-1.1.json", "bigbadbots-1.2.json"]);
+    expect(published).toEqual([
+      "bigbadbots-1.0.json",
+      "bigbadbots-1.1.json",
+      "bigbadbots-1.2.json",
+      "bigbadbots-1.3.json",
+    ]);
   });
 
   it.each(published)("published %s builds the typed rule set", (file) => {

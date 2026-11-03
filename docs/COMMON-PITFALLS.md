@@ -1462,7 +1462,7 @@ anything. In the replay the block always comes one tick late.
 
 **Why it happens.** While the opponent winds up, you see only
 `action == "attack"` in `phase == "startup"`, never which move. Under the
-launch rule set (`bigbadbots-1.2`, `combat.intent_reveal` `"after_hit"`) the
+launch rule set (`bigbadbots-1.3`, `combat.intent_reveal` `"after_hit"`) the
 move is revealed only on the tick after it first lands, so a bot that waits
 for `opp.action == "punch_high"` before blocking is always too late.
 

@@ -102,7 +102,7 @@ MIRRORED_DOCS: dict[str, str] = {
 #: only is exactly the divergence this exists to catch.
 EXPECTED_DIGESTS: dict[str, str] = {
     "BIGBADBOTS-GAME-STATE-PROTOCOL": (
-        "a6944c5871b3a09151cfb1501100b27f6b39b4d554214356ee596ac4bc5b8c79"
+        "de08adf2aa49537f08254779265a2952ca7b823098dea6623bf04fb3f1f49fa6"
     ),
     "DRAW27-GAME-STATE-PROTOCOL": (
         "b2e91a9a44096369f863c58ddbca435ecaea119248edcf708c19cf70bf0f0980"

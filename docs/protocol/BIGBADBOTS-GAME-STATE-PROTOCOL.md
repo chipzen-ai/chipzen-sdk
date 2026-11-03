@@ -5,7 +5,7 @@
 **Version:** 1.0 draft (Layer 1 protocol version is **unchanged at `1.0`**)
 
 > **Provisional values.** Every number in this document marked **provisional** is a placeholder
-> pending a rules decision. Rule sets `bigbadbots-1.0` to `bigbadbots-1.2` (frozen with engines `1.0.0` to `1.2.0`, all in `preview`)
+> pending a rules decision. Rule sets `bigbadbots-1.0` to `bigbadbots-1.3` (frozen with engines `1.0.0` to `1.3.0`, all in `preview`)
 > carry these values in their `deadline` and `forfeit` sections; if a decision changes one, the change ships as a new rule set
 > before any rule set goes live. The one exception is the response clock: decision D-20 replaced D-01's per-tick deadline
 > (100 ms) and per-round time bank (3 s, reset every round) with the platform's response clock, which the platform applies
@@ -137,7 +137,7 @@ Every fight `turn_request` carries its time limit in the existing Layer 1 field 
 - **Response window: 250 ms per fight tick (D-20).** An answer within the window costs nothing. Read it from `game_config.response_clock.deadline_ms`.
 - **Time bank: 3 s per seat per match, never refilled (D-20).** An answer later than the window is paid for from the bank, for the part beyond the window, while the bank lasts. The bank is not reset between rounds: whatever a seat spends is gone for the rest of the match. Read it from `game_config.response_clock.time_bank_ms`; `game_config.response_clock.bank_scope` is `"match"`.
 - **`timeout_ms` = the window plus what is left of this seat's bank.** That is the whole time the server will wait for this answer (Layer 1 §8.5: "time remaining to submit an action"). `timeout_ms - response_clock.deadline_ms` is the seat's bank.
-- **`rule_set.deadline` does not set the clock.** The released rule sets (`bigbadbots-1.0` to `bigbadbots-1.2`) are immutable and still carry D-01's numbers in their `deadline` section (`deadline_ms` 100, `time_bank_ms` 3000, reset every round). The platform applies the response clock over any rule set instead. The rest of the rule set's `deadline` section still applies: `default_action_policy` (§3.5), `late_answer` and `miss_counts_toward_forfeit`.
+- **`rule_set.deadline` does not set the clock.** `bigbadbots-1.0` to `bigbadbots-1.2` are immutable and still carry D-01's numbers in their `deadline` section (`deadline_ms` 100, `time_bank_ms` 3000, reset every round). `bigbadbots-1.3` carries 250 and 3000, but a rule set can't say the bank lasts the whole match, and the engine on its own resets it every round. The platform applies the response clock over any rule set. The rest of the rule set's `deadline` section still applies: `default_action_policy` (§3.5), `late_answer` and `miss_counts_toward_forfeit`.
 - **Measurement.** The server measures from sending the request to receiving the answer (Layer 1 §10.2), and rounds up to whole milliseconds: 250.001 ms counts as 251 ms, which is late for a 250 ms window.
 - **Gear-up calls have no per-tick deadline.** Their `timeout_ms` is the match's `match_start.turn_timeout_ms` (Layer 1 §10.1). The gear-up examples below show 1000 ms, which is illustrative (provisional).
 
