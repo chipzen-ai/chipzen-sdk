@@ -811,10 +811,15 @@ in private container storage, and runs a smoke test before approval.
 
 Your image must:
 
-1. **Have an `ENTRYPOINT`** that runs your bot. `CMD` is ignored by the
-   executor; `ENTRYPOINT` is not. (Big Bad Bots images are the exception:
-   their ENTRYPOINT is the platform's log-cap wrapper, which runs the bot
-   command you put in `CMD`. See §10.9.) See [`examples/reference-bot/Dockerfile`](../examples/reference-bot/Dockerfile):
+1. **Start your bot from `ENTRYPOINT`, `CMD` or both.** The platform runs
+   your image as it is, in review and in matches, and overrides neither
+   of them, so the usual Docker rules apply: `ENTRYPOINT` runs with `CMD`
+   as its arguments, and with no `ENTRYPOINT`, `CMD` runs on its own. No
+   command-line arguments are added, so the bot must start with everything
+   it needs already set. The poker starters and the reference bot use
+   `ENTRYPOINT` alone. Big Bad Bots images need both: review requires the
+   platform's log-cap wrapper as `ENTRYPOINT`, and it runs the bot command
+   you put in `CMD` (§10.9). See [`examples/reference-bot/Dockerfile`](../examples/reference-bot/Dockerfile):
    ```dockerfile
    ENTRYPOINT ["python", "-u", "/bot/bot.py"]
    ```
