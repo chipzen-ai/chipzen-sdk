@@ -20,6 +20,7 @@ from chipzen_mcp.housebot import (
     CODE_FREE_TIER,
     CODE_HOUSE_BOT_NOT_FOUND,
     CODE_INVALID_TOKEN,
+    CODE_QUOTA_EXCEEDED,
     HttpResult,
     api_origin,
     lower_headers,
@@ -276,6 +277,66 @@ class TestChallengeErrors:
         # the concurrent-match cap.
         result = self._result(429, {})
         assert result["error"] == "http_429"
+
+    def _quota_refusal(self, headers: dict[str, str]) -> dict:
+        post = _RecordingPost(
+            HttpResult(
+                status=429,
+                body=_envelope(CODE_QUOTA_EXCEEDED, "Daily challenge quota reached (20/20)."),
+                headers=headers,
+            )
+        )
+        return request_house_bot_challenge(CONFIG, "boss-1", post=post)
+
+    def test_429_quota_carries_the_wait_from_the_reset_header(self) -> None:
+        # Through lower_headers, as a real response is: the wire casing differs.
+        result = self._quota_refusal(lower_headers({"X-Chipzen-Quota-Reset-After": "3600"}))
+        assert result["status"] == "error" and result["error"] == "quota_exceeded"
+        assert result["server_error_code"] == CODE_QUOTA_EXCEEDED
+        assert result["retry_after_seconds"] == 3600
+        assert "challenge_house_bot" in result["note"] and "3600 seconds" in result["note"]
+        assert result["detail"] == "Daily challenge quota reached (20/20)."
+        assert result["request_id"] == "req-1"
+
+    def test_429_quota_without_the_header_is_still_quota_exceeded(self) -> None:
+        result = self._quota_refusal({})
+        assert result["error"] == "quota_exceeded"
+        assert result["retry_after_seconds"] is None
+        assert "UTC midnight" in result["note"]
+        assert "None" not in result["note"]
+
+    def test_429_quota_with_an_unusable_header_has_no_wait(self) -> None:
+        for raw in (
+            "",
+            "soon",
+            "0",
+            "-5",
+            "1.5",
+            "1_000",
+            "\u0663",
+            "1" * 11,
+            "2026-10-29T00:00:00Z",
+        ):
+            result = self._quota_refusal({"x-chipzen-quota-reset-after": raw})
+            assert result["error"] == "quota_exceeded", raw
+            assert result["retry_after_seconds"] is None, raw
+
+    def test_429_quota_ignores_retry_after(self) -> None:
+        # The server deliberately sends its own header instead (Chipzen#6385).
+        result = self._quota_refusal({"retry-after": "60"})
+        assert result["retry_after_seconds"] is None
+
+    def test_other_429s_ignore_the_reset_header(self) -> None:
+        headers = {"x-chipzen-quota-reset-after": "3600"}
+        for body, error in (
+            (_envelope(CODE_CONCURRENT_CAP, "msg"), "concurrent_cap"),
+            (_envelope(CODE_FREE_TIER, "msg"), "free_tier_limit"),
+            ({}, "http_429"),
+        ):
+            post = _RecordingPost(HttpResult(status=429, body=body, headers=headers))
+            result = request_house_bot_challenge(CONFIG, "boss-1", post=post)
+            assert result["error"] == error
+            assert "retry_after_seconds" not in result
 
     def test_502_dispatch_failed(self) -> None:
         result = self._result(

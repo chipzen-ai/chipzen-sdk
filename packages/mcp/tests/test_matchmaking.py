@@ -11,7 +11,14 @@ import urllib.error
 
 from chipzen_mcp import __version__
 from chipzen_mcp.config import McpConfig
-from chipzen_mcp.housebot import CODE_BOT_OFFLINE, CODE_INVALID_TOKEN, HttpResult, api_origin
+from chipzen_mcp.housebot import (
+    CODE_BOT_OFFLINE,
+    CODE_INVALID_TOKEN,
+    CODE_QUOTA_EXCEEDED,
+    HttpResult,
+    api_origin,
+    lower_headers,
+)
 from chipzen_mcp.matchmaking import (
     CODE_MATCHMAKING_INELIGIBLE,
     MATCHMAKING_JOIN_PATH,
@@ -182,6 +189,38 @@ class TestJoinErrors:
         assert result["error"] == "http_429"
         assert result["request_id"] is None
         assert "request_id" not in result["note"]
+
+    def test_429_quota_carries_the_wait_from_the_reset_header(self) -> None:
+        req = _RecordingRequest(
+            HttpResult(
+                status=429,
+                body=_envelope(CODE_QUOTA_EXCEEDED, "Daily challenge quota reached (20/20)."),
+                # Through lower_headers, as a real response is: the wire casing differs.
+                headers=lower_headers({"X-Chipzen-Quota-Reset-After": "3600"}),
+            )
+        )
+        result = request_join_rated_queue(CONFIG, request=req)
+        assert result["status"] == "error" and result["error"] == "quota_exceeded"
+        assert result["server_error_code"] == CODE_QUOTA_EXCEEDED
+        assert result["retry_after_seconds"] == 3600
+        # The note must name the call the agent has to stop repeating.
+        assert "join_rated_queue" in result["note"] and "3600 seconds" in result["note"]
+        assert result["request_id"] == "req-1"
+
+    def test_429_quota_without_the_header_is_still_quota_exceeded(self) -> None:
+        result = self._result(429, _envelope(CODE_QUOTA_EXCEEDED, "Quota reached."))
+        assert result["error"] == "quota_exceeded"
+        assert result["retry_after_seconds"] is None
+        assert "UTC midnight" in result["note"]
+
+    def test_other_429s_ignore_the_reset_header(self) -> None:
+        for body in (_envelope("CONCURRENT_MATCH_CAP", "msg"), {}):
+            req = _RecordingRequest(
+                HttpResult(status=429, body=body, headers={"x-chipzen-quota-reset-after": "3600"})
+            )
+            result = request_join_rated_queue(CONFIG, request=req)
+            assert result["error"] == "http_429"
+            assert "retry_after_seconds" not in result
 
     def test_403_ineligible_system_bot(self) -> None:
         result = self._result(
