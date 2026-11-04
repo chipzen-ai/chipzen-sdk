@@ -6,8 +6,8 @@ raises a counter stance if its body has one); when you whiff, it punishes
 hard. It only goes looking for a fight when nobody has landed a hit for a
 while, or when it is losing with the round clock running down.
 
-Turtle is one of the Chipzen platform bots you will meet on the platform,
-rewritten as a short, commented starter on the SDK's `BigBadBotsBot`. Copy
+Turtle is modelled on `SirNapsALot`, one of the Chipzen platform bots you will meet
+on the platform, rewritten as a short, commented starter on the SDK's `BigBadBotsBot`. Copy
 this folder, change it, upload it.
 
 ## Files
