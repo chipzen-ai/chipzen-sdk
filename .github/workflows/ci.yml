@@ -241,6 +241,22 @@ jobs:
       - name: Check every log_cap.py copy against the pin
         run: python scripts/log_cap_hash.py --check
 
+  starter-pins:
+    # A starter installs the SDK from the registry at its pin, so a release can
+    # move past the pin with nothing here going red: the JavaScript starter sat
+    # on ^0.3.0, which only admits 0.3.x, through two minor releases (issue
+    # #218). This fails the PR that bumps a package's version without moving a
+    # starter's pin to admit it, and any PR that adds a starter with a stale pin.
+    name: Starter pin guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check every starter's pin admits the package version in this repo
+        run: python scripts/check_starter_pins.py
+
   python-starter-image:
     # `docker build -t my-bot .` is the canonical packaging step QUICKSTART.md
     # tells every Python bot author to run, and nothing in CI ever ran it. Both

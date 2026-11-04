@@ -163,4 +163,6 @@ requirement.
 The IP-protected starter at [`starters/rust/`](starters/rust/) uses
 `chipzen-bot = "0.3"` from the registry and is intentionally NOT a
 workspace member, so it builds cleanly anywhere the user copies it
-once `chipzen-bot` is on crates.io.
+once `chipzen-bot` is on crates.io. CI's "Starter pin guard" job fails a
+workspace version bump that the starter's pin does not admit, so a bump
+to 0.4 moves the pin in the same PR (issue #218).

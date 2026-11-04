@@ -68,6 +68,20 @@ In the chipzen-sdk repo on GitHub:
    [`packages/javascript/package.json`](package.json) and add the
    release notes to [`CHANGELOG.md`](CHANGELOG.md). Open a normal PR
    and merge.
+
+   **Move the starter pins in the same PR.** A caret range on 0.x stays
+   inside one minor (`^0.5.1` is `>=0.5.1 <0.6.0`), so every minor bump
+   has to move them, and CI's "Starter pin guard" job fails a bump that
+   leaves a starter behind (issue #218). A patch bump needs no change.
+
+   The Big Bad Bots starter image job installs from npm at the pin, and
+   the new version is not on npm until step 3. So a minor-bump PR widens
+   each pin in
+   [`starters/javascript/package.json`](starters/javascript/package.json)
+   and
+   [`starters/bigbadbots/rusher/package.json`](starters/bigbadbots/rusher/package.json)
+   to admit both versions (`"^0.5.1 || ^0.6.0"`). Once the release is
+   published, a follow-up narrows them to `^0.6.0`.
 2. **Verify locally**:
    ```bash
    cd packages/javascript
