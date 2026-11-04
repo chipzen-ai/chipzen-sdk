@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An OFC turn's safe fallback is now a legal placement.** When `decide()` raises or returns
+  something that is not an `Action` on an OFC turn, or the answer gets `action_rejected`, the SDK
+  sends the protocol's default placement (most free capacity, ties toward the bottom), as the
+  JavaScript SDK does. It used to send a `fold` or a `place` with no placements, or end the session
+  on a non-`Action` return.
+
 ## [0.6.1] — 2026-11-03
 
 ### Added
