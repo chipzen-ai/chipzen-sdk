@@ -59,7 +59,7 @@ STARTER_COPIES = (
 
 #: The cross-repo anchor: the sha256 of ``src/chipzen/bots/log_cap.py`` in
 #: chipzen-ai/Chipzen, which pins the same value. A wrapper change bumps both.
-EXPECTED_DIGEST = "06d8129270e752ca95163b4bc50687dec6b93b5e94486c445ec01651fc6b365e"
+EXPECTED_DIGEST = "8f56ed7f59498a4cde3baa631d4513179481ca2b867bba86b901de5c601b1eb1"
 
 _BOTH_REPOS = (
     "The wrapper's canonical home is chipzen-ai/Chipzen (src/chipzen/bots/log_cap.py). "
