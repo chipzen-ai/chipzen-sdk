@@ -109,6 +109,10 @@ const matched = (gatewayPath = "/ws/external/match/m1/p1"): Record<string, unkno
 /** Sentinel placed in a lobby script to make the next read return null (drop). */
 const CLOSE = Symbol("close");
 
+/** A test step placed in a script: it runs between frames and may hold the reader. */
+type Step = () => Promise<void>;
+type ScriptEntry = Record<string, unknown> | typeof CLOSE | Step;
+
 /**
  * A reader over a fixed frame list. Gateway readers yield frames then
  * signal close (`null`). Lobby readers, when `blockAfterExhausted`, block
@@ -117,13 +121,17 @@ const CLOSE = Symbol("close");
 class ScriptReader {
   private idx = 0;
   constructor(
-    private readonly frames: Array<Record<string, unknown> | typeof CLOSE>,
+    private readonly frames: ScriptEntry[],
     private readonly blockAfterExhausted: boolean,
   ) {}
   async next(): Promise<string | null> {
     if (this.idx < this.frames.length) {
       const frame = this.frames[this.idx++]!;
       if (frame === CLOSE) return null;
+      if (typeof frame === "function") {
+        await frame();
+        return this.next();
+      }
       return JSON.stringify(frame);
     }
     if (!this.blockAfterExhausted) return null;
@@ -150,8 +158,8 @@ interface MockCalls {
  * differ — reconnect tests). Single-list shorthand reuses one script.
  */
 function installTransport(opts: {
-  lobbyScripts: Array<Array<Record<string, unknown> | typeof CLOSE>>;
-  gatewayScripts: Array<Array<Record<string, unknown>>>;
+  lobbyScripts: ScriptEntry[][];
+  gatewayScripts: ScriptEntry[][];
 }): { transport: Transport; calls: MockCalls } {
   const calls: MockCalls = {
     lobby: [],
@@ -519,5 +527,169 @@ describe("reconnect behavior", () => {
     expect(calls.lobby).toHaveLength(2); // lobby reconnected
     expect(results).toHaveLength(1);
     expect((results[0]!.end as Record<string, unknown>).reason).toBe("complete");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A repeat `matched` for a match still being played (chipzen-ai/Chipzen#6629)
+//
+// On lobby connect the platform re-sends `matched` (`resume: true`) for every
+// match the bot holds a seat in, so that a RESTARTED process can pick its match
+// back up. A process that only lost its lobby socket is still playing that match
+// on its own gateway socket; opening a second one gets `duplicate_participant`.
+// ---------------------------------------------------------------------------
+
+describe("repeat matched for a live match", () => {
+  const matchedFor = (matchId: string, extra: Record<string, unknown> = {}) => ({
+    ...matched(`/ws/external/match/${matchId}/p1`),
+    match_id: matchId,
+    ...extra,
+  });
+
+  /** A healthy mid-match gateway: holds before `match_end` until released. */
+  const heldMatch = (): { script: ScriptEntry[]; release: Step } => {
+    let open!: () => void;
+    const released = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return {
+      script: [serverHello(), matchStart(), turnRequest(), () => released, matchEnd()],
+      release: async () => open(),
+    };
+  };
+
+  /** Microtasks only, so the lobby's recv-timeout cannot fire during a step. */
+  const letTasksRun: Step = async () => {
+    for (let i = 0; i < 500; i++) await Promise.resolve();
+  };
+
+  const countingFactory = (): { made: CollectBot[]; factory: () => CollectBot } => {
+    const made: CollectBot[] = [];
+    return {
+      made,
+      factory: () => {
+        const bot = new CollectBot();
+        made.push(bot);
+        return bot;
+      },
+    };
+  };
+
+  it.each([
+    ["one-match", 1],
+    ["long-running", null],
+  ])("a lobby reconnect mid-match keeps the one gateway (%s)", async (_name, maxMatches) => {
+    // The #6629 sequence: the lobby drops mid-match, the reconnected lobby
+    // re-dispatches the match, and the bot must stay on the gateway it has.
+    _setSleep(async () => {}); // instant backoff
+    const held = heldMatch();
+    const { transport, calls } = installTransport({
+      lobbyScripts: [
+        [serverHelloLobby(), matched(), CLOSE],
+        [
+          serverHelloLobby(),
+          matchedFor("m1", { resume: true }),
+          held.release,
+          letTasksRun,
+          { type: "evict" },
+        ],
+      ],
+      gatewayScripts: [held.script],
+    });
+    const { made, factory } = countingFactory();
+    const results = await runExternalBot(factory, {
+      url: LOBBY_URL,
+      token: "cz_extbot_x",
+      maxMatches,
+      transport,
+    });
+    expect(calls.lobby).toHaveLength(2); // the lobby did reconnect
+    expect(calls.gateway).toHaveLength(1); // ...and no second gateway opened
+    expect(made).toHaveLength(1); // no bot instance built for the repeat frame
+    expect(results).toHaveLength(1); // the ignored frame is not a played match
+    expect((results[0]!.end as Record<string, unknown>).reason).toBe("complete");
+    expect(made[0]!.events.at(-1)).toBe("match_end"); // the original match played out
+  });
+
+  it("a repeat on the same lobby socket is ignored", async () => {
+    const held = heldMatch();
+    const { transport, calls } = installTransport({
+      lobbyScripts: [[serverHelloLobby(), matched(), matched(), held.release]],
+      gatewayScripts: [held.script],
+    });
+    const results = await runExternalBot(new CollectBot(), {
+      url: LOBBY_URL,
+      token: "cz_extbot_x",
+      maxMatches: 1,
+      transport,
+    });
+    expect(calls.gateway).toHaveLength(1);
+    expect(results).toHaveLength(1);
+  });
+
+  it("a new match id during a live match starts normally", async () => {
+    // Overlapping matches are supported: only the SAME id is a repeat.
+    const held = heldMatch();
+    const { transport, calls } = installTransport({
+      lobbyScripts: [
+        [
+          serverHelloLobby(),
+          matchedFor("m1"),
+          matchedFor("m2"),
+          letTasksRun,
+          held.release,
+          letTasksRun,
+          { type: "evict" }, // ends the session even if m2 was ignored
+        ],
+      ],
+      gatewayScripts: [held.script, fullMatch()],
+    });
+    const { made, factory } = countingFactory();
+    const results = await runExternalBot(factory, {
+      url: LOBBY_URL,
+      token: "cz_extbot_x",
+      maxMatches: 2,
+      transport,
+    });
+    expect(calls.gateway.map((url) => url.split("/match/")[1])).toEqual(["m1/p1", "m2/p1"]);
+    expect(made).toHaveLength(2);
+    expect(results).toHaveLength(2);
+  });
+
+  it("a matched after the task gave up plays again", async () => {
+    // "Still playing" means a live task. If this session abandoned the match
+    // (reconnect budget spent) and the platform still holds the seat, a later
+    // re-dispatch must get a fresh attempt, not be ignored.
+    _setSleep(async () => {}); // instant backoff
+    const policy = new RetryPolicy({ maxReconnectAttempts: 1, initialBackoffMs: 1, maxBackoffMs: 1 });
+    const { transport, calls } = installTransport({
+      lobbyScripts: [
+        [
+          serverHelloLobby(),
+          matched(),
+          letTasksRun,
+          matchedFor("m1", { resume: true }),
+          letTasksRun,
+          { type: "evict" }, // ends the session even if the repeat was ignored
+        ],
+      ],
+      gatewayScripts: [
+        [serverHello(), matchStart()], // drops
+        [serverHello(), matchStart()], // retry drops: abandoned
+        fullMatch(), // the re-dispatch plays to match_end
+      ],
+    });
+    const results = await runExternalBot(new CollectBot(), {
+      url: LOBBY_URL,
+      token: "cz_extbot_x",
+      retryPolicy: policy,
+      maxMatches: 2,
+      transport,
+    });
+    expect(calls.gateway).toHaveLength(3);
+    expect(results.map((r) => (r.end as Record<string, unknown> | null)?.reason ?? null)).toEqual([
+      null,
+      "complete",
+    ]);
   });
 });
