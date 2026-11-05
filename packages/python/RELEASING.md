@@ -62,9 +62,13 @@ to be gated similarly.
 
    The starter template
    ([`starters/python/requirements.txt`](starters/python/requirements.txt))
-   uses a compatible-range pin (`chipzen-bot~=0.3`), so it tracks minor
+   uses a compatible-range pin (`chipzen-bot~=0.6`), so it tracks minor
    and patch releases automatically — it only needs touching on a
-   **major** version bump (issue #116).
+   **major** version bump (issue #116). CI's "Starter pin guard" job
+   fails a bump that leaves any starter's pin behind (issue #218). The
+   starter image jobs install from PyPI at the pin, so a major-bump PR
+   widens the pin to admit both versions (`chipzen-bot>=0.6,<2`), and a
+   follow-up raises the floor once the release is published.
 2. **Verify locally**:
    ```bash
    cd packages/python
