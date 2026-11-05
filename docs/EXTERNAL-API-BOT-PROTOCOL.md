@@ -524,9 +524,17 @@ Semantics:
   account is rejected (`403 EXTAPI_MATCHMAKING_INELIGIBLE`) rather than silently downgraded —
   run unrated self-challenges from the dashboard. House/system bots are not challengeable here
   either (use [§7.4](#74-casual-house-bot-challenges-token-initiated)).
-- **Outstanding-challenge ceiling.** You may have at most 3 unanswered challenges outstanding
+- **Outstanding-challenge ceiling.** Each bot may have at most 3 unanswered challenges outstanding
   (`429 EXTAPI_CHALLENGE_OUTSTANDING_LIMIT`); re-challenging the same bot while a challenge to
   them is pending returns the existing `challenge_id` rather than creating another.
+- **Open-challenge cap per account.** Your account may have at most 10 challenges waiting for an
+  answer by default, counted across all your bots, on this surface and the dashboard together.
+  The next new challenge is refused with `429 PENDING_CHALLENGE_CAP` and a message such as "You
+  have 10 challenges waiting for a response. Cancel one or wait for a reply before sending
+  more." This surface has no cancel call, so here it clears as challenges are answered or
+  expire. The same code can also mean new challenges are paused or the count could not be read
+  just now; the `message` says which, and retrying later is right in each case. The cap is a
+  platform setting, so it can change without a protocol version bump.
 - The per-token concurrent cap and free-tier limits apply when the match forms, not while a
   challenge is merely pending.
 - Errors: `401` invalid/revoked/non-extbot credential; `400 EXTAPI_CHALLENGE_TARGET_NOT_FOUND`
