@@ -29,6 +29,10 @@ from chipzen.client import BotDecisionError
 
 LOBBY_URL = "wss://staging.chipzen.ai/ws/external/bot/test-bot-uuid"
 
+#: The real ``asyncio.sleep``: the scripted transport below stubs it, so a test
+#: step that must let the other tasks run keeps this reference.
+_real_sleep = asyncio.sleep
+
 
 # ---------------------------------------------------------------------------
 # Bots
@@ -472,7 +476,8 @@ _CLOSE = object()
 
 class _ScriptedLobbyWS:
     """Lobby WS that replays scripted frames; a ``_CLOSE`` sentinel makes the
-    next ``recv`` raise (drop), and once frames are exhausted ``recv`` blocks."""
+    next ``recv`` raise (drop), an async callable is a test step run between
+    frames, and once frames are exhausted ``recv`` blocks."""
 
     def __init__(self, frames: list):
         self.sent: list[dict] = []
@@ -486,6 +491,9 @@ class _ScriptedLobbyWS:
             frame = self._frames.pop(0)
             if frame is _CLOSE:
                 raise ConnectionError("simulated lobby drop")
+            if callable(frame):
+                await frame()
+                return await self.recv()
             return json.dumps(frame)
         # Block until the loop's wait_for cancels us. (Not asyncio.sleep — this
         # transport stubs asyncio.sleep to make backoff instant.)
@@ -498,7 +506,8 @@ def _install_scripted_transport(monkeypatch, *, lobby_scripts, gateway_scripts):
     connect, so successive connects can behave differently (reconnect tests).
 
     A gateway script that does NOT end in ``match_end`` closes cleanly →
-    ``_run_session`` returns ``None`` → ``_play_one_match`` reconnects.
+    ``_run_session`` returns ``None`` → ``_play_one_match`` reconnects. A script
+    may also be an already-built gateway WS.
     ``asyncio.sleep`` is stubbed (recording delays) so backoff is instant.
     """
     lobby_iter = iter(lobby_scripts)
@@ -509,7 +518,8 @@ def _install_scripted_transport(monkeypatch, *, lobby_scripts, gateway_scripts):
         if "/ws/external/match/" in url:
             calls["gateway"].append(url)
             calls["subprotocols"].append(subprotocols)
-            return _Conn(_GatewayWS(list(next(gw_iter))))
+            script = next(gw_iter)
+            return _Conn(script if isinstance(script, _GatewayWS) else _GatewayWS(list(script)))
         calls["lobby"].append(url)
         return _Conn(_ScriptedLobbyWS(list(next(lobby_iter))))
 
@@ -583,3 +593,163 @@ async def test_lobby_reconnects_after_close(monkeypatch):
     assert len(calls["lobby"]) == 2  # lobby reconnected
     assert len(results) == 1
     assert results[0]["end"]["reason"] == "complete"
+
+
+# ---------------------------------------------------------------------------
+# A repeat ``matched`` for a match still being played (chipzen-ai/Chipzen#6629)
+# ---------------------------------------------------------------------------
+#
+# On lobby connect the platform re-sends ``matched`` (``resume: True``) for every
+# match the bot holds a seat in, so that a RESTARTED process can pick its match
+# back up. A process that only lost its lobby socket is still playing that match
+# on its own gateway socket; opening a second one gets ``duplicate_participant``.
+
+
+class _HeldGatewayWS(_GatewayWS):
+    """A healthy mid-match gateway: holds the socket open before its last frame
+    until ``release`` is set."""
+
+    def __init__(self, frames: list[dict], release: asyncio.Event):
+        super().__init__(frames)
+        self._release = release
+
+    async def __anext__(self) -> str:
+        if self._idx == len(self._rest) - 1:
+            await self._release.wait()
+        return await super().__anext__()
+
+
+def _matched_for(match_id: str, **extra) -> dict:
+    return {**_matched(f"/ws/external/match/{match_id}/p1"), "match_id": match_id, **extra}
+
+
+def _counting_factory():
+    made: list[_CollectBot] = []
+
+    def factory() -> _CollectBot:
+        made.append(_CollectBot())
+        return made[-1]
+
+    return made, factory
+
+
+async def _let_tasks_run() -> None:
+    for _ in range(50):
+        await _real_sleep(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_matches", [1, None], ids=["one-match", "long-running"])
+async def test_lobby_reconnect_mid_match_keeps_the_one_gateway(monkeypatch, max_matches):
+    # The #6629 sequence: the lobby drops mid-match, the reconnected lobby
+    # re-dispatches the match, and the bot must stay on the gateway it has.
+    release = asyncio.Event()
+
+    async def finish_the_match():
+        release.set()
+        await _let_tasks_run()
+
+    calls = _install_scripted_transport(
+        monkeypatch,
+        lobby_scripts=[
+            [_server_hello_lobby(), _matched(), _CLOSE],
+            [
+                _server_hello_lobby(),
+                _matched_for("m1", resume=True),
+                finish_the_match,
+                {"type": "evict"},
+            ],
+        ],
+        gateway_scripts=[_HeldGatewayWS(_full_match(), release)],
+    )
+    made, factory = _counting_factory()
+    results = await run_external_bot(
+        factory, url=LOBBY_URL, token="cz_extbot_x", max_matches=max_matches
+    )
+    assert len(calls["lobby"]) == 2  # the lobby did reconnect
+    assert len(calls["gateway"]) == 1  # ...and no second gateway opened
+    assert len(made) == 1  # no bot instance built for the repeat frame
+    assert len(results) == 1  # the ignored frame is not a played match
+    assert results[0]["end"]["reason"] == "complete"
+    assert made[0].events[-1] == "match_end"  # the original match played out
+
+
+@pytest.mark.asyncio
+async def test_repeat_matched_on_the_same_lobby_socket_is_ignored(monkeypatch):
+    release = asyncio.Event()
+
+    async def finish_the_match():
+        release.set()
+        await _let_tasks_run()
+
+    calls = _install_scripted_transport(
+        monkeypatch,
+        lobby_scripts=[[_server_hello_lobby(), _matched(), _matched(), finish_the_match]],
+        gateway_scripts=[_HeldGatewayWS(_full_match(), release)],
+    )
+    results = await run_external_bot(
+        _CollectBot(), url=LOBBY_URL, token="cz_extbot_x", max_matches=1
+    )
+    assert len(calls["gateway"]) == 1
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_new_match_id_during_a_live_match_starts_normally(monkeypatch):
+    # Overlapping matches are supported: only the SAME id is a repeat.
+    release = asyncio.Event()
+
+    async def finish_the_first_match():
+        await _let_tasks_run()
+        release.set()
+        await _let_tasks_run()
+
+    calls = _install_scripted_transport(
+        monkeypatch,
+        lobby_scripts=[
+            [
+                _server_hello_lobby(),
+                _matched_for("m1"),
+                _matched_for("m2"),
+                finish_the_first_match,
+                {"type": "evict"},  # ends the session even if m2 was ignored
+            ]
+        ],
+        gateway_scripts=[_HeldGatewayWS(_full_match(), release), _full_match()],
+    )
+    made, factory = _counting_factory()
+    results = await run_external_bot(factory, url=LOBBY_URL, token="cz_extbot_x", max_matches=2)
+    assert [url.rsplit("/match/", 1)[1] for url in calls["gateway"]] == ["m1/p1", "m2/p1"]
+    assert len(made) == 2
+    assert len(results) == 2
+
+
+@pytest.mark.asyncio
+async def test_matched_after_the_task_gave_up_plays_again(monkeypatch):
+    # "Still playing" means a live task. If this session abandoned the match
+    # (reconnect budget spent) and the platform still holds the seat, a later
+    # re-dispatch must get a fresh attempt, not be ignored.
+    policy = RetryPolicy(max_reconnect_attempts=1, initial_backoff_ms=1, max_backoff_ms=1)
+    calls = _install_scripted_transport(
+        monkeypatch,
+        lobby_scripts=[
+            [
+                _server_hello_lobby(),
+                _matched(),
+                _let_tasks_run,
+                _matched_for("m1", resume=True),
+                _let_tasks_run,
+                {"type": "evict"},  # ends the session even if the repeat was ignored
+            ],
+        ],
+        gateway_scripts=[
+            [_server_hello(), _match_start()],  # drops
+            [_server_hello(), _match_start()],  # retry drops: abandoned
+            _full_match(),  # the re-dispatch plays to match_end
+        ],
+    )
+    results = await run_external_bot(
+        _CollectBot(), url=LOBBY_URL, token="cz_extbot_x", retry_policy=policy, max_matches=2
+    )
+    assert len(calls["gateway"]) == 3
+    assert [r["end"]["reason"] if r["end"] else None for r in results] == [None, "complete"]

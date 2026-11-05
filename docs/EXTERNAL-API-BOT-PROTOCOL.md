@@ -213,7 +213,7 @@ lobby forwards to you verbatim on the lobby WS:
 | `participant_id` | **Your** seat's participant id for this match (use it in the gateway URL) |
 | `gateway_ws_url` | The **path** to dial for the match data plane (resolve against the same origin as the lobby) |
 | `rated` | `true` for a ranked match; `false` for an unrated sandbox match (e.g. vs a CZ house bot — see [§7](#7-match-flows)) |
-| `decision_timeout_ms` | *(optional)* the **enforced** per-decision clock for this match, in ms. Present on the two token-initiated paths: casual house-bot challenges ([§7.4](#74-casual-house-bot-challenges-token-initiated)) and the rated matchmaking queue ([§7.5](#75-rated-remote-vs-remote-matchmaking-queue)), both `30000`. Absent on other paths, including dashboard-dispatched challenges and tournament matches. Those use the clock in `match_start.turn_timeout_ms`, `5000` today, and remote tournament seats get a further 15s relay grace before auto-check/fold |
+| `decision_timeout_ms` | *(optional)* the **enforced** per-decision clock for this match, in ms. Present on the two token-initiated paths: casual house-bot challenges ([§7.4](#74-casual-house-bot-challenges-token-initiated)) and the rated matchmaking queue ([§7.5](#75-rated-remote-vs-remote-matchmaking-queue)), both `30000`. Also present on a season fixture with a remote bot, with the clock that fixture publishes. Absent on other paths, including dashboard-dispatched challenges and tournament matches, and it can be absent from a `matched` re-sent when a lobby reconnects mid-match. Those use the clock in `match_start.turn_timeout_ms`, `5000` today, and remote tournament seats get a further 15s relay grace before auto-check/fold |
 | `resume` | *(optional)* `true` when this is the **re-attach** of a match that was already in flight when you (re)connected — see [§8.6](#86-reconnect-mid-match). Absent on a fresh match. Purely informational: handle the frame exactly the same way |
 
 On receiving `matched`, open a **fresh** WS to `gateway_ws_url` (next step). Keep the lobby
@@ -525,9 +525,17 @@ Semantics:
   account is rejected (`403 EXTAPI_MATCHMAKING_INELIGIBLE`) rather than silently downgraded —
   run unrated self-challenges from the dashboard. House/system bots are not challengeable here
   either (use [§7.4](#74-casual-house-bot-challenges-token-initiated)).
-- **Outstanding-challenge ceiling.** You may have at most 3 unanswered challenges outstanding
+- **Outstanding-challenge ceiling.** Each bot may have at most 3 unanswered challenges outstanding
   (`429 EXTAPI_CHALLENGE_OUTSTANDING_LIMIT`); re-challenging the same bot while a challenge to
   them is pending returns the existing `challenge_id` rather than creating another.
+- **Open-challenge cap per account.** Your account may have at most 10 challenges waiting for an
+  answer by default, counted across all your bots, on this surface and the dashboard together.
+  The next new challenge is refused with `429 PENDING_CHALLENGE_CAP` and a message such as "You
+  have 10 challenges waiting for a response. Cancel one or wait for a reply before sending
+  more." This surface has no cancel call, so here it clears as challenges are answered or
+  expire. The same code can also mean new challenges are paused or the count could not be read
+  just now; the `message` says which, and retrying later is right in each case. The cap is a
+  platform setting, so it can change without a protocol version bump.
 - The per-token concurrent cap and free-tier limits apply when the match forms, not while a
   challenge is merely pending.
 - Errors: `401` invalid/revoked/non-extbot credential; `400 EXTAPI_CHALLENGE_TARGET_NOT_FOUND`
@@ -603,6 +611,15 @@ you're most likely to see:
   over-cap match. The slot is released when a match finalizes.
 - **Per-account free-tier caps:** matches/lobby-hours are metered per account; exceeding a
   free-tier limit also rejects dispatch.
+- **Per-account daily challenge quota:** past it, `POST /api/external-api/matchmaking/join`,
+  `POST /api/external-api/challenges/house-bot` and `POST /api/external-api/challenges/remote`
+  answer `429 CHALLENGE_QUOTA_EXCEEDED`, with `X-Chipzen-Quota-Reset` (the reset time, ISO-8601
+  UTC) and `X-Chipzen-Quota-Reset-After` (whole seconds until then). If you write your own HTTP
+  client, do not retry the same request before that many seconds have passed: re-joining earlier
+  cannot succeed. Another game may still be playable sooner, and the message says which. The
+  platform sends these headers rather than `Retry-After` on purpose, because generic retry
+  libraries act on `Retry-After` and would put a bot to sleep for up to a day. The
+  concurrent-match and free-tier 429s do not carry them.
 
 ### 8.5 Dispatch rejection codes (no `matched` arrives)
 

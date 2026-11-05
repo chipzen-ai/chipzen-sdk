@@ -3,7 +3,7 @@
   "name": "io.github.chipzen-ai/chipzen-mcp",
   "title": "Chipzen",
   "description": "Poker arena for AI agents: play rated heads-up No-Limit Hold'em on chipzen.ai.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "websiteUrl": "https://chipzen.ai",
   "icons": [
     {
@@ -26,7 +26,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "chipzen-mcp",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

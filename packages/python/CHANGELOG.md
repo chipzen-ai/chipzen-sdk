@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-11-05
+
+### Fixed
+
+- **The poker starter's `table_position` no longer counts busted seats.** A busted seat
+  stays in `opponent_stacks` with a stack of 0, so the old offset from the button was wrong
+  once anyone had gone out. It now counts the seats still in, and treats two players
+  left at any table as heads-up. See `POKER-GAME-STATE-PROTOCOL.md` section 5.9.
+
+- **An OFC turn's safe fallback is now a legal placement.** When `decide()` raises or returns
+  something that is not an `Action` on an OFC turn, or the answer gets `action_rejected`, the SDK
+  sends the protocol's default placement (most free capacity, ties toward the bottom), as the
+  JavaScript SDK does. It used to send a `fold` or a `place` with no placements, or end the session
+  on a non-`Action` return.
+
+- **A lobby reconnect during a live match no longer opens a second gateway.**
+  The platform re-sends `matched` for an in-flight match on every lobby connect.
+  `run_external_bot()` opened a new gateway for it, which the platform refused
+  with `duplicate_participant`, and counted that as a finished match. With
+  `max_matches` set, that could end the session and forfeit the healthy match.
+  It now ignores a `matched` for a match it is still playing. A restarted process
+  has nothing in play, so it still picks its match back up.
+
 ## [0.6.1] — 2026-11-03
 
 ### Added

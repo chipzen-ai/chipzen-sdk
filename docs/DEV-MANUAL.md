@@ -229,9 +229,10 @@ already seat-indexed. The catch is behavioral, not a crash:
   rejected action, this kind of bug stays invisible until you inspect results.
 - **Table size.** Read it from `match_start`'s `game_config.num_players`, or
   derive it from any turn state as `len(opponent_stacks) + 1`.
-- **Position.** Derive your seat's offset from the button with
-  `seats_after_button = (your_seat - dealer_seat) % num_players` (`0` is the
-  button; in heads-up the button is the small blind). The full taxonomy and a
+- **Position.** Count your seat's offset from the button among the seats still
+  in, not around the whole table: a busted seat stays in `opponent_stacks` with a
+  stack of `0`. `0` is the button; with two players left, at a table of any size,
+  the button is the small blind. The full taxonomy, the formula and a
   worked example live in
   [`POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md) Section
   5.9, and the reference starters in `packages/<lang>/starters/` show the
@@ -743,7 +744,7 @@ hosted and how the match was started**, never by user tier:
 | Remote (External API) bots on the token-initiated paths | `extapi_casual_decision_timeout_ms` | **30000 ms** |
 | Remote bots in tournaments | `bot_decision_timeout_ms` + `tournament_remote_relay_grace_seconds` | **5000 ms** advertised (`turn_timeout_ms`), **20000 ms** enforced (5 s + 15 s relay grace) |
 | Remote bots on dashboard-dispatched challenges | `bot_decision_timeout_ms` | **5000 ms** |
-| Season fixtures | `decision_clock_seconds`, frozen on the fixture | **5000 ms** if both bots are sandboxed, otherwise **30000 ms**; see the known gap below for remote bots |
+| Season fixtures | `decision_clock_seconds`, frozen on the fixture | **5000 ms** if both bots are sandboxed, otherwise **30000 ms** |
 
 Hosted bots run on the match executor, which enforces
 `bot_decision_timeout_ms` (5 s). Remote bots on the casual house-bot
@@ -758,10 +759,8 @@ grace is there to absorb network round-trip time, so budget for 5 s.
 
 Season fixtures freeze their clock when they are drawn and publish it as
 `decision_clock_seconds` on `GET /api/external-api/fixtures/upcoming`.
-**Known gap:** a fixture with a remote bot currently runs on the 5000 ms
-default with no relay grace, whatever it publishes
-(chipzen-ai/Chipzen#6664). Until that is fixed, budget for 5 s in those
-fixtures.
+A fixture with a remote bot runs on that clock, with no relay grace, so the
+number it publishes is the real deadline.
 
 On any path, `match_start.turn_timeout_ms` tells you the clock for the
 match you are in. When the enforced time runs out, the server plays `check`
@@ -831,10 +830,15 @@ in private container storage, and runs a smoke test before approval.
 
 Your image must:
 
-1. **Have an `ENTRYPOINT`** that runs your bot. `CMD` is ignored by the
-   executor; `ENTRYPOINT` is not. (Big Bad Bots images are the exception:
-   their ENTRYPOINT is the platform's log-cap wrapper, which runs the bot
-   command you put in `CMD`. See §10.9.) See [`examples/reference-bot/Dockerfile`](../examples/reference-bot/Dockerfile):
+1. **Start your bot from `ENTRYPOINT`, `CMD` or both.** The platform runs
+   your image as it is, in review and in matches, and overrides neither
+   of them, so the usual Docker rules apply: `ENTRYPOINT` runs with `CMD`
+   as its arguments, and with no `ENTRYPOINT`, `CMD` runs on its own. No
+   command-line arguments are added, so the bot must start with everything
+   it needs already set. The poker starters and the reference bot use
+   `ENTRYPOINT` alone. Big Bad Bots images need both: review requires the
+   platform's log-cap wrapper as `ENTRYPOINT`, and it runs the bot command
+   you put in `CMD` (§10.9). See [`examples/reference-bot/Dockerfile`](../examples/reference-bot/Dockerfile):
    ```dockerfile
    ENTRYPOINT ["python", "-u", "/bot/bot.py"]
    ```
@@ -918,6 +922,25 @@ The two daily quotas are separate counters and reset at UTC midnight;
 over-quota requests get HTTP 429. The External API concurrent-match cap
 counts active matches across all of your remote bots. Big Bad Bots has daily
 limits of its own on top of the challenge quota (§10.9).
+
+A refused challenge is HTTP 429 `CHALLENGE_QUOTA_EXCEEDED`, on the rated queue
+(`POST /api/external-api/matchmaking/join`) and on challenges alike
+(`POST /api/external-api/challenges/house-bot`,
+`POST /api/external-api/challenges/remote`, `POST /api/challenges/`). The status
+and body are the usual ones, and the response carries two headers:
+
+- `X-Chipzen-Quota-Reset`: the reset time, ISO-8601 UTC.
+- `X-Chipzen-Quota-Reset-After`: whole seconds until then.
+
+**If you write your own HTTP client:** on this 429, do not retry the same request
+before that many seconds have passed. Re-joining earlier cannot succeed, however
+often you try. If the header is missing, wait for the next UTC midnight. Another
+game may still be playable sooner, and the message says which. `chipzen-mcp`
+returns this refusal as `error: "quota_exceeded"` with `retry_after_seconds`.
+
+The platform sends these headers rather than `Retry-After` on purpose: generic
+retry libraries act on `Retry-After` and would put a bot to sleep for up to a day
+without asking. The concurrent-match and free-tier 429s do not carry them.
 
 External API (remote) bots are also metered per account by three free-tier
 caps: matches per day, matches per hour, and connected lobby hours per day.

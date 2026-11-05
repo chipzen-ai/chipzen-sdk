@@ -887,7 +887,7 @@ When `ante > 0` in `game_config`, antes are posted automatically alongside blind
 
 ### 5.3 Heads-Up Blind Structure
 
-In heads-up (2-player) play:
+Heads-up means two players with chips, at a table of any size. A 6-seat table down to two stacks plays exactly as a 2-seat table does:
 - The **dealer** (button) posts the **small blind** and acts **first preflop**.
 - The **non-dealer** posts the **big blind** and acts **first post-flop** (flop, turn, river).
 
@@ -930,15 +930,22 @@ The protocol is multi-player ready without a breaking change. Heads-up is just t
 
 **Table size.** Read it from `match_start.game_config.num_players`, or derive it from any turn state as `len(opponent_stacks) + 1`.
 
-**Deriving your position.** Position is your seat's offset from the button:
+**Busted seats stay in the list.** A seat that has gone out stays in `opponent_stacks` with a stack of `0` for the rest of the match, and `num_players` keeps counting it. So the table size is the number of chairs, not the number of players still in, and position has to be counted among the seats still in.
+
+**Deriving your position.** Position is your seat's offset from the button, counted among the live seats:
 
 ```
-num_players        = len(opponent_stacks) + 1
-seats_after_button = (your_seat - dealer_seat) mod num_players
+seats              = 0 .. len(opponent_stacks), the whole table; opponent_stacks skips your seat
+live_seats         = your seat, plus every other seat that has chips or appears in this hand's action_history
+seats_after_button = (index of your_seat in live_seats - index of dealer_seat in live_seats) mod len(live_seats)
 ```
 
-- `0` is the button. In heads-up the button posts the small blind and acts first preflop (Section 5.3), so seat-after-button `0` is the small blind and `1` is the big blind.
-- For three or more players, `1` is the small blind, `2` is the big blind, and the remaining offsets are the seats between the big blind and the button, counted clockwise. The offset `num_players - 1`, immediately to the button's right, is the cutoff and acts last postflop.
+A seat that is all-in this hand shows a stack of `0` but has an entry in `action_history`, at least its blind or its bet. A busted seat has neither. `dealer_seat` is always a live seat.
+
+- `0` is the button. With two live seats, at a table of any size, the button posts the small blind and acts first preflop (Section 5.3), so seat-after-button `0` is the small blind and `1` is the big blind.
+- With three or more live seats, `1` is the small blind, `2` is the big blind, and the remaining offsets are the seats between the big blind and the button, counted clockwise. The offset `len(live_seats) - 1`, immediately to the button's right, is the cutoff and acts last postflop.
+
+Example: at a 6-seat table with seats 1, 2 and 5 busted and `dealer_seat` 0, the live seats are 0, 3 and 4. Seat 3 is the small blind and seat 4 the big blind, offsets `1` and `2`, although they sit 3 and 4 chairs from the button.
 
 **Silent-failure risk.** Because `opponent_stacks` is a list, a heads-up bot that hardcodes `opponent_stacks[0]` keeps running at a 3-6 seat table but reads only one neighbor's stack instead of aggregating across opponents. This is a behavioral bug, not a crash, so it will not surface as an error or a rejected action. Iterate the list (for example `sum`, `min`, `max`, or index by the specific seat you care about) rather than assuming a single opponent. The reference starters in `sdk/starters/` show the seat-count-aware pattern, and `docs/DEV-MANUAL.md` carries the bot-author guidance.
 
