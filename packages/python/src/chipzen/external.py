@@ -283,7 +283,8 @@ async def _run_lobby_once(
     Each ``matched`` is played in its own task, appended to ``match_tasks``
     (which the CALLER owns) so the lobby heartbeat is answered during matches
     AND in-flight matches survive a lobby reconnect — a match runs on its own
-    gateway socket, independent of the lobby. ``completed`` is a 1-element
+    gateway socket, independent of the lobby. A ``matched`` for a match one of
+    those tasks is still playing is ignored. ``completed`` is a 1-element
     mutable counter shared across lobby sessions.
     """
 
@@ -339,6 +340,16 @@ async def _run_lobby_once(
                     logger.warning("lobby: ignoring matched with untrusted gateway URL: %s", exc)
                     continue
                 match_id = msg["match_id"]
+                # On every lobby connect the platform re-sends ``matched`` for
+                # each match this bot holds a seat in, so that a restarted
+                # process can pick its match back up. This process still has the
+                # match on its own gateway socket, and a second socket would only
+                # be refused with ``duplicate_participant``. A task that has
+                # finished (or given up) no longer counts: that seat may need a
+                # fresh attempt.
+                if any(t.get_name() == match_id and not t.done() for t in match_tasks):
+                    logger.info("lobby: already playing match %s; ignoring repeat", match_id)
+                    continue
                 logger.info(
                     "lobby: matched -> match %s (rated=%s); playing",
                     match_id,
@@ -356,7 +367,8 @@ async def _run_lobby_once(
                         safe_mode=safe_mode,
                         user_agent=user_agent,
                         supported_games=supported_games,
-                    )
+                    ),
+                    name=match_id,  # how a repeat ``matched`` finds this task
                 )
                 task.add_done_callback(_on_match_done)
                 match_tasks.append(task)

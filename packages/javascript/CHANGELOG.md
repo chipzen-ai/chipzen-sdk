@@ -15,6 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once anyone had gone out. It now counts the seats still in, and treats two players
   left at any table as heads-up. See `POKER-GAME-STATE-PROTOCOL.md` section 5.9.
 
+- **A lobby reconnect during a live match no longer opens a second gateway.**
+  The platform re-sends `matched` for an in-flight match on every lobby connect.
+  `runExternalBot()` opened a new gateway for it, which the platform refused
+  with `duplicate_participant`, and counted that as a finished match. With
+  `maxMatches` set, that could end the session and forfeit the healthy match.
+  It now ignores a `matched` for a match it is still playing. A restarted process
+  has nothing in play, so it still picks its match back up.
+
+## [0.5.1] — 2026-11-03
+
+### Added
+
+- Big Bad Bots rule set `bigbadbots-1.3`, bundled for offline lookup: `bigbadbots-1.2` with a 250 ms
+  `deadline.deadline_ms` and the part `strider` renamed `long_legs`. The server's numbers still win.
+
+### Fixed
+
 - **`chipzen-sdk validate`'s Big Bad Bots timing warning** now says the time
   bank is per match and never refills between rounds. It used to call it the
   round's bank.
@@ -437,6 +454,7 @@ and
 
 Apache-2.0.
 
+[0.5.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.5.1
 [0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.5.0
 [0.4.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.4.0
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.3.1

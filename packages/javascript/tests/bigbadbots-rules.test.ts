@@ -58,13 +58,18 @@ describe("the bundled rule-set files", () => {
   });
 
   it("are every released rule set, sorted", () => {
-    expect(publishedRuleSetIds()).toEqual(["bigbadbots-1.0", "bigbadbots-1.1", "bigbadbots-1.2"]);
+    expect(publishedRuleSetIds()).toEqual([
+      "bigbadbots-1.0",
+      "bigbadbots-1.1",
+      "bigbadbots-1.2",
+      "bigbadbots-1.3",
+    ]);
     expect(jsonFiles(JS_RULESETS).map((f) => f.replace(/\.json$/, ""))).toEqual(
       publishedRuleSetIds(),
     );
   });
 
-  it.each(["bigbadbots-1.0", "bigbadbots-1.1", "bigbadbots-1.2"])(
+  it.each(["bigbadbots-1.0", "bigbadbots-1.1", "bigbadbots-1.2", "bigbadbots-1.3"])(
     "%s carries its metadata and only the published sections",
     (id) => {
       const entry = publishedRuleSet(id)!;

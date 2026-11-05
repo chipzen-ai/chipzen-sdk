@@ -52,7 +52,9 @@ prefix). The whole contract stays isolated in this module:
   may not enter the rated ladder), ``409 EXT_BOT_OFFLINE`` (no live lobby
   presence). The per-token concurrent-cap / free-tier gates fire inside the
   dispatch when a pair actually forms (a solo waiter consumes no slot), so
-  ``join`` itself does not surface them. ``leave`` / ``status`` share the 401.
+  ``join`` itself does not surface them. ``join`` does refuse a spent daily
+  quota: ``429 CHALLENGE_QUOTA_EXCEEDED`` (see :mod:`chipzen_mcp.housebot` for
+  its reset header). ``leave`` / ``status`` share the 401.
 * A plain ``404`` on any of these paths means "endpoint not deployed on this
   environment" (older server) -> the not-available message.
 
@@ -74,10 +76,12 @@ from typing import Any
 from chipzen_mcp.config import McpConfig
 from chipzen_mcp.housebot import (
     CODE_BOT_OFFLINE,
+    CODE_QUOTA_EXCEEDED,
     HttpResult,
     _with_request_id_hint,
     api_origin,
     lower_headers,
+    quota_exceeded_error,
     response_request_id,
 )
 
@@ -290,6 +294,8 @@ def _map_join_response(result: HttpResult) -> dict[str, Any]:
             "automatically -- give it a moment or look at session_error), then "
             "retry.",
         )
+    if result.status == 429 and code == CODE_QUOTA_EXCEEDED:
+        return quota_exceeded_error(result, tool="join_rated_queue")
     if result.status == 404:
         return _endpoint_not_available(result)
     return _error(

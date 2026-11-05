@@ -147,7 +147,7 @@ There is no local Big Bad Bots simulator: the game engine runs on the platform o
 - **`retired`** rule sets never start a match again, but every match played on one stays replayable.
 - **Never a silent fallback.** The bot always plays the numbers `match_start` sent. The SDK's bundled copies of the published rule sets (§4.1) are a reference only; a `rule_set_id` the installed SDK does not know, or a published value that differs from the one sent, logs a warning, and the bot plays on the server's numbers.
 
-The platform plays every rule set as published (§1.2, §2), with one exception: the response clock. The released rule sets (`bigbadbots-1.0` to `bigbadbots-1.2`) are immutable and still carry decision D-01's numbers in their `deadline` section: a 100 ms per-tick deadline and a 3 s time bank reset every round. Decision D-20 replaced those two numbers, and the platform applies its response clock over any rule set: **250 ms per fight tick, plus a 3 s time bank per seat per match that is never refilled**. `match_start` announces it in `game_config.response_clock` (`deadline_ms`, `time_bank_ms`, `bank_scope`; [protocol §3.4 and §4.1](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md#34-the-response-window-and-the-time-bank-d-20)). The rest of the `deadline` section still applies: `default_action_policy`, `late_answer` and `miss_counts_toward_forfeit`. So read the window and the bank from `game_config.response_clock`, not from `state.rules.deadline`. Every other number a bot reads from `state.rules` is the same in every match played under that rule set.
+The platform plays every rule set as published (§1.2, §2), with one exception: the response clock. `bigbadbots-1.3` carries the clock's window and bank size, but a rule set can't say the bank lasts the whole match. `bigbadbots-1.0` to `bigbadbots-1.2` are immutable and still carry decision D-01's numbers in their `deadline` section: a 100 ms per-tick deadline and a 3 s time bank reset every round. Decision D-20 replaced those two numbers, and the platform applies its response clock over any rule set: **250 ms per fight tick, plus a 3 s time bank per seat per match that is never refilled**. `match_start` announces it in `game_config.response_clock` (`deadline_ms`, `time_bank_ms`, `bank_scope`; [protocol §3.4 and §4.1](protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md#34-the-response-window-and-the-time-bank-d-20)). The rest of the `deadline` section still applies: `default_action_policy`, `late_answer` and `miss_counts_toward_forfeit`. So read the window and the bank from `game_config.response_clock`, not from `state.rules.deadline`. Every other number a bot reads from `state.rules` is the same in every match played under that rule set.
 
 ---
 
@@ -155,9 +155,18 @@ The platform plays every rule set as published (§1.2, §2), with one exception:
 
 One entry per rule set, newest first. Each entry gives the id, its lifecycle dates, a summary of what changed from its predecessor, and the full parameter table (§4).
 
+### `bigbadbots-1.3`
+
+- **State:** `preview`. Frozen with engine `1.3.0` (chipzen-ai/bigbadbots-engine tag `v1.3.0`, engine line `v1`) on 2026-11-03. This is the rule set chosen for launch.
+- **sha256** (canonical JSON, as in every log header): `e2d12d599017e631514cd81c6f0893d8f9d5c39f7152726654feada79857bf55`.
+- **Changes from `bigbadbots-1.2`** (2 changes):
+  - `deadline.deadline_ms` 100 to 250, the response clock's window. `deadline.time_bank_ms` stays 3000. The platform keeps the bank for the whole match (§6).
+  - The legs part `strider` is now `long_legs`, with the same slot, bonus and effects. The auction draws from the sorted part ids, so a seed draws different lots than on 1.2, with the same odds for every part.
+  - Everything else is as in 1.2.
+
 ### `bigbadbots-1.2`
 
-- **State:** `preview`. Frozen with engine `1.2.0` (chipzen-ai/bigbadbots-engine tag `v1.2.0`, engine line `v1`) on 2026-10-08. This is the rule set chosen for launch.
+- **State:** `preview`. Frozen with engine `1.2.0` (chipzen-ai/bigbadbots-engine tag `v1.2.0`, engine line `v1`) on 2026-10-08. Superseded for launch by `bigbadbots-1.3`.
 - **sha256** (canonical JSON, as in every log header): `5e1f453c8f02dc3196cdf6a262e30a6147a1b5d4f472d4ec117e87bab42ac3ca`.
 - **Live date:** not set. Its `deadline` and `forfeit` sections are the same as 1.0's, so it stays in `preview` until D-01, D-03 and D-16 are confirmed (chipzen-ai/Chipzen#5089).
 - **Parameter table:** to be generated from the released file and published here (#138).

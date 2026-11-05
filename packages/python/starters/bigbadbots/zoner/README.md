@@ -5,8 +5,8 @@ edge of its own high-kick range, where it can hit you and your jab cannot hit
 it. When you wind up, it steps back out of range; when you whiff, it
 punishes. It never brawls and it never throws.
 
-Zoner is one of the Chipzen platform bots you will meet on the platform,
-rewritten as a short, commented starter on the SDK's `BigBadBotsBot`. Copy
+Zoner is modelled on `no_touching`, one of the Chipzen platform bots you will meet
+on the platform, rewritten as a short, commented starter on the SDK's `BigBadBotsBot`. Copy
 this folder, change it, upload it.
 
 ## Files

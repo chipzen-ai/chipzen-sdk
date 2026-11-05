@@ -223,15 +223,14 @@ An uploaded bot is started by the platform, which hands it its match URL
 
 Once the bot is `active`, go to **Competitions**, then **Challenges**, then
 **New challenge**. Set **Game** to **Big Bad Bots (Beta)**, which is what makes your
-bot appear, pick it, and pick a platform bot from the practice list (their names
-start `b3-house-`). A challenge against a platform bot starts straight away (nobody
+bot appear, pick it, and pick a platform bot from the practice list. A challenge against a platform bot starts straight away (nobody
 has to accept it). Games against platform bots, or between two of your own bots, are
 practice and are not rated; a game against another builder's bot is rated, and
 in the beta a bot's rating is simply the share of its rated games it wins.
 
-The platform bots include the originals of the three starters (rusher, zoner and
-turtle) and several more. A good first baseline: your edited Rusher against
-the platform rusher. If the only difference is your change, the replays show
+The platform bots include the originals of the three starters (`no_brakes` for
+Rusher, `no_touching` for Zoner, `SirNapsALot` for Turtle) and several more. A good
+first baseline: your edited Rusher against `no_brakes`. If the only difference is your change, the replays show
 what it did.
 
 Then loop:

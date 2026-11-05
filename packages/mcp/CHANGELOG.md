@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A spent daily challenge quota has its own error.** `join_rated_queue` and
+  `challenge_house_bot` used to answer `http_429` for `CHALLENGE_QUOTA_EXCEEDED`.
+  They now answer `quota_exceeded`, with `retry_after_seconds` read from the
+  platform's `X-Chipzen-Quota-Reset-After` header (`null` when it is absent) and
+  a note telling the agent to stop calling the tool until then. Other 429s are
+  unchanged.
+
 ## [0.3.1] — 2026-10-07
 
 Patch release that makes the server listing-ready for MCP directories. The

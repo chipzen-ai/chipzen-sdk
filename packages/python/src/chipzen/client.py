@@ -62,20 +62,58 @@ def _extract_match_id(url: str) -> str:
     return "unknown"
 
 
-def _safe_fallback_action(valid_actions: list[str]) -> Action:
+def _safe_fallback_action(valid_actions: list[str], state: GameState | None = None) -> Action:
     """Return a safe fallback for an ``action_rejected`` retry.
 
     Prefers ``check`` when legal, otherwise ``fold``. Mirrors the server's
-    auto-action policy (see TRANSPORT-PROTOCOL section 8.12).
+    auto-action policy (see TRANSPORT-PROTOCOL section 8.12). An OFC turn offers
+    exactly ``["place"]``, so it gets the protocol's default placement, built
+    from ``state`` (see :func:`_ofc_default_placement`).
     """
     if "check" in valid_actions:
         return Action.check()
     if "fold" in valid_actions:
         return Action.fold()
+    if "place" in valid_actions:
+        return _ofc_default_placement(state)
     # Last resort: echo the first valid action the server offered.
     if valid_actions:
         return Action(action=valid_actions[0])
     return Action.fold()
+
+
+def _ofc_default_placement(state: GameState | None = None) -> Action:
+    """Pineapple OFC: the protocol's default placement.
+
+    OFC-GAME-STATE-PROTOCOL section 5.9, which is also what the server
+    substitutes for a seat that times out: each card goes to the row with the
+    most remaining capacity, ties toward the back (``bottom``, then ``middle``,
+    then ``top``). The first ``state.place`` of ``state.cards_to_place`` are
+    placed and the next ``state.must_discard`` are discarded, so the result is
+    legal for any state the server sends.
+
+    Without a state (an ``action_rejected`` for a turn this session never saw)
+    it is an empty placement, which the server rejects and then applies its own
+    default for, as it would for no answer at all.
+    """
+    if state is None:
+        return Action.place([])
+
+    capacity = dict(state.row_capacity)
+    # Back to front, then any row name this release has not heard of.
+    order: list[str] = [name for name in ("bottom", "middle", "top") if name in capacity]
+    order += [name for name in capacity if name not in order]
+
+    cards = list(state.cards_to_place)
+    placements: list[tuple[str, str]] = []
+    for card in cards[: state.place]:
+        # max() keeps the first of equals, so a tie stays nearer the back.
+        best = max(order, key=capacity.__getitem__, default=None)
+        if best is None or capacity[best] <= 0:
+            break
+        placements.append((card, best))
+        capacity[best] -= 1
+    return Action.place(placements, cards[state.place : state.place + state.must_discard])
 
 
 async def _send_json(ws: Any, message: dict) -> None:
@@ -131,8 +169,10 @@ async def run_bot(
             handshake. Defaults to the installed SDK version
             (chipzen-ai/chipzen-sdk#41).
         safe_mode: When ``True`` (default), an exception raised by
-            ``bot.decide()`` is logged and folded. Set ``False`` for dev/eval
-            so the first exception propagates (chipzen-ai/chipzen-sdk#52).
+            ``bot.decide()`` is logged and folded (on an OFC turn, which has
+            no fold, the protocol's default placement is sent). Set ``False``
+            for dev/eval so the first exception propagates
+            (chipzen-ai/chipzen-sdk#52).
         user_agent: Override the WS ``User-Agent`` header. Defaults to
             ``chipzen-sdk-python/<version>`` (chipzen-ai/chipzen-sdk#46).
         supported_games: The games this client can actually play, declared in
@@ -250,15 +290,28 @@ async def _run_session(
         Returns ``(action, decision_ms)``. Under ``safe_mode`` a raised
         exception is logged and folded; otherwise it is re-raised as a
         :class:`BotDecisionError` so the caller treats it as terminal.
+
+        An OFC turn has no fold, so there the raise, and a return that is not
+        an :class:`Action`, get the protocol's default placement instead
+        (or the same :class:`BotDecisionError` without ``safe_mode``).
         """
         start = time.monotonic()
+        is_ofc_turn = "place" in state.valid_actions
         try:
             action = await asyncio.to_thread(bot.decide, state)
         except Exception as exc:
             logger.exception("Bot.decide() raised an exception")
             if not safe_mode:
                 raise BotDecisionError(str(exc)) from exc
-            action = Action.fold()
+            action = (
+                _safe_fallback_action(state.valid_actions, state) if is_ofc_turn else Action.fold()
+            )
+        if is_ofc_turn and not isinstance(action, Action):
+            message = f"decide() returned {action!r}, not an Action"
+            if not safe_mode:
+                raise BotDecisionError(message)
+            logger.error("%s; sending the protocol's default placement", message)
+            action = _safe_fallback_action(state.valid_actions, state)
         return action, (time.monotonic() - start) * 1000.0
 
     def _call_hook(hook: Any, *args: Any) -> None:
@@ -488,6 +541,10 @@ async def _run_session(
     dealer_seat: int = 0
     current_round_id: str = ""
     last_seq: int | None = None
+    # The last turn we answered, kept so an ``action_rejected`` for it can be
+    # retried with a fallback built from that turn's state (an OFC default
+    # placement needs the cards and the row capacity).
+    last_turn: GameState | None = None
 
     # --- Main message loop --------------------------------------------
     async for raw in ws:
@@ -544,6 +601,7 @@ async def _run_session(
                 your_seat=your_seat,
                 dealer_seat=dealer_seat,
             )
+            last_turn = state
             action, decision_ms = await _decide(state)
             await _send_json(
                 ws,
@@ -605,7 +663,11 @@ async def _run_session(
                 remaining,
                 valid,
             )
-            safe = _safe_fallback_action(valid)
+            rejected_id = str(payload.get("request_id", ""))
+            rejected_turn = (
+                last_turn if last_turn is not None and last_turn.request_id == rejected_id else None
+            )
+            safe = _safe_fallback_action(valid, rejected_turn)
             await _send_json(
                 ws,
                 {
@@ -674,6 +736,7 @@ async def _run_session(
                     your_seat=your_seat,
                     dealer_seat=dealer_seat,
                 )
+                last_turn = state
                 action, decision_ms = await _decide(state)
                 await _send_json(
                     ws,
