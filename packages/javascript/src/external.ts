@@ -289,6 +289,8 @@ export interface MatchResult {
 interface MatchTask {
   promise: Promise<void>;
   done: boolean;
+  /** How a repeat `matched` finds this task. */
+  matchId: string;
 }
 
 interface PlayMatchParams {
@@ -409,7 +411,8 @@ interface LobbyOnceParams {
  * Each `matched` is played in its own task, appended to `matchTasks`
  * (which the CALLER owns) so the lobby heartbeat is answered during
  * matches AND in-flight matches survive a lobby reconnect — a match runs
- * on its own gateway socket, independent of the lobby.
+ * on its own gateway socket, independent of the lobby. A `matched` for a
+ * match one of those tasks is still playing is ignored.
  */
 async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" | "closed"> {
   const onMatchSettled = (
@@ -467,7 +470,16 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
           continue;
         }
         const matchId = msg.match_id as string;
-        const task: MatchTask = { promise: Promise.resolve(), done: false };
+        // On every lobby connect the platform re-sends `matched` for each match
+        // this bot holds a seat in, so that a restarted process can pick its
+        // match back up. This process still has the match on its own gateway
+        // socket, and a second socket would only be refused with
+        // `duplicate_participant`. A task that has finished (or given up) no
+        // longer counts: that seat may need a fresh attempt.
+        if (p.matchTasks.some((t) => t.matchId === matchId && !t.done)) {
+          continue;
+        }
+        const task: MatchTask = { promise: Promise.resolve(), done: false, matchId };
         task.promise = playOneMatch({
           gatewayUrl,
           matchId,
