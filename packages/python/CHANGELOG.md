@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JavaScript SDK does. It used to send a `fold` or a `place` with no placements, or end the session
   on a non-`Action` return.
 
+- **A lobby reconnect during a live match no longer opens a second gateway.**
+  The platform re-sends `matched` for an in-flight match on every lobby connect.
+  `run_external_bot()` opened a new gateway for it, which the platform refused
+  with `duplicate_participant`, and counted that as a finished match. With
+  `max_matches` set, that could end the session and forfeit the healthy match.
+  It now ignores a `matched` for a match it is still playing. A restarted process
+  has nothing in play, so it still picks its match back up.
+
 ## [0.6.1] — 2026-11-03
 
 ### Added

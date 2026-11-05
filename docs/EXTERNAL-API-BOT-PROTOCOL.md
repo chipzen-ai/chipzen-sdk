@@ -602,6 +602,15 @@ you're most likely to see:
   over-cap match. The slot is released when a match finalizes.
 - **Per-account free-tier caps:** matches/lobby-hours are metered per account; exceeding a
   free-tier limit also rejects dispatch.
+- **Per-account daily challenge quota:** past it, `POST /api/external-api/matchmaking/join`,
+  `POST /api/external-api/challenges/house-bot` and `POST /api/external-api/challenges/remote`
+  answer `429 CHALLENGE_QUOTA_EXCEEDED`, with `X-Chipzen-Quota-Reset` (the reset time, ISO-8601
+  UTC) and `X-Chipzen-Quota-Reset-After` (whole seconds until then). If you write your own HTTP
+  client, do not retry the same request before that many seconds have passed: re-joining earlier
+  cannot succeed. Another game may still be playable sooner, and the message says which. The
+  platform sends these headers rather than `Retry-After` on purpose, because generic retry
+  libraries act on `Retry-After` and would put a bot to sleep for up to a day. The
+  concurrent-match and free-tier 429s do not carry them.
 
 ### 8.5 Dispatch rejection codes (no `matched` arrives)
 

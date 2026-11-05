@@ -39,8 +39,12 @@ whole contract stays isolated in this module:
   revoked token, retired bot, or ``bot_id`` mismatch),
   ``400 EXTAPI_HOUSE_BOT_NOT_FOUND`` (opponent selector miss; the server
   deliberately does NOT 404 for this), ``409 EXT_BOT_OFFLINE``,
-  ``429 TOKEN_AT_CONCURRENT_MATCH_CAP`` / ``429 FREE_TIER_LIMIT_EXCEEDED``
-  (distinguished by ``error_code``).
+  ``429 TOKEN_AT_CONCURRENT_MATCH_CAP`` / ``429 FREE_TIER_LIMIT_EXCEEDED`` /
+  ``429 CHALLENGE_QUOTA_EXCEEDED`` (distinguished by ``error_code``). The quota
+  refusal alone carries ``X-Chipzen-Quota-Reset-After``, whole seconds until
+  this same request can next succeed (chipzen-ai/Chipzen#6385). The server
+  deliberately does not send ``Retry-After`` here: generic retry libraries act
+  on it and would sleep a bot for up to a day.
 * ``502 EXTAPI_DISPATCH_FAILED`` is the pre-#3832 synchronous failure and can
   no longer fire on this path: dispatch now runs after the response, so a
   failure there marks the match ``status="error"`` (visible on the matches
@@ -59,6 +63,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -82,6 +87,12 @@ CODE_BOT_OFFLINE = "EXT_BOT_OFFLINE"
 CODE_CONCURRENT_CAP = "TOKEN_AT_CONCURRENT_MATCH_CAP"
 CODE_FREE_TIER = "FREE_TIER_LIMIT_EXCEEDED"
 CODE_DISPATCH_FAILED = "EXTAPI_DISPATCH_FAILED"
+CODE_QUOTA_EXCEEDED = "CHALLENGE_QUOTA_EXCEEDED"
+
+#: Whole seconds until a refused daily-quota request can next succeed, >= 1
+#: (chipzen-ai/Chipzen#6385). Lower-cased: :class:`HttpResult` headers always are.
+QUOTA_RESET_AFTER_HEADER = "x-chipzen-quota-reset-after"
+_QUOTA_RESET_AFTER_VALUE = re.compile(r"[1-9][0-9]{0,9}")
 
 #: HTTP origins per environment, mirroring the SDK's lobby-URL env mapping
 #: (``chipzen.connect._ENV_URL_TEMPLATES``) with ws(s) -> http(s).
@@ -247,6 +258,41 @@ def _with_request_id_hint(note: str, request_id: str | None) -> str:
     return f"{note} When reporting this to support, quote request_id={request_id}."
 
 
+def quota_retry_after_seconds(result: HttpResult) -> int | None:
+    """Seconds until a refused daily-quota request can next succeed, or ``None``.
+
+    ``None`` when the header is missing or is not a positive whole number; a
+    client that cannot read it still gets the refusal, just without a countdown.
+    """
+    raw = result.headers.get(QUOTA_RESET_AFTER_HEADER, "").strip()
+    return int(raw) if _QUOTA_RESET_AFTER_VALUE.fullmatch(raw) else None
+
+
+def quota_exceeded_error(result: HttpResult, *, tool: str) -> dict[str, Any]:
+    """The ``CHALLENGE_QUOTA_EXCEEDED`` payload, shared by the tools that hit it.
+
+    Tells the agent to stop calling ``tool``: nothing brings the reset forward,
+    so a retry loop only collects more refusals until then.
+    """
+    seconds = quota_retry_after_seconds(result)
+    until = (
+        f"it resets at UTC midnight, {seconds} seconds from now (retry_after_seconds)"
+        if seconds is not None
+        else "it resets at UTC midnight"
+    )
+    return {
+        **_error(
+            "quota_exceeded",
+            result,
+            f"The daily challenge quota is spent, so {tool} is refused until {until}. "
+            f"Stop calling {tool} until then: calling it earlier cannot succeed. The "
+            "detail field gives your count and the limit, and names any other game "
+            "you can still play.",
+        ),
+        "retry_after_seconds": seconds,
+    }
+
+
 def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
     """Map the endpoint's HTTP outcome onto the MCP tool payload."""
     body = result.body
@@ -329,6 +375,8 @@ def _map_response(result: HttpResult, bot_name: str | None) -> dict[str, Any]:
             "This token is at its concurrent-match cap (5). Finish or wait "
             "out an active match (see list_matches), then retry.",
         )
+    if result.status == 429 and code == CODE_QUOTA_EXCEEDED:
+        return quota_exceeded_error(result, tool="challenge_house_bot")
     if result.status == 502:
         return _error(
             "dispatch_failed",
