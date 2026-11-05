@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An OFC turn's safe fallback is now a legal placement.** When `decide()` raises or returns
+  something that is not an `Action` on an OFC turn, or the answer gets `action_rejected`, the SDK
+  sends the protocol's default placement (most free capacity, ties toward the bottom), as the
+  JavaScript SDK does. It used to send a `fold` or a `place` with no placements, or end the session
+  on a non-`Action` return.
+
 - **A lobby reconnect during a live match no longer opens a second gateway.**
   The platform re-sends `matched` for an in-flight match on every lobby connect.
   `run_external_bot()` opened a new gateway for it, which the platform refused
