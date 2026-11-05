@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-11-05
+
 ### Fixed
 
 - **The poker starter's `tablePosition` no longer counts busted seats.** A busted seat
