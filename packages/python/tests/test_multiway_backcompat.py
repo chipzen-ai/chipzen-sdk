@@ -266,17 +266,38 @@ class TestSeatAwareStarter:
         assert action.action in {"fold", "check", "call", "raise", "all_in"}
 
     @pytest.mark.parametrize(
-        "num_players,your_seat,dealer_seat,expected",
+        "num_seats,live,your_seat,dealer_seat,expected",
         [
-            (2, 0, 0, "button_sb"),  # heads-up button posts the small blind
-            (2, 1, 0, "big_blind"),
-            (6, 0, 0, "button"),
-            (6, 1, 0, "small_blind"),
-            (6, 2, 0, "big_blind"),
-            (6, 3, 0, "early"),
-            (6, 5, 0, "cutoff"),
+            # Everyone in.
+            (2, [0, 1], 0, 0, "button_sb"),  # heads-up button posts the small blind
+            (2, [0, 1], 1, 0, "big_blind"),
+            (6, [0, 1, 2, 3, 4, 5], 0, 0, "button"),
+            (6, [0, 1, 2, 3, 4, 5], 1, 0, "small_blind"),
+            (6, [0, 1, 2, 3, 4, 5], 2, 0, "big_blind"),
+            (6, [0, 1, 2, 3, 4, 5], 3, 0, "early"),
+            (6, [0, 1, 2, 3, 4, 5], 5, 0, "cutoff"),
+            # Busted seats are not counted.
+            (6, [0, 3, 4], 0, 0, "button"),
+            (6, [0, 3, 4], 3, 0, "small_blind"),
+            (6, [0, 3, 4], 4, 0, "big_blind"),
+            (6, [0, 2, 3, 5], 5, 0, "cutoff"),
+            # Two left on a 6-seat table is heads-up, wrapping round the table too.
+            (6, [0, 4], 4, 4, "button_sb"),
+            (6, [0, 4], 0, 4, "big_blind"),
         ],
     )
-    def test_table_position_derivation(self, num_players, your_seat, dealer_seat, expected):
+    def test_table_position_counts_only_seats_still_in(
+        self, num_seats, live, your_seat, dealer_seat, expected
+    ):
         starter = _load_starter_module()
-        assert starter.table_position(your_seat, dealer_seat, num_players) == expected
+        stacks = [5000 if seat in live else 0 for seat in range(num_seats) if seat != your_seat]
+        assert starter.table_position(your_seat, dealer_seat, stacks, []) == expected
+
+    def test_a_seat_all_in_this_hand_still_counts(self):
+        starter = _load_starter_module()
+        # You are seat 4. Seat 3 shows 0 because it is all-in on its blind; seats 1,
+        # 2 and 5 are busted and have never acted this hand.
+        stacks = [5000, 0, 0, 0, 0]
+        history = [{"seat": 3, "action": "post_small_blind", "amount": 50}]
+        assert starter.live_seats(4, 0, stacks, history) == [0, 3, 4]
+        assert starter.table_position(4, 0, stacks, history) == "big_blind"

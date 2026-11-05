@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The poker starter's `table_position` no longer counts busted seats.** A busted seat
+  stays in `opponent_stacks` with a stack of 0, so the old offset from the button was wrong
+  once anyone had gone out. It now counts the seats still in, and treats two players
+  left at any table as heads-up. See `POKER-GAME-STATE-PROTOCOL.md` section 5.9.
+
 - **An OFC turn's safe fallback is now a legal placement.** When `decide()` raises or returns
   something that is not an `Action` on an OFC turn, or the answer gets `action_rejected`, the SDK
   sends the protocol's default placement (most free capacity, ties toward the bottom), as the

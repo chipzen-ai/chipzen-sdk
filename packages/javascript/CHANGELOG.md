@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The poker starter's `tablePosition` no longer counts busted seats.** A busted seat
+  stays in `opponentStacks` with a stack of 0, so the old offset from the button was wrong
+  once anyone had gone out. It now counts the seats still in, and treats two players
+  left at any table as heads-up. See `POKER-GAME-STATE-PROTOCOL.md` section 5.9.
+
 - **A lobby reconnect during a live match no longer opens a second gateway.**
   The platform re-sends `matched` for an in-flight match on every lobby connect.
   `runExternalBot()` opened a new gateway for it, which the platform refused
