@@ -170,13 +170,17 @@ export async function runBot(
   // supplies the backoff progression.
   const maxAttempts = options.maxRetries ?? policy.maxReconnectAttempts;
 
+  // One counter, as on the external path, but reset only once a session made
+  // progress (the server hello plus a game frame). Resetting on every connect
+  // meant a server that accepts and then closes before its hello was retried
+  // forever (chipzen-sdk#244).
   let retries = 0;
   for (;;) {
     let ws: WebSocket | null = null;
+    let progressed = false;
     try {
       ws = new WebSocket(url, { headers: { "User-Agent": userAgent } });
       await _waitForOpen(ws);
-      retries = 0; // reset on successful connect
       return await _runSession(ws, bot, {
         matchId,
         token,
@@ -185,6 +189,9 @@ export async function runBot(
         clientVersion,
         safeMode,
         supportedGames: options.supportedGames ?? null,
+        onProgress: () => {
+          progressed = true;
+        },
       });
     } catch (err) {
       if (err instanceof SeatReplacedError) {
@@ -198,6 +205,7 @@ export async function runBot(
         // transient disconnect. Do not reconnect-retry.
         throw err;
       }
+      if (progressed) retries = 0; // the session got going: a fresh budget for this drop
       retries++;
       if (retries > maxAttempts) {
         throw err;
@@ -240,6 +248,12 @@ interface SessionContext {
   safeMode?: boolean;
   /** See {@link RunBotOptions.supportedGames}. */
   supportedGames?: readonly string[] | null;
+  /**
+   * Called once, on the first frame after the server `hello` that is not a
+   * `ping`: the session made real progress. `runBot` uses it to decide
+   * whether a later drop gets a fresh retry budget.
+   */
+  onProgress?: () => void;
 }
 
 /**
@@ -344,6 +358,7 @@ export async function _runSession(
 ): Promise<Record<string, unknown> | null> {
   const reader = readerOverride ?? new _NodeWebSocketReader(ws as WebSocket);
   const safeMode = ctx.safeMode ?? true;
+  let onProgress = ctx.onProgress;
   // A 4000 close: another connection of this bot took the seat over.
   const seatReplaced = (): boolean => reader.closeCode?.() === CLOSE_REPLACED_BY_NEW_CONNECTION;
 
@@ -452,6 +467,10 @@ export async function _runSession(
     if (typeof msg.seq === "number") lastSeq = msg.seq;
 
     const type = msg.type as string | undefined;
+    if (onProgress && type !== "ping") {
+      onProgress();
+      onProgress = undefined;
+    }
     switch (type) {
       case "ping":
         await sendJson(ws, { type: "pong", match_id: ctx.matchId });
