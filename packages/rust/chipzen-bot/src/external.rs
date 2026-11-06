@@ -35,7 +35,8 @@
 
 use crate::bot::Bot;
 use crate::client::{
-    _run_session, default_user_agent, MessageReader, MessageWriter, SessionContext,
+    _run_session, default_user_agent, seat_replaced_log, MessageReader, MessageWriter,
+    SessionContext,
 };
 use crate::config::{load_chipzen_config, resolve_token, ChipzenConfig};
 use crate::connect::{connect_to_chipzen, EnvName};
@@ -43,6 +44,7 @@ use crate::error::Error;
 use crate::retry::RetryPolicy;
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -464,6 +466,8 @@ where
     let completed = Arc::new(AtomicU64::new(0));
     let stop = Arc::new(AtomicBool::new(false));
     let fatal: Arc<Mutex<Option<Error>>> = Arc::new(Mutex::new(None));
+    // Ids of matches whose seat another connection of this bot took over.
+    let replaced: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let mut match_tasks: JoinSet<()> = JoinSet::new();
 
     // --- Lobby session loop with reconnect/backoff -------------------------
@@ -481,6 +485,7 @@ where
             &completed,
             &stop,
             &fatal,
+            &replaced,
             &mut match_tasks,
         )
         .await;
@@ -561,6 +566,10 @@ enum LobbyStatus {
 /// Each `matched` is spawned into `match_tasks` (owned by the caller) so the
 /// lobby heartbeat is answered during matches AND in-flight matches survive
 /// a lobby reconnect — a match runs on its own gateway socket.
+///
+/// A `matched` for a match in `replaced` (its seat was taken over by another
+/// connection of this bot) is ignored: playing it would take the seat back
+/// from the connection that holds it.
 #[allow(clippy::too_many_arguments)]
 async fn run_lobby_once<B, F, T>(
     transport: &Arc<T>,
@@ -571,6 +580,7 @@ async fn run_lobby_once<B, F, T>(
     completed: &Arc<AtomicU64>,
     stop: &Arc<AtomicBool>,
     fatal: &Arc<Mutex<Option<Error>>>,
+    replaced: &Arc<Mutex<HashSet<String>>>,
     match_tasks: &mut JoinSet<()>,
 ) -> Result<LobbyStatus, Error>
 where
@@ -623,6 +633,9 @@ where
                     Ok(url) => url,
                     Err(_) => continue,
                 };
+                if replaced.lock().unwrap().contains(&match_id) {
+                    continue; // held by another connection of this bot
+                }
 
                 let bot = factory();
                 let transport = Arc::clone(transport);
@@ -631,12 +644,14 @@ where
                 let completed = Arc::clone(completed);
                 let stop = Arc::clone(stop);
                 let fatal = Arc::clone(fatal);
+                let replaced = Arc::clone(replaced);
 
                 match_tasks.spawn(async move {
                     let outcome =
                         play_one_match(&*transport, &gateway_url, &match_id, bot, &session).await;
                     record_match_outcome(
                         outcome, &match_id, &session, &results, &completed, &stop, &fatal,
+                        &replaced,
                     );
                 });
             }
@@ -656,6 +671,8 @@ where
 
 /// Fold a finished match into the shared results + completed counter, and
 /// flip the stop signal on a terminal `BotDecision` error or `max_matches`.
+/// A match whose seat was taken over is neither: it goes into `replaced`.
+#[allow(clippy::too_many_arguments)]
 fn record_match_outcome(
     outcome: Result<Option<Value>, Error>,
     match_id: &str,
@@ -664,8 +681,15 @@ fn record_match_outcome(
     completed: &AtomicU64,
     stop: &AtomicBool,
     fatal: &Mutex<Option<Error>>,
+    replaced: &Mutex<HashSet<String>>,
 ) {
     match outcome {
+        // Another connection of this bot holds the seat (already logged by
+        // play_one_match). Not a completed match, and no result entry.
+        Err(Error::SeatReplaced) => {
+            replaced.lock().unwrap().insert(match_id.to_string());
+            return;
+        }
         // safe_mode=false: a deterministic bot bug. Surface it (stop the
         // session + re-raise from run_external_bot) — the whole point of
         // safe_mode=false is a loud failure.
@@ -718,6 +742,12 @@ fn record_match_outcome(
 /// Returns the `match_end` payload, or `Ok(None)` if the match could not be
 /// completed within the reconnect budget. A [`Error::BotDecision`] is
 /// terminal and propagates immediately (never reconnect-retried).
+///
+/// A `4000` close (or the `replaced_by_new_connection` error frame before
+/// it) means another connection of this bot took the seat over. That is not
+/// a drop: reconnecting would take the seat back, and two live copies of one
+/// bot would trade it forever. It logs one line and returns
+/// [`Error::SeatReplaced`], so the match's task ends with no result.
 async fn play_one_match<B, T>(
     transport: &T,
     gateway_url: &str,
@@ -757,6 +787,11 @@ where
                     Ok(None) => {}
                     // Deterministic bot bug — terminal, never reconnect-retry.
                     Err(e @ Error::BotDecision(_)) => return Err(e),
+                    // The seat is held by another connection — never reconnect.
+                    Err(e @ Error::SeatReplaced) => {
+                        eprintln!("{}", seat_replaced_log(match_id));
+                        return Err(e);
+                    }
                     // Transport/protocol error mid-session — try to resume.
                     Err(_) => {}
                 }
@@ -853,13 +888,17 @@ mod ws_transport {
 
         let (ws_stream, _) = connect_async(request).await?;
         let (write_half, read_half) = ws_stream.split();
-        let reader: Box<dyn MessageReader> = Box::new(OwnedWsReader { inner: read_half });
+        let reader: Box<dyn MessageReader> = Box::new(OwnedWsReader {
+            inner: read_half,
+            close_code: None,
+        });
         let writer: Box<dyn MessageWriter> = Box::new(OwnedWsWriter { inner: write_half });
         Ok((reader, writer))
     }
 
     struct OwnedWsReader {
         inner: SplitStream<WsStream>,
+        close_code: Option<u16>,
     }
 
     #[async_trait]
@@ -869,11 +908,19 @@ mod ws_transport {
                 match self.inner.next().await {
                     Some(Ok(Message::Text(t))) => return Ok(Some(t.to_string())),
                     Some(Ok(Message::Ping(_))) => continue,
-                    Some(Ok(Message::Close(_))) | None => return Ok(None),
+                    Some(Ok(Message::Close(frame))) => {
+                        self.close_code = frame.map(|f| u16::from(f.code));
+                        return Ok(None);
+                    }
+                    None => return Ok(None),
                     Some(Ok(_)) => continue,
                     Some(Err(e)) => return Err(Error::from(e)),
                 }
             }
+        }
+
+        fn close_code(&self) -> Option<u16> {
+            self.close_code
         }
     }
 

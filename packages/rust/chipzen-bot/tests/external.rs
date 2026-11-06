@@ -126,6 +126,12 @@ struct ScriptedReader {
     frames: Vec<Option<String>>,
     idx: usize,
     block_when_done: bool,
+    close_code: Option<u16>,
+}
+
+/// A gateway script entry: the server closes the socket with this code.
+fn close_with(code: u16) -> Value {
+    json!({ "__close": code })
 }
 
 #[async_trait]
@@ -134,6 +140,15 @@ impl MessageReader for ScriptedReader {
         if self.idx < self.frames.len() {
             let frame = self.frames[self.idx].clone();
             self.idx += 1;
+            let close = frame
+                .as_deref()
+                .and_then(|f| serde_json::from_str::<Value>(f).ok())
+                .and_then(|v| v.get("__close").and_then(Value::as_u64));
+            if let Some(code) = close {
+                self.close_code = Some(code as u16);
+                self.idx = self.frames.len(); // nothing arrives after a close
+                return Ok(None);
+            }
             // `None` in the script = drop.
             return Ok(frame);
         }
@@ -144,6 +159,10 @@ impl MessageReader for ScriptedReader {
             unreachable!();
         }
         Ok(None)
+    }
+
+    fn close_code(&self) -> Option<u16> {
+        self.close_code
     }
 }
 
@@ -233,6 +252,7 @@ impl LobbyTransport for ScriptedTransport {
             frames,
             idx: 0,
             block_when_done: true,
+            close_code: None,
         };
         // The writer aggregates into the shared lobby_sent buffer.
         let writer = CapturingWriter {
@@ -273,6 +293,7 @@ impl LobbyTransport for ScriptedTransport {
             frames,
             idx: 0,
             block_when_done: false, // gateway closes cleanly when exhausted
+            close_code: None,
         };
         let writer = CapturingWriter::default();
         Ok((Box::new(reader), Box::new(writer)))
@@ -663,6 +684,148 @@ async fn test_lobby_reconnects_after_close() {
     };
     let results = run(CollectBot::default, opts, transport).await.unwrap();
     assert_eq!(calls.lobby_urls.lock().unwrap().len(), 2); // lobby reconnected
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].end.as_ref().unwrap()["reason"], "complete");
+}
+
+// ---------------------------------------------------------------------------
+// A match seat taken over by another connection of the same bot (#242)
+// ---------------------------------------------------------------------------
+//
+// A newer socket for the same seat takes the match over (chipzen-ai/Chipzen#6734).
+// The old socket gets an `error` frame (`replaced_by_new_connection`) and then a
+// 4000 close. Reconnecting would take the seat back, and two live copies of one
+// bot would trade it forever, so the match's task ends instead. (The one log
+// line goes to stderr; the Python and JavaScript suites assert its text.)
+
+fn matched_for(match_id: &str, resume: bool) -> Value {
+    json!({
+        "type": "matched",
+        "match_id": match_id,
+        "participant_id": "p1",
+        "gateway_ws_url": format!("/ws/external/match/{match_id}/p1"),
+        "rated": false,
+        "resume": resume,
+    })
+}
+
+fn replaced_error_frame() -> Value {
+    json!({
+        "type": "error",
+        "code": "replaced_by_new_connection",
+        "message": "a newer connection for this seat replaced this one",
+    })
+}
+
+/// Run with a first lobby session that dispatches `first` and then drops (the
+/// reconnect backoff lets the match task settle), and a second that sends
+/// `second`. A trailing evict ends the session either way.
+async fn run_two_lobby_sessions(
+    first: Vec<Value>,
+    second: Vec<Value>,
+    gateways: Vec<Vec<Value>>,
+) -> (Vec<MatchResult>, Calls) {
+    _set_lobby_recv_timeout_ms(5);
+    let mut lobby1 = vec![Some(server_hello_lobby())];
+    lobby1.extend(first.into_iter().map(Some));
+    lobby1.push(None);
+    let mut lobby2 = vec![Some(server_hello_lobby())];
+    lobby2.extend(second.into_iter().map(Some));
+    lobby2.push(Some(json!({ "type": "evict" })));
+    let (transport, calls) = ScriptedTransport::new(vec![lobby1, lobby2], gateways);
+    let opts = RunExternalOptions {
+        retry_policy: Some(RetryPolicy::new(5, 1, 1, 2.0).unwrap()),
+        max_matches: Some(1),
+        ..opts_with_token()
+    };
+    let results = run(CollectBot::default, opts, transport).await.unwrap();
+    (results, calls)
+}
+
+fn gateway_ids(calls: &Calls) -> Vec<String> {
+    calls
+        .gateway_urls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|u| u.rsplit("/match/").next().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn test_a_4000_close_ends_the_match_without_reconnecting() {
+    let (results, calls) = run_two_lobby_sessions(
+        vec![matched()],
+        vec![],
+        vec![vec![
+            server_hello(),
+            match_start(),
+            turn_request(),
+            close_with(4000),
+        ]],
+    )
+    .await;
+    // A reconnect would open a second gateway (and run out of scripts).
+    assert_eq!(gateway_ids(&calls), vec!["m1/p1"]);
+    // Not a finished match, and no bogus result entry.
+    assert!(results.is_empty());
+}
+
+#[tokio::test]
+async fn test_the_error_frame_then_close_ends_the_match_without_reconnecting() {
+    let (results, calls) = run_two_lobby_sessions(
+        vec![matched()],
+        vec![],
+        vec![vec![
+            server_hello(),
+            match_start(),
+            replaced_error_frame(),
+            close_with(4000),
+        ]],
+    )
+    .await;
+    assert_eq!(gateway_ids(&calls), vec!["m1/p1"]);
+    assert!(results.is_empty());
+}
+
+#[tokio::test]
+async fn test_other_drops_still_reconnect() {
+    for drop in [None, Some(1011), Some(4001)] {
+        _set_lobby_recv_timeout_ms(5);
+        let mut first = vec![server_hello(), match_start(), turn_request()];
+        if let Some(code) = drop {
+            first.push(close_with(code));
+        }
+        let (transport, calls) = ScriptedTransport::new(
+            vec![vec![Some(server_hello_lobby()), Some(matched())]],
+            vec![first, vec![server_hello(), match_end()]],
+        );
+        let opts = RunExternalOptions {
+            retry_policy: Some(RetryPolicy::new(5, 1, 1, 2.0).unwrap()),
+            max_matches: Some(1),
+            ..opts_with_token()
+        };
+        let results = run(CollectBot::default, opts, transport).await.unwrap();
+        assert_eq!(calls.gateway_urls.lock().unwrap().len(), 2, "{drop:?}");
+        assert_eq!(results[0].end.as_ref().unwrap()["reason"], "complete");
+    }
+}
+
+#[tokio::test]
+async fn test_after_a_takeover_a_new_match_plays_and_the_old_one_is_not_retaken() {
+    // The reconnected lobby re-sends matched for m1 (the bot still holds that
+    // seat, on the other connection): taking it would steal it back. m2 is a
+    // new match and plays.
+    let (results, calls) = run_two_lobby_sessions(
+        vec![matched_for("m1", false)],
+        vec![matched_for("m1", true), matched_for("m2", false)],
+        vec![
+            vec![server_hello(), match_start(), close_with(4000)],
+            full_match(),
+        ],
+    )
+    .await;
+    assert_eq!(gateway_ids(&calls), vec!["m1/p1", "m2/p1"]);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].end.as_ref().unwrap()["reason"], "complete");
 }

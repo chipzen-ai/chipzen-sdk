@@ -40,8 +40,10 @@ import type { Bot } from "./bot.js";
 import {
   _NodeWebSocketReader,
   _runSession,
+  _seatReplacedLog,
   type AsyncMessageReader,
   BotDecisionError,
+  SeatReplacedError,
 } from "./client.js";
 import {
   type ChipzenConfig,
@@ -326,6 +328,12 @@ interface PlayMatchParams {
  *
  * Throws {@link BotDecisionError} (safeMode=false) without retrying — a
  * deterministic bot bug is terminal.
+ *
+ * Throws {@link SeatReplacedError}, after logging one line, on a `4000`
+ * close (or the `replaced_by_new_connection` error frame before it): another
+ * connection of this bot took the seat over. That is not a drop.
+ * Reconnecting would take the seat back, and two live copies of one bot
+ * would trade it forever, so the match's task ends with no result.
  */
 async function playOneMatch(params: PlayMatchParams): Promise<Record<string, unknown> | null> {
   const { gatewayUrl, matchId, token, bot, policy, transport } = params;
@@ -363,6 +371,10 @@ async function playOneMatch(params: PlayMatchParams): Promise<Record<string, unk
       // (a drop). Try to resume.
       reason = "closed without match_end";
     } catch (err) {
+      if (err instanceof SeatReplacedError) {
+        console.warn(_seatReplacedLog(matchId));
+        throw err; // the seat is held elsewhere — never reconnect-retry
+      }
       if (err instanceof BotDecisionError) {
         throw err; // deterministic bot bug — terminal, never reconnect-retry
       }
@@ -387,6 +399,11 @@ interface LobbyOnceParams {
   results: MatchResult[];
   matchTasks: MatchTask[];
   completed: { value: number };
+  /**
+   * Ids of matches whose seat another connection of this bot took over.
+   * Caller-owned, so it outlives a lobby reconnect.
+   */
+  replaced: Set<string>;
   policy: RetryPolicy;
   clientName: string;
   clientVersion: string;
@@ -413,6 +430,10 @@ interface LobbyOnceParams {
  * matches AND in-flight matches survive a lobby reconnect — a match runs
  * on its own gateway socket, independent of the lobby. A `matched` for a
  * match one of those tasks is still playing is ignored.
+ *
+ * A match whose seat another connection of this bot took over is neither a
+ * result nor a completed match, and a later `matched` for it is ignored:
+ * playing it would take the seat back from the connection that holds it.
  */
 async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" | "closed"> {
   const onMatchSettled = (
@@ -479,6 +500,9 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
         if (p.matchTasks.some((t) => t.matchId === matchId && !t.done)) {
           continue;
         }
+        if (p.replaced.has(matchId)) {
+          continue; // held by another connection of this bot
+        }
         const task: MatchTask = { promise: Promise.resolve(), done: false, matchId };
         task.promise = playOneMatch({
           gatewayUrl,
@@ -499,6 +523,10 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
           },
           (err) => {
             task.done = true;
+            if (err instanceof SeatReplacedError) {
+              p.replaced.add(matchId); // already logged; the match goes on elsewhere
+              return;
+            }
             onMatchSettled(undefined, err);
           },
         );
@@ -642,6 +670,7 @@ export async function runExternalBot(
   // a lobby reconnect (a match plays on its own gateway socket).
   const matchTasks: MatchTask[] = [];
   const completed = { value: 0 };
+  const replaced = new Set<string>();
 
   // --- Lobby session loop with reconnect/backoff -------------------------
   let consecutiveFailures = 0;
@@ -666,6 +695,7 @@ export async function runExternalBot(
         results,
         matchTasks,
         completed,
+        replaced,
         policy,
         clientName,
         clientVersion,

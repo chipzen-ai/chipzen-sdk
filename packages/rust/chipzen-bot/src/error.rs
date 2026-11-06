@@ -41,6 +41,15 @@ pub enum Error {
     /// never sent to a different host or in cleartext.
     #[error("untrusted gateway URL: {0}")]
     UntrustedGateway(String),
+
+    /// Another connection of this bot took the match seat over: the server
+    /// sent an `error` frame with code `replaced_by_new_connection`, or closed
+    /// the match socket with `4000` (chipzen-sdk#242).
+    ///
+    /// The match did not end; it goes on on the newer socket. Callers do NOT
+    /// reconnect, which would only take the seat back.
+    #[error("match seat taken over by another connection of this bot")]
+    SeatReplaced,
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for Error {

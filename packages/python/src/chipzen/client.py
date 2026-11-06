@@ -131,6 +131,35 @@ class BotDecisionError(Exception):
     """
 
 
+#: Close code the platform puts on a match socket whose seat another
+#: connection of the same bot took over (chipzen-sdk#242). The lobby uses the
+#: same code for the same reason.
+CLOSE_REPLACED_BY_NEW_CONNECTION = 4000
+
+#: The close reason, and the ``code`` of the ``error`` frame sent just before
+#: that close.
+REPLACED_BY_NEW_CONNECTION = "replaced_by_new_connection"
+
+#: The one line logged when a match socket is taken over.
+SEAT_REPLACED_LOG = "match %s: seat taken over by another connection of this bot; not reconnecting"
+
+
+class SeatReplacedError(Exception):
+    """Raised by the session loop when another connection of this bot took the
+    match seat over: an ``error`` frame with code ``replaced_by_new_connection``,
+    or a ``4000`` close.
+
+    The match did not end; it goes on on the newer socket. Reconnecting would
+    only take the seat back, so callers end the match's task instead.
+    """
+
+
+def _is_seat_replaced_close(exc: BaseException) -> bool:
+    """True if ``exc`` is a websockets close whose received code is 4000."""
+    rcvd = getattr(exc, "rcvd", None)
+    return getattr(rcvd, "code", None) == CLOSE_REPLACED_BY_NEW_CONNECTION
+
+
 async def run_bot(
     url: str,
     bot: ChipzenBot,
@@ -191,7 +220,8 @@ async def run_bot(
 
     Returns:
         The ``match_end`` payload, or ``None`` if the connection closed without
-        a clean ``match_end`` after exhausting retries.
+        a clean ``match_end`` after exhausting retries, or another connection
+        of this bot took the seat over (a ``4000`` close; not retried).
     """
     try:
         from websockets.asyncio.client import connect
@@ -231,6 +261,11 @@ async def run_bot(
 
         except asyncio.CancelledError:
             raise
+        except SeatReplacedError:
+            # Another connection of this bot holds the seat now; reconnecting
+            # would only take it back.
+            logger.warning(SEAT_REPLACED_LOG, match_id)
+            return None
         except BotDecisionError:
             # A deterministic bot bug (safe_mode=False) — terminal, not a
             # transient disconnect. Do not reconnect-retry; propagate so the
@@ -268,7 +303,45 @@ async def _run_session(
 
     Returns the ``match_end`` payload on a clean finish, or ``None`` if the
     handshake failed / the socket closed without a ``match_end``.
+
+    Raises:
+        SeatReplacedError: another connection of this bot took the seat over
+            (a ``4000`` close, or the ``replaced_by_new_connection`` error
+            frame that comes just before it).
     """
+    try:
+        return await _session_loop(
+            ws,
+            bot,
+            match_id=match_id,
+            token=token,
+            ticket=ticket,
+            client_name=client_name,
+            client_version=client_version,
+            safe_mode=safe_mode,
+            supported_games=supported_games,
+        )
+    except Exception as exc:
+        if _is_seat_replaced_close(exc):
+            raise SeatReplacedError(
+                f"match socket closed {CLOSE_REPLACED_BY_NEW_CONNECTION}"
+            ) from exc
+        raise
+
+
+async def _session_loop(
+    ws: Any,
+    bot: ChipzenBot,
+    *,
+    match_id: str,
+    token: str | None,
+    ticket: str | None,
+    client_name: str,
+    client_version: str,
+    safe_mode: bool = True,
+    supported_games: list[str] | None = None,
+) -> dict | None:
+    """The body of :func:`_run_session`: handshake + message loop."""
 
     async def _decide(state: GameState) -> tuple[Action, float]:
         """Run ``bot.decide`` OFF the session loop, with timing + safe_mode.
@@ -707,6 +780,9 @@ async def _run_session(
             )
 
         elif msg_type == "error":
+            if payload.get("code") == REPLACED_BY_NEW_CONNECTION:
+                # A 4000 close follows; end here rather than wait for it.
+                raise SeatReplacedError(REPLACED_BY_NEW_CONNECTION)
             logger.error(
                 "Server error [%s]: %s",
                 payload.get("code"),
