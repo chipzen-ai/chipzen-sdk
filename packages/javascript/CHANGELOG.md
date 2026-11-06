@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`runBot()` no longer reconnects forever to a server that accepts and then
+  closes before its `hello`** ([#244](https://github.com/chipzen-ai/chipzen-sdk/issues/244)).
+  The retry counter reset on every successful connect, so a server that took the
+  socket and closed it straight away (for example with `1011`, every time) was
+  retried indefinitely. The counter now resets only once a session made progress,
+  meaning the server `hello` and a game frame after it. Connects that end before
+  that count against `maxReconnectAttempts`. (A close after the `hello` already
+  ended `runBot()` with `null`, without reconnecting; that is unchanged.)
+
 - **A match seat taken over by another connection of the same bot is no longer
   taken back.** When a second live copy of a bot connects to the same match, the
   platform hands it the seat and closes the older match socket with `4000`, after an

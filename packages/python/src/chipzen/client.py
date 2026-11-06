@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from chipzen import __version__ as _VERSION  # noqa: N812
@@ -242,11 +243,20 @@ async def run_bot(
     # the backoff progression.
     max_attempts = max_retries if max_retries is not None else policy.max_reconnect_attempts
 
+    # One counter, as on the external path, but reset only once a session made
+    # progress (the server hello plus a game frame). Resetting on every connect
+    # meant a server that accepts and then closes was retried forever
+    # (chipzen-sdk#244).
     retries = 0
+    progressed = [False]
+
+    def _on_progress() -> None:
+        progressed[0] = True
+
     while retries <= max_attempts:
+        progressed[0] = False
         try:
             async with connect(url, user_agent_header=ua) as ws:
-                retries = 0  # reset on successful connect
                 return await _run_session(
                     ws,
                     bot,
@@ -257,6 +267,7 @@ async def run_bot(
                     client_version=client_version,
                     safe_mode=safe_mode,
                     supported_games=supported_games,
+                    on_progress=_on_progress,
                 )
 
         except asyncio.CancelledError:
@@ -272,6 +283,8 @@ async def run_bot(
             # process exits non-zero.
             raise
         except Exception:
+            if progressed[0]:
+                retries = 0  # the session got going: a fresh budget for this drop
             retries += 1
             if retries > max_attempts:
                 logger.exception("Max reconnection attempts reached, giving up")
@@ -298,8 +311,14 @@ async def _run_session(
     client_version: str,
     safe_mode: bool = True,
     supported_games: list[str] | None = None,
+    on_progress: Callable[[], None] | None = None,
 ) -> dict | None:
     """Execute a single connected session: handshake + message loop.
+
+    ``on_progress``, if given, is called once, on the first frame after the
+    server ``hello`` that is not a ``ping``: the session made real progress.
+    ``run_bot`` uses it to decide whether a later drop gets a fresh retry
+    budget.
 
     Returns the ``match_end`` payload on a clean finish, or ``None`` if the
     handshake failed / the socket closed without a ``match_end``.
@@ -320,6 +339,7 @@ async def _run_session(
             client_version=client_version,
             safe_mode=safe_mode,
             supported_games=supported_games,
+            on_progress=on_progress,
         )
     except Exception as exc:
         if _is_seat_replaced_close(exc):
@@ -340,6 +360,7 @@ async def _session_loop(
     client_version: str,
     safe_mode: bool = True,
     supported_games: list[str] | None = None,
+    on_progress: Callable[[], None] | None = None,
 ) -> dict | None:
     """The body of :func:`_run_session`: handshake + message loop."""
 
@@ -633,6 +654,9 @@ async def _session_loop(
             continue
 
         msg_type = payload.get("type")
+        if on_progress is not None and msg_type != "ping":
+            on_progress()
+            on_progress = None
         seq = payload.get("seq")
         if isinstance(seq, int):
             if last_seq is not None and seq != last_seq + 1:
