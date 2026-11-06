@@ -441,9 +441,9 @@ can still play a game by speaking its Layer 2 spec directly.
 |---|---|---|---|
 | No-Limit Hold'em, heads-up and multi-way | Yes | Yes | Yes |
 | Remote play (external API) | Yes | Yes | Yes |
-| `supported_games` declaration | Yes (0.4.0) | Yes (`supportedGames`, 0.4.0) | Yes, in `main` (`supported_games`); not yet in a crates.io release |
-| 2-7 Triple Draw | Yes (0.4.0) | Yes, in `main` (`decideDraw`); not yet in an npm release | Yes, in `main` (`decide_draw`); not yet in a crates.io release |
-| Pineapple OFC | Yes (0.4.0) | Yes, in `main` (`decidePlacement`); not yet in an npm release | Yes, in `main` (`decide_placement`); not yet in a crates.io release |
+| `supported_games` declaration | Yes (0.4.0) | Yes (`supportedGames`, 0.4.0) | Yes (`supported_games`, 0.4.0) |
+| 2-7 Triple Draw | Yes (0.4.0) | Yes (`decideDraw`, 0.5.0) | Yes (`decide_draw`, 0.4.0) |
+| Pineapple OFC | Yes (0.4.0) | Yes (`decidePlacement`, 0.5.0) | Yes (`decide_placement`, 0.4.0) |
 | Big Bad Bots | Yes (0.5.0, `BigBadBotsBot`, §10) | Yes (0.4.0, `BigBadBotsBot`) | Coming after Python |
 
 ---

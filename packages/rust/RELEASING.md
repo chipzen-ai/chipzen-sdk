@@ -144,7 +144,7 @@ reproducibility.
 ## Notes on the two-crate workspace
 
 `chipzen-sdk` (the CLI) **depends on** `chipzen-bot`
-(`chipzen-bot = { version = "0.3", path = "../chipzen-bot" }`), which
+(`chipzen-bot = { version = "0.4", path = "../chipzen-bot" }`), which
 fixes the publish order: `chipzen-bot` must reach the crates.io index
 first or `cargo publish -p chipzen-sdk` cannot resolve it. The workflow
 publishes them in that order for exactly this reason, and `cargo publish`
@@ -157,7 +157,7 @@ has not been published yet. `chipzen-sdk` is verified at publish time by
 `cargo publish` itself.
 
 `chipzen-bot` can be republished on its own; `chipzen-sdk` cannot be
-published ahead of a `chipzen-bot` version that satisfies its `"0.3"`
+published ahead of a `chipzen-bot` version that satisfies its `"0.4"`
 requirement.
 
 The IP-protected starter at [`starters/rust/`](starters/rust/) uses
