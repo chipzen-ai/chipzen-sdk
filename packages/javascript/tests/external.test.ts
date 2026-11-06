@@ -756,6 +756,8 @@ describe("a match seat taken over by another connection", () => {
       "error frame then close",
       [serverHello(), matchStart(), replacedErrorFrame(), new CloseWith(4000)],
     ],
+    // Taken over during the handshake: the error frame comes in place of the hello.
+    ["error frame before the hello", [replacedErrorFrame(), new CloseWith(4000)]],
   ] as Array<[string, ScriptEntry[]]>)(
     "%s ends the match with no reconnect and one log line",
     async (_name, script) => {

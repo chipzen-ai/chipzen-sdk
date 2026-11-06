@@ -538,6 +538,11 @@ async def _session_loop(
 
     raw_hello = await ws.recv()
     server_hello = json.loads(raw_hello)
+    if server_hello.get("type") == "error" and server_hello.get("code") == (
+        REPLACED_BY_NEW_CONNECTION
+    ):
+        # Taken over during the handshake; a 4000 close follows.
+        raise SeatReplacedError(REPLACED_BY_NEW_CONNECTION)
     if server_hello.get("type") != "hello":
         logger.error(
             "Expected 'hello' from server, got %r",

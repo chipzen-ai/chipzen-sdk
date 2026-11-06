@@ -364,6 +364,10 @@ export async function _runSession(
     throw new Error("connection closed before server hello");
   }
   const hello = parseJson(helloRaw);
+  if (hello.type === "error" && hello.code === REPLACED_BY_NEW_CONNECTION) {
+    // Taken over during the handshake; a 4000 close follows.
+    throw new SeatReplacedError();
+  }
   if (hello.type !== "hello") {
     throw new Error(`expected server hello, got ${hello.type ?? "<no type>"}`);
   }

@@ -634,7 +634,14 @@ where
                     Err(_) => continue,
                 };
                 if replaced.lock().unwrap().contains(&match_id) {
-                    continue; // held by another connection of this bot
+                    // Held by another connection of this bot. Known narrow
+                    // case: if that connection then dies, this lobby still
+                    // gets the resume `matched` and ignores it, so the seat
+                    // forfeits on the turn clock. Accepted: the server caps
+                    // takeovers per seat at 3, so the trade is bounded, and a
+                    // restarted process (empty `replaced`) picks the match
+                    // back up.
+                    continue;
                 }
 
                 let bot = factory();

@@ -351,6 +351,12 @@ where
         });
     };
     let hello: Value = serde_json::from_str(&hello_raw)?;
+    if hello.get("type").and_then(|v| v.as_str()) == Some("error")
+        && hello.get("code").and_then(|v| v.as_str()) == Some(REPLACED_BY_NEW_CONNECTION)
+    {
+        // Taken over during the handshake; a 4000 close follows.
+        return Err(Error::SeatReplaced);
+    }
     if hello.get("type").and_then(|v| v.as_str()) != Some("hello") {
         return Err(Error::Protocol(format!(
             "expected server hello, got {:?}",

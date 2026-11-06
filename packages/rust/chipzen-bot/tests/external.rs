@@ -789,6 +789,19 @@ async fn test_the_error_frame_then_close_ends_the_match_without_reconnecting() {
 }
 
 #[tokio::test]
+async fn test_the_error_frame_before_the_hello_ends_the_match_without_reconnecting() {
+    // Taken over during the handshake: the error frame comes in place of the hello.
+    let (results, calls) = run_two_lobby_sessions(
+        vec![matched()],
+        vec![],
+        vec![vec![replaced_error_frame(), close_with(4000)]],
+    )
+    .await;
+    assert_eq!(gateway_ids(&calls), vec!["m1/p1"]);
+    assert!(results.is_empty());
+}
+
+#[tokio::test]
 async fn test_other_drops_still_reconnect() {
     for drop in [None, Some(1011), Some(4001)] {
         _set_lobby_recv_timeout_ms(5);

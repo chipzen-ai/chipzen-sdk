@@ -373,6 +373,12 @@ async def _run_lobby_once(
                     logger.info("lobby: already playing match %s; ignoring repeat", match_id)
                     continue
                 if match_id in replaced:
+                    # Known narrow case: if the connection that took the seat
+                    # then dies, this lobby still gets the resume ``matched``
+                    # for it and ignores it, so the seat forfeits on the turn
+                    # clock. Accepted: the server caps takeovers per seat at 3,
+                    # so the trade is bounded, and a restarted process (empty
+                    # ``replaced``) picks the match back up.
                     logger.info(
                         "lobby: match %s is held by another connection of this bot; ignoring",
                         match_id,

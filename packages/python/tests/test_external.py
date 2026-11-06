@@ -806,8 +806,9 @@ def _seat_replaced_lines(caplog) -> list[str]:
     [
         [_server_hello(), _match_start(), _turn_request()],
         [_server_hello(), _match_start(), _replaced_error_frame()],
+        [_replaced_error_frame()],  # taken over during the handshake
     ],
-    ids=["4000-close", "error-frame-then-close"],
+    ids=["4000-close", "error-frame-then-close", "error-frame-before-hello"],
 )
 async def test_seat_taken_over_ends_the_match_without_reconnecting(monkeypatch, caplog, frames):
     caplog.set_level("INFO")

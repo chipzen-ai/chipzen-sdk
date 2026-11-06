@@ -501,7 +501,12 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
           continue;
         }
         if (p.replaced.has(matchId)) {
-          continue; // held by another connection of this bot
+          // Held by another connection of this bot. Known narrow case: if that
+          // connection then dies, this lobby still gets the resume `matched`
+          // and ignores it, so the seat forfeits on the turn clock. Accepted:
+          // the server caps takeovers per seat at 3, so the trade is bounded,
+          // and a restarted process (empty `replaced`) picks the match back up.
+          continue;
         }
         const task: MatchTask = { promise: Promise.resolve(), done: false, matchId };
         task.promise = playOneMatch({

@@ -8,7 +8,11 @@ use thiserror::Error;
 /// Large variants (`Transport`, `Json`) are boxed so `Result<T, Error>`
 /// stays small on the success path. The boxing is invisible to callers
 /// thanks to the `From` impls below.
+///
+/// `#[non_exhaustive]`: a later release can add a failure kind without a
+/// breaking change, so a `match` on it outside this crate needs a `_` arm.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("WebSocket transport error: {0}")]
     Transport(Box<tokio_tungstenite::tungstenite::Error>),
