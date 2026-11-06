@@ -106,6 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release adds `Action::Place` / `ActionKind::Place` (and `Action::Draw` /
   `ActionKind::Draw`) anyway; from here on a new game's action is not a
   breaking change. Constructing an `Action` is unchanged.
+- **Breaking (pre-1.0): `Error` is `#[non_exhaustive]` and gains
+  `Error::SeatReplaced`** ([#242](https://github.com/chipzen-ai/chipzen-sdk/issues/242)).
+  A `match` on `Error` outside this crate needs a `_` arm (it needed a new arm
+  for `SeatReplaced` anyway); from here on a new failure kind is not a
+  breaking change. `MessageReader` gains `close_code()`, a provided method that
+  returns `None`, so existing readers compile unchanged.
 - **Breaking (pre-1.0): `Action` is no longer `Copy`**, because
   `Action::Draw` carries its discard list. `Action` is still `Clone`; code
   that copied an `Action` implicitly must `.clone()` it. `Action` and
@@ -125,6 +131,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `preserve_order` feature.
 
 ### Fixed
+
+- **A match seat taken over by another connection of the same bot is no longer
+  taken back** ([#242](https://github.com/chipzen-ai/chipzen-sdk/issues/242)).
+  When a second live copy of a bot connects to the same match, the platform hands
+  it the seat and closes the older match socket with `4000`, after an `error`
+  frame with code `replaced_by_new_connection`. `run_external_bot()` treated that
+  as a drop and reconnected, so two copies took the seat from each other
+  indefinitely. It now logs one line to stderr ("seat taken over by another
+  connection of this bot; not reconnecting") and ends that match's task: no
+  reconnect, no `MatchResult`, and not counted toward `max_matches`. A later
+  `matched` for that same match is ignored; other matches play as normal.
+  `run_bot()` returns `Ok(None)` on the same close instead of retrying. Any other
+  drop still reconnects as before.
 
 - **The poker starter's `table_position` no longer counts busted seats.** A busted seat
   stays in `opponent_stacks` with a stack of 0, so the old offset from the button was wrong

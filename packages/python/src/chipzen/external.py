@@ -41,7 +41,7 @@ import websockets
 
 from chipzen import __version__ as _VERSION  # noqa: N812
 from chipzen.bot import ChipzenBot
-from chipzen.client import BotDecisionError, _run_session
+from chipzen.client import SEAT_REPLACED_LOG, BotDecisionError, SeatReplacedError, _run_session
 from chipzen.config import ChipzenConfig, load_chipzen_config, resolve_token
 from chipzen.connect import EnvName, connect_to_chipzen
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
@@ -195,6 +195,13 @@ async def _play_one_match(
 
     Returns the ``match_end`` payload, or ``None`` if the match could not be
     completed within the reconnect budget.
+
+    A ``4000`` close (or the ``replaced_by_new_connection`` error frame before
+    it) means another connection of this bot took the seat over. That is not a
+    drop: reconnecting would take the seat back, and two live copies of one bot
+    would trade it forever. It logs one line and raises
+    :class:`~chipzen.client.SeatReplacedError`, so the match's task ends with
+    no reconnect and no result.
     """
     attempt = 0
     while True:
@@ -226,6 +233,9 @@ async def _play_one_match(
             # _run_session returned None: the socket closed without a match_end
             # (a drop, or keepalive killed a stalled socket). Try to resume.
             reason = "closed without match_end"
+        except SeatReplacedError:
+            logger.warning(SEAT_REPLACED_LOG, match_id)
+            raise
         except BotDecisionError:
             raise  # deterministic bot bug — terminal, never reconnect-retry
         except (OSError, websockets.WebSocketException) as exc:
@@ -268,6 +278,7 @@ async def _run_lobby_once(
     stop: asyncio.Event,
     fatal: list[BaseException],
     supported_games: list[str] | None = None,
+    replaced: set[str] | None = None,
 ) -> str:
     """Hold ONE lobby connection and dispatch every ``matched`` it delivers.
 
@@ -286,12 +297,23 @@ async def _run_lobby_once(
     gateway socket, independent of the lobby. A ``matched`` for a match one of
     those tasks is still playing is ignored. ``completed`` is a 1-element
     mutable counter shared across lobby sessions.
+
+    ``replaced`` (also caller-owned) holds the ids of matches whose seat another
+    connection of this bot took over. Such a match is neither a result nor a
+    completed match, and a later ``matched`` for it is ignored: playing it
+    would take the seat back from the connection that now holds it.
     """
+    if replaced is None:
+        replaced = set()
 
     def _on_match_done(task: asyncio.Task) -> None:
         try:
             end = task.result()
         except asyncio.CancelledError:  # teardown — not a completed match
+            return
+        except SeatReplacedError:
+            # Already logged by _play_one_match. The match goes on elsewhere.
+            replaced.add(task.get_name())
             return
         except BotDecisionError as exc:
             # safe_mode=False: a deterministic bot bug. Surface it (stop the
@@ -349,6 +371,18 @@ async def _run_lobby_once(
                 # fresh attempt.
                 if any(t.get_name() == match_id and not t.done() for t in match_tasks):
                     logger.info("lobby: already playing match %s; ignoring repeat", match_id)
+                    continue
+                if match_id in replaced:
+                    # Known narrow case: if the connection that took the seat
+                    # then dies, this lobby still gets the resume ``matched``
+                    # for it and ignores it, so the seat forfeits on the turn
+                    # clock. Accepted: the server caps takeovers per seat at 3,
+                    # so the trade is bounded, and a restarted process (empty
+                    # ``replaced``) picks the match back up.
+                    logger.info(
+                        "lobby: match %s is held by another connection of this bot; ignoring",
+                        match_id,
+                    )
                     continue
                 logger.info(
                     "lobby: matched -> match %s (rated=%s); playing",
@@ -501,6 +535,7 @@ async def run_external_bot(
     # is a 1-element mutable counter shared across lobby sessions.
     match_tasks: list[asyncio.Task] = []
     completed = [0]
+    replaced: set[str] = set()
 
     logger.info("external: connecting lobby %s", lobby_url)
 
@@ -526,6 +561,7 @@ async def run_external_bot(
                 stop=stop,
                 fatal=fatal,
                 supported_games=supported_games,
+                replaced=replaced,
             )
             ever_connected = True
         except (OSError, websockets.WebSocketException) as exc:

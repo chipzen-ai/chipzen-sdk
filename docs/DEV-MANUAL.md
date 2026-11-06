@@ -335,7 +335,12 @@ asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="prod",
 
 `run_external_bot` holds one lobby connection and plays every match dispatched
 to your bot — a single challenge, or each round of a tournament — and
-reconnects a dropped match via the platform's reconnect-resume. Put the token in
+reconnects a dropped match via the platform's reconnect-resume. A `4000` close on a
+match socket is not a drop: another connection of the same bot took the seat over, so
+the SDK logs one line and ends that match without reconnecting, and ignores a later
+`matched` for it. So if the copy that took the seat then dies, this copy does not pick
+the match up again on its next lobby connect, and the seat forfeits on the turn clock
+(the server caps takeovers per seat at 3); restart the process to rejoin. Put the token in
 a `chipzen.toml` and the CLI is a one-liner:
 
 ```toml

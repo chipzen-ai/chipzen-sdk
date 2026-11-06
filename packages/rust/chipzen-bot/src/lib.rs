@@ -54,7 +54,7 @@ mod retry;
 pub use bot::Bot;
 pub use client::{
     default_user_agent, run_bot, MessageReader, MessageWriter, RunBotOptions, SessionContext,
-    SUPPORTED_PROTOCOL_VERSIONS,
+    CLOSE_REPLACED_BY_NEW_CONNECTION, REPLACED_BY_NEW_CONNECTION, SUPPORTED_PROTOCOL_VERSIONS,
 };
 pub use config::{
     discover_config_path, load_chipzen_config, resolve_token, resolve_url, ChipzenConfig,

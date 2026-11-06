@@ -23,6 +23,23 @@ use tokio_tungstenite::{
 /// Protocol versions this client claims to support in the handshake.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["1.0"];
 
+/// Close code the platform puts on a match socket whose seat another
+/// connection of the same bot took over (chipzen-sdk#242). The lobby uses the
+/// same code for the same reason.
+pub const CLOSE_REPLACED_BY_NEW_CONNECTION: u16 = 4000;
+
+/// The close reason, and the `code` of the `error` frame sent just before
+/// that close.
+pub const REPLACED_BY_NEW_CONNECTION: &str = "replaced_by_new_connection";
+
+/// The one line logged when a match socket is taken over.
+pub(crate) fn seat_replaced_log(match_id: &str) -> String {
+    format!(
+        "chipzen-sdk: match {match_id}: seat taken over by another connection of this bot; \
+         not reconnecting"
+    )
+}
+
 const DEFAULT_CLIENT_NAME: &str = "chipzen-sdk-rust";
 const DEFAULT_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -140,7 +157,8 @@ impl SessionContext {
 ///
 /// Returns the `match_end` payload on a clean finish, or `None` if the
 /// connection closed without a clean `match_end` after exhausting the
-/// retry budget. Returns [`Error::RetriesExhausted`] if the connection
+/// retry budget, or another connection of this bot took the seat over (a
+/// `4000` close; logged once, never retried). Returns [`Error::RetriesExhausted`] if the connection
 /// cannot be established after `retry_policy.max_reconnect_attempts`
 /// attempts, or [`Error::BotDecision`] if `decide()` panics under
 /// `safe_mode = false`.
@@ -185,6 +203,7 @@ pub async fn run_bot<B: Bot>(
             let (mut write_half, mut read_half) = ws_stream.split();
             let mut reader = WsReader {
                 inner: &mut read_half,
+                close_code: None,
             };
             let mut writer = WsWriter {
                 inner: &mut write_half,
@@ -195,6 +214,12 @@ pub async fn run_bot<B: Bot>(
 
         match result {
             Ok(end) => return Ok(end),
+            // Another connection of this bot holds the seat now; reconnecting
+            // would only take it back.
+            Err(Error::SeatReplaced) => {
+                eprintln!("{}", seat_replaced_log(&ctx.match_id));
+                return Ok(None);
+            }
             // A deterministic bot bug (safe_mode off) — terminal, not a
             // transient disconnect. Do not reconnect-retry; propagate so the
             // process exits non-zero.
@@ -242,6 +267,14 @@ pub trait MessageReader: Send {
     /// surfaced through [`Error`] rather than this return type so the
     /// session loop can decide whether to retry.
     async fn next(&mut self) -> Result<Option<String>, Error>;
+
+    /// The close code the server sent, once [`next`](Self::next) has
+    /// returned `None`. `None` while open, or when the socket closed with no
+    /// close frame. A `4000` means another connection of this bot took the
+    /// seat over. Readers that cannot tell keep the default.
+    fn close_code(&self) -> Option<u16> {
+        None
+    }
 }
 
 /// Push-based async sender for outbound messages.
@@ -257,6 +290,10 @@ pub trait MessageWriter: Send {
 impl MessageReader for Box<dyn MessageReader> {
     async fn next(&mut self) -> Result<Option<String>, Error> {
         (**self).next().await
+    }
+
+    fn close_code(&self) -> Option<u16> {
+        (**self).close_code()
     }
 }
 
@@ -274,7 +311,10 @@ impl MessageWriter for Box<dyn MessageWriter> {
 /// Returns the `match_end` payload (the full envelope) on a clean
 /// finish, or `None` if the socket closed without a `match_end` (a drop
 /// the caller may reconnect through). Returns [`Error::BotDecision`] if
-/// `decide()` panics under `ctx.safe_mode = false`.
+/// `decide()` panics under `ctx.safe_mode = false`, and
+/// [`Error::SeatReplaced`] on a `4000` close or the
+/// `replaced_by_new_connection` error frame before it (another connection of
+/// this bot took the seat over; the caller must not reconnect).
 pub async fn _run_session<R, W, B>(
     reader: &mut R,
     writer: &mut W,
@@ -302,10 +342,21 @@ where
     }
     writer.send(auth.to_string()).await?;
 
-    let hello_raw = reader.next().await?.ok_or(Error::ConnectionClosed {
-        context: "server hello",
-    })?;
+    let Some(hello_raw) = reader.next().await? else {
+        if reader.close_code() == Some(CLOSE_REPLACED_BY_NEW_CONNECTION) {
+            return Err(Error::SeatReplaced);
+        }
+        return Err(Error::ConnectionClosed {
+            context: "server hello",
+        });
+    };
     let hello: Value = serde_json::from_str(&hello_raw)?;
+    if hello.get("type").and_then(|v| v.as_str()) == Some("error")
+        && hello.get("code").and_then(|v| v.as_str()) == Some(REPLACED_BY_NEW_CONNECTION)
+    {
+        // Taken over during the handshake; a 4000 close follows.
+        return Err(Error::SeatReplaced);
+    }
     if hello.get("type").and_then(|v| v.as_str()) != Some("hello") {
         return Err(Error::Protocol(format!(
             "expected server hello, got {:?}",
@@ -481,6 +532,12 @@ where
                 call_hook("on_match_end", ctx.safe_mode, || bot.on_match_end(&results))?;
                 return Ok(Some(msg));
             }
+            "error"
+                if msg.get("code").and_then(|v| v.as_str()) == Some(REPLACED_BY_NEW_CONNECTION) =>
+            {
+                // A 4000 close follows; end here rather than wait for it.
+                return Err(Error::SeatReplaced);
+            }
             "error" => {
                 // Non-fatal — production deployments log; the SDK stays
                 // quiet so user code controls the logging surface.
@@ -491,6 +548,9 @@ where
         }
     }
 
+    if reader.close_code() == Some(CLOSE_REPLACED_BY_NEW_CONNECTION) {
+        return Err(Error::SeatReplaced);
+    }
     // Stream closed without match_end. Caller decides whether to retry.
     Ok(None)
 }
@@ -893,6 +953,7 @@ where
     S: StreamExt<Item = Result<Message, WsError>> + Unpin,
 {
     inner: &'a mut S,
+    close_code: Option<u16>,
 }
 
 #[async_trait]
@@ -911,11 +972,19 @@ where
                     // can respond if needed.
                     continue;
                 }
-                Some(Ok(Message::Close(_))) | None => return Ok(None),
+                Some(Ok(Message::Close(frame))) => {
+                    self.close_code = frame.map(|f| u16::from(f.code));
+                    return Ok(None);
+                }
+                None => return Ok(None),
                 Some(Ok(_)) => continue, // binary, pong, etc.
                 Some(Err(e)) => return Err(Error::from(e)),
             }
         }
+    }
+
+    fn close_code(&self) -> Option<u16> {
+        self.close_code
     }
 }
 

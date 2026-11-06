@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A match seat taken over by another connection of the same bot is no longer
+  taken back.** When a second live copy of a bot connects to the same match, the
+  platform hands it the seat and closes the older match socket with `4000`, after an
+  `error` frame with code `replaced_by_new_connection`
+  ([#242](https://github.com/chipzen-ai/chipzen-sdk/issues/242)). `run_external_bot()`
+  treated that as a drop and reconnected, so two copies took the seat from each other
+  indefinitely. It now logs one line ("seat taken over by another connection of this
+  bot; not reconnecting") and ends that match's task: no reconnect, no result entry,
+  and not counted toward `max_matches`. A later `matched` for that same match is
+  ignored; other matches play as normal. `run_bot()` returns `None` on the same close
+  instead of retrying. Any other drop still reconnects as before.
+
 ## [0.6.2] — 2026-11-05
 
 ### Fixed

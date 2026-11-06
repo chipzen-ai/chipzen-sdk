@@ -48,6 +48,35 @@ export class BotDecisionError extends Error {
 }
 
 /**
+ * Close code the platform puts on a match socket whose seat another
+ * connection of the same bot took over (chipzen-sdk#242). The lobby uses the
+ * same code for the same reason.
+ */
+export const CLOSE_REPLACED_BY_NEW_CONNECTION = 4000;
+
+/** The close reason, and the `code` of the `error` frame sent just before that close. */
+export const REPLACED_BY_NEW_CONNECTION = "replaced_by_new_connection";
+
+/**
+ * Thrown by the session loop when another connection of this bot took the
+ * match seat over: an `error` frame with code `replaced_by_new_connection`,
+ * or a `4000` close. The match did not end; it goes on on the newer socket.
+ * Reconnecting would only take the seat back, so callers end the match's
+ * task instead.
+ */
+export class SeatReplacedError extends Error {
+  constructor(message: string = REPLACED_BY_NEW_CONNECTION) {
+    super(message);
+    this.name = "SeatReplacedError";
+  }
+}
+
+/** The one line logged when a match socket is taken over. */
+export function _seatReplacedLog(matchId: string): string {
+  return `chipzen-sdk: match ${matchId}: seat taken over by another connection of this bot; not reconnecting`;
+}
+
+/**
  * Optional knobs for `runBot`. All fields default to sensible values
  * matching the platform's expectations.
  */
@@ -120,7 +149,9 @@ export const BIGBADBOTS_SEND_MARGIN_MS = 20;
  * Resolves on `match_end` (with the `match_end` payload, ignored by most
  * callers). Rejects if the connection cannot be established (after the
  * reconnect budget is exhausted) or if `safeMode` is `false` and
- * `bot.decide()` throws (a terminal {@link BotDecisionError}).
+ * `bot.decide()` throws (a terminal {@link BotDecisionError}). Resolves
+ * `null`, logging one line and without reconnecting, if another connection
+ * of this bot takes the seat over (a `4000` close).
  */
 export async function runBot(
   url: string,
@@ -156,6 +187,12 @@ export async function runBot(
         supportedGames: options.supportedGames ?? null,
       });
     } catch (err) {
+      if (err instanceof SeatReplacedError) {
+        // Another connection of this bot holds the seat now; reconnecting
+        // would only take it back.
+        console.warn(_seatReplacedLog(matchId));
+        return null;
+      }
       if (err instanceof BotDecisionError) {
         // A deterministic bot bug (safeMode=false) — terminal, not a
         // transient disconnect. Do not reconnect-retry.
@@ -292,8 +329,11 @@ function _callHook(hookName: string, invoke: () => void, safeMode: boolean): voi
  * Drive a single connected session: handshake + message loop until
  * `match_end`. Returns the `match_end` payload on a clean finish, or
  * `null` if the handshake failed / the socket closed without a
- * `match_end` (the caller decides whether to reconnect). Exported for
- * the conformance harness in `conformance.ts`.
+ * `match_end` (the caller decides whether to reconnect). Throws
+ * {@link SeatReplacedError} on a `4000` close or the
+ * `replaced_by_new_connection` error frame before it: another connection
+ * of this bot took the seat over, so the caller must not reconnect.
+ * Exported for the conformance harness in `conformance.ts`.
  */
 export async function _runSession(
   ws: WebSocket | SessionWebSocket,
@@ -304,6 +344,8 @@ export async function _runSession(
 ): Promise<Record<string, unknown> | null> {
   const reader = readerOverride ?? new _NodeWebSocketReader(ws as WebSocket);
   const safeMode = ctx.safeMode ?? true;
+  // A 4000 close: another connection of this bot took the seat over.
+  const seatReplaced = (): boolean => reader.closeCode?.() === CLOSE_REPLACED_BY_NEW_CONNECTION;
 
   // --- Layer 1 handshake ------------------------------------------------
   const auth: Record<string, unknown> = {
@@ -318,9 +360,14 @@ export async function _runSession(
 
   const helloRaw = await reader.next();
   if (!helloRaw) {
+    if (seatReplaced()) throw new SeatReplacedError();
     throw new Error("connection closed before server hello");
   }
   const hello = parseJson(helloRaw);
+  if (hello.type === "error" && hello.code === REPLACED_BY_NEW_CONNECTION) {
+    // Taken over during the handshake; a 4000 close follows.
+    throw new SeatReplacedError();
+  }
   if (hello.type !== "hello") {
     throw new Error(`expected server hello, got ${hello.type ?? "<no type>"}`);
   }
@@ -383,6 +430,7 @@ export async function _runSession(
   for (;;) {
     const raw = await reader.next();
     if (raw === null) {
+      if (seatReplaced()) throw new SeatReplacedError();
       // Connection closed (peer or transport) without a match_end. Caller
       // decides whether to retry — we just exit the loop here.
       return null;
@@ -534,6 +582,10 @@ export async function _runSession(
         return msg; // clean exit — hand the match_end payload to the caller
 
       case "error":
+        if (msg.code === REPLACED_BY_NEW_CONNECTION) {
+          // A 4000 close follows; end here rather than wait for it.
+          throw new SeatReplacedError();
+        }
         // Non-fatal — log + continue (the real logging plumbing belongs
         // in the bot author's code; the SDK stays quiet).
         break;
@@ -745,6 +797,12 @@ export interface AsyncMessageReader {
    * already waited behind earlier work; readers without it count as no wait.
    */
   receivedAt?(): number | undefined;
+  /**
+   * Optional: the close code once `next()` has resolved `null` (`undefined`
+   * while open, or when the socket closed with no close frame). A `4000`
+   * means another connection of this bot took the seat over.
+   */
+  closeCode?(): number | undefined;
 }
 
 /**
@@ -760,6 +818,7 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
   private readonly waiters: Array<(msg: string | null) => void> = [];
   private closed = false;
   private lastAt: number | undefined;
+  private code: number | undefined;
 
   constructor(ws: WebSocket) {
     ws.on("message", (data) => {
@@ -773,7 +832,10 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
         this.queue.push({ msg, at });
       }
     });
-    ws.on("close", () => this._close());
+    ws.on("close", (code: number) => {
+      this.code = code;
+      this._close();
+    });
     ws.on("error", () => this._close());
   }
 
@@ -789,6 +851,10 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
 
   receivedAt(): number | undefined {
     return this.lastAt;
+  }
+
+  closeCode(): number | undefined {
+    return this.code;
   }
 
   private _close(): void {
