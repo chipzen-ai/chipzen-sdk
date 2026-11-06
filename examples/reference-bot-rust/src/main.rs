@@ -348,4 +348,5 @@ async fn main() -> Result<(), chipzen_bot::Error> {
         },
     )
     .await
+    .map(|_match_end| ())
 }
