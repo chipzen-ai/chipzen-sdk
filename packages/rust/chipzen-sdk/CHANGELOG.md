@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-06
+
+### Changed
+
+- Released in lockstep with `chipzen-bot` 0.4.0, which it now requires
+  (`chipzen-bot = "0.4"`). No change to the CLI itself.
+
 ## [0.3.2] — 2026-10-18
 
 Released in lockstep with `chipzen-bot` 0.3.2 (the reconnect seat fix and the

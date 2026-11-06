@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-06
+
+**This release breaks the public API (pre-1.0, so a minor bump).** Code that
+`match`es on `Action`, `ActionKind` or `Error` outside this crate needs a `_`
+arm; code that copied an `Action` implicitly must `.clone()` it; a `GameState`
+or options struct literal must name the new fields or end with
+`..Default::default()`. Each item is under "Changed" below. Bots that only
+construct actions and read `GameState` fields build unchanged. A `chipzen-bot
+= "0.3"` requirement does not pick this release up; change it to `"0.4"`.
+
 ### Added
 
 - **Pineapple OFC parity with the Python SDK**
@@ -169,7 +179,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Rust 2-7 Triple Draw cells are flipped.
 - The "a Rust bot cannot play OFC yet" notes are gone from the same places
   (`packages/rust/README.md` now shows an OFC turn), and the Rust Pineapple
-  OFC cells are flipped (in `main`, not yet in a crates.io release).
+  OFC cells are flipped.
 
 ## [0.3.2] — 2026-10-18
 
