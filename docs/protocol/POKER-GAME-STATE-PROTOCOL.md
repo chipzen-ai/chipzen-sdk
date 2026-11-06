@@ -211,8 +211,8 @@ The core decision payload. Contains everything a bot needs to choose an action.
 | `your_stack`      | integer                | Yes      | The acting player's remaining stack (chips not yet in the pot).                                 |
 | `opponent_stacks` | array of integer       | Yes      | Other players' remaining stacks, ordered by seat (excluding the acting player's seat). Always a list: length N-1 at an N-player table, so exactly one entry in heads-up. Reading `opponent_stacks[0]` sees only one neighbor, not the whole field. See Section 5.9. |
 | `to_call`         | integer                | Yes      | Amount the acting player must add to call. `0` when checking is free.                           |
-| `min_raise`       | integer                | Yes      | Minimum legal raise total. `0` if raising is not a valid action.                                |
-| `max_raise`       | integer                | Yes      | Maximum legal raise total (the acting player's effective stack). `0` if raising is not valid.   |
+| `min_raise`       | integer                | Yes      | Minimum full raise total: the current bet plus the last full raise increment (the big blind before any raise). Always sent, also when `raise` is not in `valid_actions`; that list, not this field, says whether you may raise. Not capped by your stack: it can exceed `max_raise` (see Section 5.4). |
+| `max_raise`       | integer                | Yes      | Maximum raise total: what you have already bet this round plus your stack (an all-in). Always sent. |
 | `action_history`  | array of ActionEntry   | Yes      | All actions taken this hand so far, in chronological order. Includes synthetic blind/ante entries at the start. |
 
 **Raise semantics:** `min_raise` and `max_raise` represent the **total bet size**, not the incremental amount above the current bet. A bot submitting `raise` with `amount: 60` means the total bet is 60, not 60 on top of the existing bet.
@@ -249,7 +249,7 @@ Parameters accompanying the chosen action in `turn_action.action`.
 | `fold`    | `{}` or omitted                        | None.                                              |
 | `check`   | `{}` or omitted                        | None.                                              |
 | `call`    | `{}` or omitted                        | None.                                              |
-| `raise`   | `{"amount": <integer>}`                | `min_raise <= amount <= max_raise`                 |
+| `raise`   | `{"amount": <integer>}`                | `min(min_raise, max_raise) <= amount <= max_raise` (Section 5.4) |
 
 **Example — raise to 60:**
 ```json
@@ -893,9 +893,9 @@ Heads-up means two players with chips, at a table of any size. A 6-seat table do
 
 ### 5.4 Raise Sizing
 
-- `min_raise` is the minimum legal **total bet**. In standard NLHE, the minimum raise is the previous raise increment plus the current bet to match.
-- `max_raise` is the acting player's effective stack (the most they can put in).
-- If a player's stack is less than `min_raise`, `raise` is **still** offered — the server clamps the minimum down to `max_raise` rather than dropping the action, so the short stack can shove.
+- `min_raise` is the minimum full raise as a **total bet**: the current bet plus the previous raise increment (the big blind when nobody has raised yet). It is sent on every `turn_request`, whether or not `raise` is offered.
+- `max_raise` is the most the acting player can put in this round: their bet this round plus their stack.
+- `min_raise` is **not** capped by the stack, so a short stack can see `min_raise > max_raise`. `raise` is still offered when it would otherwise be (the server does not drop the action), and the legal range is then just the all-in: send `amount = max_raise`. In general a valid raise is `min(min_raise, max_raise) <= amount <= max_raise`; the server clamps an amount outside that range into it rather than rejecting it.
 - The `amount` in raise params is the **total bet size**, not the increment.
 
 ### 5.5 All-In
