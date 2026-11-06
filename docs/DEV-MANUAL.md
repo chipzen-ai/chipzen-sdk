@@ -203,8 +203,8 @@ Built from the `turn_request` message. The full definition is in
 | `your_seat` | `int` | 0-based. |
 | `dealer_seat` | `int` | Button seat. |
 | `to_call` | `int` | Chips to call. `0` means you can check. |
-| `min_raise` | `int` | Minimum legal raise-to (total bet). `0` if raising is illegal. |
-| `max_raise` | `int` | Maximum legal raise-to (your effective all-in). `0` if raising is illegal. |
+| `min_raise` | `int` | Minimum full raise-to (total bet): the current bet plus the last raise increment. Always sent; `valid_actions` says whether you may raise. Not capped by your stack, so it can exceed `max_raise`: then the only raise is the all-in, `amount = max_raise` (POKER-GAME-STATE-PROTOCOL section 5.4). |
+| `max_raise` | `int` | Maximum raise-to: your bet this round plus your stack (your all-in). Always sent. |
 | `valid_actions` | `list[str]` | Strings from `{"fold","check","call","raise","all_in"}`. |
 | `action_history` | `list[dict]` | All actions this hand, chronological, including synthetic blind/ante entries. |
 | `round_id` | `str` | Layer 1 round UUID. Empty in the local test harness. |
