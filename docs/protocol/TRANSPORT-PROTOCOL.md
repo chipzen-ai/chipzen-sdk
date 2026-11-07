@@ -390,7 +390,7 @@ Requests an action from the bot. The bot must respond with a `turn_action` befor
 | `request_id` | string | yes | Unique identifier for this turn request (`req_` plus 12 hex characters). Must be echoed in the response. Used for correlation, idempotency, and deduplication. |
 | `timeout_ms` | integer | yes | Time allowed to submit an action, in milliseconds |
 | `turn_duration_ms` | integer | yes | The same window as `timeout_ms`, for a client to start a countdown of that length when the frame arrives (chipzen-ai/Chipzen#2581) |
-| `deadline_ts` | integer | yes | The server's enforcement deadline as Unix epoch milliseconds (chipzen-ai/Chipzen#2562). For a bot it is send time plus `timeout_ms`. |
+| `deadline_ts` | integer | yes | The server's enforcement deadline as Unix epoch milliseconds (chipzen-ai/Chipzen#2562). For a bot it is send time plus `timeout_ms`, with one exception today: a remote (External API) bot seated in a tournament bracket gets a 15 s relay grace on top, so its `deadline_ts` is send time plus `timeout_ms` plus 15000 (chipzen-ai/Chipzen#6782 tracks aligning the two). Plan your decision around `timeout_ms`; the grace covers the relay hop, not thinking time. |
 | `valid_actions` | string[] | yes | List of valid action type strings for this turn |
 | `state` | object | yes | Current game-specific state (opaque to Layer 1) |
 
