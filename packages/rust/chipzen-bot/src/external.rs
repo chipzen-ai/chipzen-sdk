@@ -468,6 +468,9 @@ where
     let fatal: Arc<Mutex<Option<Error>>> = Arc::new(Mutex::new(None));
     // Ids of matches whose seat another connection of this bot took over.
     let replaced: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    // Ids of matches a task in `match_tasks` is still playing. Owned here for
+    // the same reason as `match_tasks`: it must outlive a lobby reconnect.
+    let live: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let mut match_tasks: JoinSet<()> = JoinSet::new();
 
     // --- Lobby session loop with reconnect/backoff -------------------------
@@ -486,6 +489,7 @@ where
             &stop,
             &fatal,
             &replaced,
+            &live,
             &mut match_tasks,
         )
         .await;
@@ -565,7 +569,9 @@ enum LobbyStatus {
 ///
 /// Each `matched` is spawned into `match_tasks` (owned by the caller) so the
 /// lobby heartbeat is answered during matches AND in-flight matches survive
-/// a lobby reconnect — a match runs on its own gateway socket.
+/// a lobby reconnect — a match runs on its own gateway socket. A `matched`
+/// for a match one of those tasks is still playing (its id is in `live`) is
+/// ignored.
 ///
 /// A `matched` for a match in `replaced` (its seat was taken over by another
 /// connection of this bot) is ignored: playing it would take the seat back
@@ -581,6 +587,7 @@ async fn run_lobby_once<B, F, T>(
     stop: &Arc<AtomicBool>,
     fatal: &Arc<Mutex<Option<Error>>>,
     replaced: &Arc<Mutex<HashSet<String>>>,
+    live: &Arc<Mutex<HashSet<String>>>,
     match_tasks: &mut JoinSet<()>,
 ) -> Result<LobbyStatus, Error>
 where
@@ -633,6 +640,16 @@ where
                     Ok(url) => url,
                     Err(_) => continue,
                 };
+                // On every lobby connect the platform re-sends `matched` for
+                // each match this bot holds a seat in, so that a restarted
+                // process can pick its match back up. This process still has
+                // the match on its own gateway socket, and a second socket
+                // would only be refused with `duplicate_participant`. A task
+                // that has finished (or given up) no longer counts: that seat
+                // may need a fresh attempt.
+                if live.lock().unwrap().contains(&match_id) {
+                    continue;
+                }
                 if replaced.lock().unwrap().contains(&match_id) {
                     // Held by another connection of this bot. Known narrow
                     // case: if that connection then dies, this lobby still
@@ -644,6 +661,9 @@ where
                     continue;
                 }
 
+                // Marked live before the task starts, so a repeat on this same
+                // socket is ignored too.
+                let live_match = LiveMatch::new(live, &match_id);
                 let bot = factory();
                 let transport = Arc::clone(transport);
                 let session = Arc::clone(session);
@@ -654,6 +674,9 @@ where
                 let replaced = Arc::clone(replaced);
 
                 match_tasks.spawn(async move {
+                    // Dropped when the task ends however it ends (finished,
+                    // gave up, panicked or aborted), which un-marks the match.
+                    let _live_match = live_match;
                     let outcome =
                         play_one_match(&*transport, &gateway_url, &match_id, bot, &session).await;
                     record_match_outcome(
@@ -673,6 +696,36 @@ where
         Ok(LobbyStatus::Stopped)
     } else {
         Ok(LobbyStatus::Closed)
+    }
+}
+
+/// Marks a match id as being played by a running task. The id is in the set
+/// from [`LiveMatch::new`] until the guard is dropped, i.e. until the task
+/// that owns it ends.
+struct LiveMatch {
+    live: Arc<Mutex<HashSet<String>>>,
+    match_id: String,
+}
+
+impl LiveMatch {
+    fn new(live: &Arc<Mutex<HashSet<String>>>, match_id: &str) -> Self {
+        live.lock().unwrap().insert(match_id.to_string());
+        Self {
+            live: Arc::clone(live),
+            match_id: match_id.to_string(),
+        }
+    }
+}
+
+impl Drop for LiveMatch {
+    fn drop(&mut self) {
+        // Never panic in drop (it may run during an unwind); a poisoned lock
+        // still holds a usable set.
+        let mut live = match self.live.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        live.remove(&self.match_id);
     }
 }
 
