@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A lobby reconnect during a live match no longer opens a second gateway**
+  ([#241](https://github.com/chipzen-ai/chipzen-sdk/issues/241)). The
+  platform re-sends `matched` for an in-flight match on every lobby connect.
+  `run_external_bot()` opened a new gateway for it, which the platform refused
+  with `duplicate_participant`, and counted that as a finished match. With
+  `max_matches` set, that could end the session and forfeit the healthy match.
+  It now ignores a `matched` for a match it is still playing. A restarted
+  process has nothing in play, so it still picks its match back up. The
+  Python and JavaScript SDKs got the same fix in #231.
+
 ## [0.4.0] — 2026-11-06
 
 **This release breaks the public API (pre-1.0, so a minor bump).** Code that
