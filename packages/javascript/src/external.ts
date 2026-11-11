@@ -50,6 +50,7 @@ import {
   BotDecisionError,
   SeatReplacedError,
 } from "./client.js";
+import { _protocolCloseLog, ProtocolCloseError } from "./close_codes.js";
 import {
   type ChipzenConfig,
   loadChipzenConfig,
@@ -306,6 +307,13 @@ async function recvWithTimeout(
 export interface MatchResult {
   matchId: string | null;
   end: Record<string, unknown> | null;
+  /**
+   * Set when the server ended the match with a terminal 4xxx close
+   * (`close_codes.ts`, for example `4013`); `end` is then `null`.
+   */
+  closeCode?: number;
+  /** The server's close reason that went with {@link closeCode}. */
+  closeReason?: string;
 }
 
 /**
@@ -359,6 +367,10 @@ interface PlayMatchParams {
  * connection of this bot took the seat over. That is not a drop.
  * Reconnecting would take the seat back, and two live copies of one bot
  * would trade it forever, so the match's task ends with no result.
+ *
+ * Throws {@link ProtocolCloseError}, after logging one line with the code and
+ * reason, on a terminal 4xxx close (`4013` no mutually supported protocol
+ * version, ...): the server would refuse a reconnect the same way.
  */
 async function playOneMatch(params: PlayMatchParams): Promise<Record<string, unknown> | null> {
   const { gatewayUrl, matchId, token, bot, policy, transport } = params;
@@ -399,6 +411,10 @@ async function playOneMatch(params: PlayMatchParams): Promise<Record<string, unk
       if (err instanceof SeatReplacedError) {
         console.warn(_seatReplacedLog(matchId));
         throw err; // the seat is held elsewhere — never reconnect-retry
+      }
+      if (err instanceof ProtocolCloseError) {
+        console.error(_protocolCloseLog(matchId, err));
+        throw err; // a reconnect would be refused the same way
       }
       if (err instanceof BotDecisionError) {
         throw err; // deterministic bot bug — terminal, never reconnect-retry
@@ -468,6 +484,7 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
   const onMatchSettled = (
     end: Record<string, unknown> | null | undefined,
     err: unknown,
+    closed?: { matchId: string; closeCode: number; closeReason: string },
   ): void => {
     if (err !== undefined && err !== null) {
       if (err instanceof BotDecisionError) {
@@ -479,6 +496,9 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
       }
       // Record, never crash the lobby.
       p.results.push({ matchId: null, end: null });
+    } else if (closed) {
+      p.completed.value += 1;
+      p.results.push({ end: null, ...closed });
     } else {
       p.completed.value += 1;
       p.results.push({
@@ -575,6 +595,17 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
             task.done = true;
             if (err instanceof SeatReplacedError) {
               p.replaced.add(matchId); // already logged; the match goes on elsewhere
+              return;
+            }
+            if (err instanceof ProtocolCloseError) {
+              // Already logged. The match is over for this bot (as it was when
+              // the gateway masked the close as a match_end), so it counts
+              // toward maxMatches; the result carries the close.
+              onMatchSettled(null, undefined, {
+                matchId,
+                closeCode: err.code,
+                closeReason: err.reason,
+              });
               return;
             }
             onMatchSettled(undefined, err);
