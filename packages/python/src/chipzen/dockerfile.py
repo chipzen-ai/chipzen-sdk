@@ -170,7 +170,7 @@ def check_poker_image(bot_dir: Path, entry_point: Path, tree: ast.Module) -> lis
                     "fail",
                     "dockerfile",
                     "The Dockerfile's final stage sets no ENTRYPOINT or CMD, so the image "
-                    "starts nothing. The starter's is "
+                    "runs its base image's default command, not your bot. The starter's is "
                     '`ENTRYPOINT ["python", "-c", "from bot import main; main()"]`.',
                 )
             )
