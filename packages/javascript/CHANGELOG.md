@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`chipzen-sdk init` writes the current JavaScript starter, and `validate`
+  fails a bot the uploaded image could not start**
+  ([#239](https://github.com/chipzen-ai/chipzen-sdk/issues/239),
+  [#260](https://github.com/chipzen-ai/chipzen-sdk/issues/260)). `init` used its
+  own inline templates, which pinned `@chipzen-ai/bot` at `^0.2.0` (that only
+  admits 0.2.x, so a fresh project installed a 0.2 SDK) and had drifted from the
+  starter. `init` now copies `starters/javascript` (shipped in the npm package),
+  changing only the project name in `package.json`, so the pin is the starter's
+  and the starter pin guard covers it. `validate` has two new poker checks, as
+  in the Python SDK: `dockerfile` (a Dockerfile whose final stage sets an
+  ENTRYPOINT or CMD, running or compiling the entry point) and `entry_main` (the
+  entry point calls `main()` when run, as the starter's
+  `if (import.meta.main || ...)` block does). A folder without a Dockerfile now
+  fails `validate`. The JavaScript reference bot moves from `^0.3.0` to `^0.5.1`
+  and is now covered by the pin guard.
+
 - **`runExternalBot()` now notices a dead lobby after the host sleeps and
   reconnects** ([#136](https://github.com/chipzen-ai/chipzen-sdk/issues/136)).
   When a laptop slept, the server timed the bot out and closed the lobby, but the

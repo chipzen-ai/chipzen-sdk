@@ -187,6 +187,20 @@ jobs:
         run: pnpm build
       - name: Test
         run: pnpm test
+      - name: init from the packed package writes the starter
+        # `init` reads the starter folder the npm package ships (issue #239).
+        # Pack exactly what would publish, install it in a clean folder, and
+        # check the project init writes is the starter (only the name in
+        # package.json differs) and passes validate.
+        run: |
+          set -euo pipefail
+          pnpm pack --pack-destination /tmp/pack
+          mkdir -p /tmp/init-smoke && cd /tmp/init-smoke
+          echo '{"name":"init-smoke","private":true}' > package.json
+          npm install --no-audit --no-fund /tmp/pack/*.tgz
+          npx chipzen-sdk init smoke-bot
+          diff -r -x package.json "$GITHUB_WORKSPACE/packages/javascript/starters/javascript" smoke-bot
+          npx chipzen-sdk validate smoke-bot --no-color
 
   rust-sdk:
     # Renamed from `rust-starter` since the legacy starters/rust/ is

@@ -170,6 +170,14 @@ def _cargo_workspace_version(path: Path) -> str:
     return tomllib.loads(path.read_text(encoding="utf-8"))["workspace"]["package"]["version"]
 
 
+# Manifests outside a starters dir that also pin a package from its registry,
+# checked whenever they exist (issue #239: the JavaScript reference bot sat on
+# ^0.3.0). The Rust reference bot is not listed yet: it pins 0.3 and the Rust
+# package is at 0.4.0, which is its own change.
+EXTRA_MANIFESTS = {
+    NPM_NAME: ("examples/reference-bot-js/package.json",),
+}
+
 # (package, manifest holding its version, reader of that version, starters dir,
 #  starter manifest name, reader of a starter's pin, does a pin admit a version)
 PACKAGES = (
@@ -221,6 +229,9 @@ def check(root: Path = REPO_ROOT) -> tuple[list[str], list[str]]:
         ]
         if not found:
             failed.append(f"{starters}: no {filename} found, so no {name} starter was checked")
+        found += [
+            root / extra for extra in EXTRA_MANIFESTS.get(name, ()) if (root / extra).is_file()
+        ]
         for path in found:
             where = path.relative_to(root).as_posix()
             try:

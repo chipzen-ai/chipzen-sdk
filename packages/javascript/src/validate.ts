@@ -12,6 +12,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { checkBigBadBotsDockerfile } from "./bigbadbots_dockerfile.js";
+import { checkPokerImage } from "./image_checks.js";
 import { runBigBadBotsChecks, type BigBadBotsCheckable } from "./bigbadbots_validate.js";
 import { type GameState } from "./models.js";
 import { runConformanceChecks } from "./conformance.js";
@@ -267,6 +268,9 @@ async function checkDirectory(
   const decideResult = checkDecideMethod(source, botClassName);
   results.push(decideResult);
   if (decideResult.severity === "fail") return results;
+
+  // dockerfile + entry_main — can the uploaded image start the bot (#260, #239)?
+  results.push(...(await checkPokerImage(dir, entry, source)));
 
   // smoke_test + timeout — dynamic import + invoke decide() once.
   results.push(

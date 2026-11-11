@@ -46,7 +46,7 @@ no Dockerfile of its own).
 
 ## Installing from npm
 
-This bot's `package.json` pulls `@chipzen-ai/bot ^0.3.0` straight from
+This bot's `package.json` pulls `@chipzen-ai/bot ^0.5.1` straight from
 the npm registry, so `npm install` above just works — the package is
 published at
 [npmjs.com/package/@chipzen-ai/bot](https://www.npmjs.com/package/@chipzen-ai/bot).

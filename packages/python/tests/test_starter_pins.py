@@ -135,6 +135,21 @@ def test_the_repo_as_committed_passes():
     assert len(passed) >= 7, passed  # poker in all three, plus the Big Bad Bots starters
 
 
+def test_the_javascript_reference_bot_is_checked():
+    passed, _ = pins.check()
+    assert any(line.startswith("examples/reference-bot-js/package.json:") for line in passed)
+
+
+def test_a_stale_reference_bot_pin_fails(tmp_path):
+    _tree(tmp_path)
+    example = tmp_path / "examples/reference-bot-js/package.json"
+    example.parent.mkdir(parents=True)
+    example.write_text(json.dumps({"dependencies": {"@chipzen-ai/bot": "^0.3.0"}}), "utf-8")
+    _, failed = pins.check(tmp_path)
+    assert len(failed) == 1
+    assert failed[0].startswith("examples/reference-bot-js/package.json: ^0.3.0 does not admit")
+
+
 def test_a_clean_tree_passes(tmp_path):
     passed, failed = pins.check(_tree(tmp_path))
     assert failed == []
