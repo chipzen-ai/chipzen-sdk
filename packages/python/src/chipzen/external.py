@@ -49,6 +49,7 @@ import websockets
 from chipzen import __version__ as _VERSION  # noqa: N812
 from chipzen.bot import ChipzenBot
 from chipzen.client import SEAT_REPLACED_LOG, BotDecisionError, SeatReplacedError, _run_session
+from chipzen.close_codes import PROTOCOL_CLOSE_LOG, ProtocolCloseError
 from chipzen.config import ChipzenConfig, load_chipzen_config, resolve_token
 from chipzen.connect import EnvName, connect_to_chipzen
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
@@ -258,6 +259,11 @@ async def _play_one_match(
     would trade it forever. It logs one line and raises
     :class:`~chipzen.client.SeatReplacedError`, so the match's task ends with
     no reconnect and no result.
+
+    A terminal 4xxx close (:mod:`chipzen.close_codes`, for example ``4013``,
+    no mutually supported protocol version) is not a drop either: the server
+    would refuse a reconnect the same way. It logs one ERROR line with the
+    code and reason and raises :class:`~chipzen.close_codes.ProtocolCloseError`.
     """
     attempt = 0
     while True:
@@ -291,6 +297,11 @@ async def _play_one_match(
             reason = "closed without match_end"
         except SeatReplacedError:
             logger.warning(SEAT_REPLACED_LOG, match_id)
+            raise
+        except ProtocolCloseError as exc:
+            # A terminal 4xxx close (4013 protocol_mismatch, ...): a reconnect
+            # would be refused the same way. Surface it, never reconnect.
+            logger.error(PROTOCOL_CLOSE_LOG, match_id, exc)
             raise
         except BotDecisionError:
             raise  # deterministic bot bug — terminal, never reconnect-retry
@@ -373,6 +384,19 @@ async def _run_lobby_once(
             # Already logged by _play_one_match. The match goes on elsewhere.
             replaced.add(task.get_name())
             return
+        except ProtocolCloseError as exc:
+            # Already logged by _play_one_match. The match is over for this bot
+            # (as it was when the gateway masked the close as a match_end), so
+            # it counts toward max_matches; the result carries the close.
+            completed[0] += 1
+            results.append(
+                {
+                    "match_id": task.get_name(),
+                    "end": None,
+                    "close_code": exc.code,
+                    "close_reason": exc.reason,
+                }
+            )
         except BotDecisionError as exc:
             # safe_mode=False: a deterministic bot bug. Surface it (stop the
             # session and re-raise from run_external_bot) instead of quietly
@@ -573,7 +597,9 @@ async def run_external_bot(
 
     Returns:
         A list of per-match result dicts (``{"match_id", "end"}``), one per
-        match played this session.
+        match played this session. A match the server ended with a terminal
+        4xxx close (:mod:`chipzen.close_codes`) has ``end`` ``None`` plus
+        ``close_code`` and ``close_reason``.
 
     Raises:
         ValueError: If no token can be resolved, or neither ``url`` nor a

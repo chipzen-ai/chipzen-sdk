@@ -33,6 +33,7 @@ from chipzen.bigbadbots import STATE_SHAPE as BIGBADBOTS_STATE_SHAPE
 from chipzen.bigbadbots import StateParseError, parse_bigbadbots_turn_request
 from chipzen.bigbadbots_bot import BigBadBotsBot, fallback_action, is_answer_shaped
 from chipzen.bot import ChipzenBot
+from chipzen.close_codes import PROTOCOL_CLOSE_LOG, ProtocolCloseError, protocol_close_from
 from chipzen.models import (
     POKER_STATE_SHAPES,
     Action,
@@ -223,6 +224,12 @@ async def run_bot(
         The ``match_end`` payload, or ``None`` if the connection closed without
         a clean ``match_end`` after exhausting retries, or another connection
         of this bot took the seat over (a ``4000`` close; not retried).
+
+    Raises:
+        ProtocolCloseError: the server closed the match socket with a terminal
+            4xxx code such as ``4013`` (no mutually supported protocol
+            version). Logged once with the code and reason; not retried. See
+            :mod:`chipzen.close_codes`.
     """
     try:
         from websockets.asyncio.client import connect
@@ -277,6 +284,11 @@ async def run_bot(
             # would only take it back.
             logger.warning(SEAT_REPLACED_LOG, match_id)
             return None
+        except ProtocolCloseError as exc:
+            # A terminal 4xxx close (4013 protocol_mismatch, ...): the server
+            # will refuse a reconnect the same way. Surface it, no retries.
+            logger.error(PROTOCOL_CLOSE_LOG, match_id, exc)
+            raise
         except BotDecisionError:
             # A deterministic bot bug (safe_mode=False) — terminal, not a
             # transient disconnect. Do not reconnect-retry; propagate so the
@@ -327,6 +339,8 @@ async def _run_session(
         SeatReplacedError: another connection of this bot took the seat over
             (a ``4000`` close, or the ``replaced_by_new_connection`` error
             frame that comes just before it).
+        ProtocolCloseError: the server closed with a terminal 4xxx code (see
+            :mod:`chipzen.close_codes`), for example ``4013``.
     """
     try:
         return await _session_loop(
@@ -346,6 +360,9 @@ async def _run_session(
             raise SeatReplacedError(
                 f"match socket closed {CLOSE_REPLACED_BY_NEW_CONNECTION}"
             ) from exc
+        terminal = protocol_close_from(exc)
+        if terminal is not None:
+            raise terminal from exc
         raise
 
 
