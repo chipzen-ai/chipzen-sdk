@@ -16,6 +16,13 @@ import zipfile
 from pathlib import Path
 from typing import Callable, Literal
 
+from chipzen.dockerfile import (
+    check_poker_image,
+    copy_operands,
+    dockerfile_instructions,
+    final_stage,
+)
+
 # Severity levels for validation results
 Severity = Literal["pass", "warn", "fail"]
 
@@ -298,10 +305,14 @@ def _check_directory(
             ("pass", "requirements", "No requirements.txt (only stdlib + SDK will be available)")
         )
 
-    # 7. Smoke test + timeout check
+    # 7. The image can start the bot: a Dockerfile, and the main() (or
+    # __main__ block) its ENTRYPOINT runs (issue #260).
+    results.extend(check_poker_image(bot_dir, ep, tree))
+
+    # 8. Smoke test + timeout check
     results.extend(_smoke_test(bot_dir, ep, bot_class_name, timeout_warn_ms))
 
-    # 8. (Optional) Protocol-conformance check.
+    # 9. (Optional) Protocol-conformance check.
     # Only run if the smoke test passed — if the bot can't even be
     # instantiated and called once, the wire-level scenario can't tell
     # us anything new and would just produce a noisier failure.
@@ -383,46 +394,6 @@ _LOG_CAP_FIX = (
 )
 
 
-def _dockerfile_instructions(text: str) -> list[tuple[str, str]]:
-    """``(KEYWORD, arguments)`` per instruction, comments and line continuations resolved."""
-    instructions: list[tuple[str, str]] = []
-    current = ""
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.endswith("\\"):
-            current += line[:-1] + " "
-            continue
-        instructions.append(_instruction(current + line))
-        current = ""
-    if current.strip():
-        instructions.append(_instruction(current))
-    return instructions
-
-
-def _instruction(text: str) -> tuple[str, str]:
-    parts = text.strip().split(None, 1)
-    return parts[0].upper(), parts[1].strip() if len(parts) > 1 else ""
-
-
-def _copy_operands(arguments: str) -> tuple[list[str], list[str]]:
-    """``(flags, operands)`` of a COPY / ADD, in shell or JSON form."""
-    words = arguments.split()
-    flags = []
-    while words and words[0].startswith("--"):
-        flags.append(words.pop(0))
-    rest = " ".join(words)
-    if rest.startswith("["):
-        try:
-            parsed = json.loads(rest)
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, list) and all(isinstance(part, str) for part in parsed):
-            return flags, parsed
-    return flags, words
-
-
 def check_bigbadbots_dockerfile(bot_dir: Path) -> list[tuple[Severity, str, str]]:
     """Check a Big Bad Bots bot's ``Dockerfile`` starts the bot through the log-cap wrapper.
 
@@ -436,16 +407,14 @@ def check_bigbadbots_dockerfile(bot_dir: Path) -> list[tuple[Severity, str, str]
     dockerfile = bot_dir / "Dockerfile"
     if not dockerfile.is_file():
         return []
-    instructions = _dockerfile_instructions(dockerfile.read_text(encoding="utf-8"))
-    starts = [i for i, (keyword, _) in enumerate(instructions) if keyword == "FROM"]
-    final_stage = instructions[starts[-1] + 1 :] if starts else instructions
+    stage = final_stage(dockerfile_instructions(dockerfile.read_text(encoding="utf-8")))
 
     problems: list[str] = []
     copied = False
-    for keyword, arguments in final_stage:
+    for keyword, arguments in stage:
         if keyword not in ("COPY", "ADD"):
             continue
-        flags, operands = _copy_operands(arguments)
+        flags, operands = copy_operands(arguments)
         if len(operands) < 2:
             continue
         sources, destination = operands[:-1], operands[-1]
@@ -470,7 +439,7 @@ def check_bigbadbots_dockerfile(bot_dir: Path) -> list[tuple[Severity, str, str]
             f"the Dockerfile's final stage does not copy log_cap.py to {LOG_CAP_SCRIPT}"
         )
 
-    entrypoints = [arguments for keyword, arguments in final_stage if keyword == "ENTRYPOINT"]
+    entrypoints = [arguments for keyword, arguments in stage if keyword == "ENTRYPOINT"]
     if not entrypoints:
         problems.append("the Dockerfile's final stage sets no ENTRYPOINT")
     else:
@@ -877,6 +846,10 @@ def validate_cli(args: list[str] | None = None) -> None:
             "  bot_class              Class inheriting from ChipzenBot/Bot exists\n"
             "  decide_method          Bot class implements decide()\n"
             "  requirements           Packages are in the platform allow-list\n"
+            "  dockerfile             A Dockerfile whose ENTRYPOINT/CMD starts the\n"
+            "                         entry point\n"
+            "  entry_main             The entry point has the main() (or __main__\n"
+            "                         block) the image runs\n"
             "  smoke_test             Bot can be instantiated and returns an Action\n"
             "  timeout                decide() completes within time limits\n"
             "  size                   Artifact size within upload limits\n"

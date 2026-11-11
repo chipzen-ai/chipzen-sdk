@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`chipzen-sdk init` writes the current Python starter, and `validate` fails
+  a bot the uploaded image could not start**
+  ([#260](https://github.com/chipzen-ai/chipzen-sdk/issues/260)). `init` used
+  its own old templates: a `main.py` with no `main()`, no Dockerfile, and a
+  README that told you to upload a zip. That project passed `validate` and then
+  never played after upload. `init` now copies `packages/python/starters/python`
+  byte for byte (`bot.py` with `main()`, the IP-protected `Dockerfile`,
+  `.dockerignore`, `requirements.txt`, `README.md`, `.gitignore`); the wheel
+  carries the starter as package data, so the two cannot drift. `validate` has
+  two new poker checks: `dockerfile` (a Dockerfile whose final stage sets an
+  ENTRYPOINT or CMD naming the entry point) and `entry_main` (the entry point
+  has the `main()` that ENTRYPOINT calls, or an `if __name__ == "__main__":`
+  block when the image runs the file as a script). A folder without a
+  Dockerfile now fails `validate`.
+
 - **`run_external_bot()` now notices a dead lobby after the host sleeps and
   reconnects** ([#136](https://github.com/chipzen-ai/chipzen-sdk/issues/136)).
   When a laptop slept, the server timed the bot out and closed the lobby, but the

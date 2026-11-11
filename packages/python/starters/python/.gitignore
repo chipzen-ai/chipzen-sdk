@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.so
+.env
+# Never commit your external-API token.
+chipzen.toml
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+# The upload tarball (docker save | gzip).
+*.tar.gz
