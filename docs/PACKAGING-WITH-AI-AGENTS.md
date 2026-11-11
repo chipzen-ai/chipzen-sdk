@@ -280,7 +280,8 @@ DELIVERABLES
 - The exact run command, and the expected first log lines from FIRST-30-MINUTES
   so I know it connected to the lobby.
 - A short note on what to check if `lobby: connected` doesn't appear (bot_id
-  mismatch, revoked token, Cloudflare 1010 — per FIRST-30-MINUTES).
+  mismatch, revoked token, a 403 or "error code: 1010" meaning the client
+  needs a User-Agent, per FIRST-30-MINUTES).
 ````
 
 ### Flow B in another language
