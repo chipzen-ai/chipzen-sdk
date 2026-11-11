@@ -17,12 +17,17 @@ chipzen-sdk init my_bot
 cd my_bot
 ```
 
-You'll get a small project with `main.py`, `requirements.txt`, and a Dockerfile.
+`init` writes a copy of the Python starter
+([`starters/python/`](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/python/starters/python)):
+`bot.py`, `requirements.txt`, an IP-protected `Dockerfile`, `.dockerignore`,
+`.gitignore` and a `README.md` with the build and upload steps.
 
 ## 3. Implement your strategy
 
-Open `main.py`. The default scaffold gives you a `MyBot(Bot)` subclass
-with a no-op `decide()`. Replace it with your strategy:
+Open `bot.py`. The starter gives you a `MyBot(Bot)` subclass whose
+`decide()` checks when it can and folds otherwise. Replace it with your
+strategy, and leave `main()` at the bottom alone: the image starts the bot
+by calling it. The core of the file is:
 
 ```python
 from chipzen import Bot, Action, GameState
@@ -49,8 +54,10 @@ chipzen-sdk validate .
 
 Runs the same checks the upload pipeline runs: artifact size, syntax,
 imports against the platform's sandbox-blocked module list, presence
-of a `Bot` subclass with a `decide()` method, a `decide()` timeout
-sniff, and a smoke instantiation. Exits non-zero on any failure.
+of a `Bot` subclass with a `decide()` method, a Dockerfile whose
+ENTRYPOINT starts the bot, the `main()` that ENTRYPOINT calls, a
+`decide()` timeout sniff, and a smoke instantiation. Exits non-zero on
+any failure.
 
 This is the **supported go/no-go** before you build a container image.
 A clean validate means "the upload pipeline will accept this on

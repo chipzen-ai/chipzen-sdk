@@ -553,6 +553,12 @@ exits non-zero on any failure. Categories:
 
 - **Image / size budget** — bot directory size, presence of an entry
   point, no archive larger than the 250 MB compressed upload cap (§7.2).
+- **Startable image** (poker bots): a `Dockerfile` whose final stage sets
+  an ENTRYPOINT or CMD that names your entry point, and the entry point
+  has what that command runs: a top-level `main()` for the starter's
+  `from bot import main; main()`, or an `if __name__ == "__main__":`
+  block for `python bot.py`. A folder without these passes every other
+  check and then never plays after upload (issue #260).
 - **Imports** — your bot module imports cleanly under the same Python
   version the platform uses, with only the SDK + your stated deps on the
   path.

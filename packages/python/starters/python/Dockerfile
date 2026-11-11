@@ -7,7 +7,8 @@
 # stage. The runtime image contains no readable .py source for your
 # strategy code.
 #
-# See ../IP-PROTECTION.md for what this protects (and what it doesn't).
+# See https://github.com/chipzen-ai/chipzen-sdk/blob/main/packages/python/IP-PROTECTION.md
+# for what this protects (and what it doesn't).
 #
 # Build:   docker build -t my-bot:test .
 # Export:  docker save my-bot:test | gzip > my-bot.tar.gz

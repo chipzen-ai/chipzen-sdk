@@ -152,6 +152,12 @@ jobs:
           # Console scripts resolve.
           /tmp/smoke/bin/chipzen-sdk --help
           /tmp/smoke/bin/chipzen run-external --help
+          # `init` reads the starter from the wheel's package data (issue
+          # #260): the project it writes must be the starter, byte for byte,
+          # and must pass validate.
+          cd /tmp && /tmp/smoke/bin/chipzen-sdk init wheel-bot
+          diff -r -x __pycache__ "$GITHUB_WORKSPACE/packages/python/starters/python" /tmp/wheel-bot
+          /tmp/smoke/bin/chipzen-sdk validate /tmp/wheel-bot --no-color
 
   javascript-sdk:
     # Renamed from `javascript-starter` (issue #17). The previous
