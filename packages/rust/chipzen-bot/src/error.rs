@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::close_codes::{close_label, reason_or_default};
+
 /// Top-level error type for SDK operations. Variants describe the
 /// failure surface in terms users care about (connect failed, server
 /// dropped us mid-handshake, peer sent something unparseable) rather
@@ -54,6 +56,20 @@ pub enum Error {
     /// reconnect, which would only take the seat back.
     #[error("match seat taken over by another connection of this bot")]
     SeatReplaced,
+
+    /// The server closed the match socket with a terminal 4xxx code (see
+    /// [`TERMINAL_CLOSE_CODES`](crate::TERMINAL_CLOSE_CODES)), for example
+    /// `4013` with reason "No mutually supported protocol version".
+    ///
+    /// The match is over for this bot: a reconnect would be refused the same
+    /// way, so callers do NOT reconnect. `reason` is the server's close
+    /// reason, empty when it sent none.
+    #[error(
+        "server closed the match socket with {}: {}",
+        close_label(*.code),
+        reason_or_default(.reason)
+    )]
+    ProtocolClose { code: u16, reason: String },
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for Error {

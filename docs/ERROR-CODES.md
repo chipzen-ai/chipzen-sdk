@@ -64,6 +64,8 @@ These are RFC 6455 close codes in the application-defined range. The server atta
 
 See [TRANSPORT-PROTOCOL §15](protocol/TRANSPORT-PROTOCOL.md#15-websocket-close-codes) for the canonical table.
 
+**What the SDKs do.** On `4003`, `4005`, `4006`, `4010`, `4012` and `4013` the Python, JavaScript and Rust SDKs end the match without reconnecting: they log one line with the code and the server's reason and surface a `ProtocolCloseError` (Rust: `Error::ProtocolClose`). A reconnect would be refused the same way. `4000` (seat taken over) also ends the match without a reconnect. Every other close without a `match_end` is treated as a drop and reconnected within the retry policy.
+
 ### `4001` auth_failed
 
 **What it means.** The `authenticate` message you sent as your first frame after WebSocket upgrade was rejected.

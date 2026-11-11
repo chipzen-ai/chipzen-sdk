@@ -102,6 +102,7 @@ export {
   SUPPORTED_PROTOCOL_VERSIONS,
   type RunBotOptions,
 } from "./client.js";
+export { ProtocolCloseError, TERMINAL_CLOSE_CODES } from "./close_codes.js";
 export {
   runExternalBot,
   botTokenSubprotocols,

@@ -16,6 +16,7 @@ import {
 } from "./bigbadbots.js";
 import { BigBadBotsBot, fallbackAction, isAnswerShaped } from "./bigbadbots_bot.js";
 import type { Bot } from "./bot.js";
+import { _protocolCloseFor, _protocolCloseLog, ProtocolCloseError } from "./close_codes.js";
 import {
   Action,
   type GameState,
@@ -151,7 +152,10 @@ export const BIGBADBOTS_SEND_MARGIN_MS = 20;
  * reconnect budget is exhausted) or if `safeMode` is `false` and
  * `bot.decide()` throws (a terminal {@link BotDecisionError}). Resolves
  * `null`, logging one line and without reconnecting, if another connection
- * of this bot takes the seat over (a `4000` close).
+ * of this bot takes the seat over (a `4000` close). Rejects at once, without
+ * reconnecting, with a {@link ProtocolCloseError} (code and reason, logged
+ * once) if the server closes with a terminal 4xxx code such as `4013`; see
+ * `close_codes.ts`.
  */
 export async function runBot(
   url: string,
@@ -199,6 +203,12 @@ export async function runBot(
         // would only take it back.
         console.warn(_seatReplacedLog(matchId));
         return null;
+      }
+      if (err instanceof ProtocolCloseError) {
+        // A terminal 4xxx close (4013 protocol_mismatch, ...): the server
+        // will refuse a reconnect the same way. Surface it, no retries.
+        console.error(_protocolCloseLog(matchId, err));
+        throw err;
       }
       if (err instanceof BotDecisionError) {
         // A deterministic bot bug (safeMode=false) — terminal, not a
@@ -347,6 +357,8 @@ function _callHook(hookName: string, invoke: () => void, safeMode: boolean): voi
  * {@link SeatReplacedError} on a `4000` close or the
  * `replaced_by_new_connection` error frame before it: another connection
  * of this bot took the seat over, so the caller must not reconnect.
+ * Throws {@link ProtocolCloseError} on a terminal 4xxx close (`4013`, ...):
+ * the server would refuse a reconnect the same way.
  * Exported for the conformance harness in `conformance.ts`.
  */
 export async function _runSession(
@@ -361,6 +373,9 @@ export async function _runSession(
   let onProgress = ctx.onProgress;
   // A 4000 close: another connection of this bot took the seat over.
   const seatReplaced = (): boolean => reader.closeCode?.() === CLOSE_REPLACED_BY_NEW_CONNECTION;
+  // A terminal 4xxx close (4013, ...): the match is over for this bot.
+  const terminalClose = (): ProtocolCloseError | null =>
+    _protocolCloseFor(reader.closeCode?.(), reader.closeReason?.());
 
   // --- Layer 1 handshake ------------------------------------------------
   const auth: Record<string, unknown> = {
@@ -376,6 +391,8 @@ export async function _runSession(
   const helloRaw = await reader.next();
   if (!helloRaw) {
     if (seatReplaced()) throw new SeatReplacedError();
+    const terminal = terminalClose();
+    if (terminal) throw terminal;
     throw new Error("connection closed before server hello");
   }
   const hello = parseJson(helloRaw);
@@ -446,6 +463,8 @@ export async function _runSession(
     const raw = await reader.next();
     if (raw === null) {
       if (seatReplaced()) throw new SeatReplacedError();
+      const terminal = terminalClose();
+      if (terminal) throw terminal;
       // Connection closed (peer or transport) without a match_end. Caller
       // decides whether to retry — we just exit the loop here.
       return null;
@@ -822,6 +841,11 @@ export interface AsyncMessageReader {
    * means another connection of this bot took the seat over.
    */
   closeCode?(): number | undefined;
+  /**
+   * Optional: the close reason the server sent, once `next()` has resolved
+   * `null` (`undefined` while open or when there was no close frame).
+   */
+  closeReason?(): string | undefined;
 }
 
 /**
@@ -838,6 +862,7 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
   private closed = false;
   private lastAt: number | undefined;
   private code: number | undefined;
+  private reason: string | undefined;
 
   constructor(ws: WebSocket) {
     ws.on("message", (data) => {
@@ -851,8 +876,9 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
         this.queue.push({ msg, at });
       }
     });
-    ws.on("close", (code: number) => {
+    ws.on("close", (code: number, reason: Buffer) => {
       this.code = code;
+      this.reason = reason?.toString();
       this._close();
     });
     ws.on("error", () => this._close());
@@ -874,6 +900,10 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
 
   closeCode(): number | undefined {
     return this.code;
+  }
+
+  closeReason(): string | undefined {
+    return this.reason;
   }
 
   private _close(): void {

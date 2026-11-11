@@ -7,6 +7,7 @@
 //! of the supported API.
 
 use crate::bot::Bot;
+use crate::close_codes::{protocol_close_log, terminal_close_of};
 use crate::error::Error;
 use crate::models::{parse_game_state, Action, GameState};
 use crate::retry::RetryPolicy;
@@ -161,7 +162,9 @@ impl SessionContext {
 /// `4000` close; logged once, never retried). Returns [`Error::RetriesExhausted`] if the connection
 /// cannot be established after `retry_policy.max_reconnect_attempts`
 /// attempts, or [`Error::BotDecision`] if `decide()` panics under
-/// `safe_mode = false`.
+/// `safe_mode = false`. Returns [`Error::ProtocolClose`] at once, logged once
+/// and never retried, if the server closes with a terminal 4xxx code such as
+/// `4013` (see [`TERMINAL_CLOSE_CODES`](crate::TERMINAL_CLOSE_CODES)).
 pub async fn run_bot<B: Bot>(
     url: &str,
     mut bot: B,
@@ -204,6 +207,7 @@ pub async fn run_bot<B: Bot>(
             let mut reader = WsReader {
                 inner: &mut read_half,
                 close_code: None,
+                close_reason: None,
             };
             let mut writer = WsWriter {
                 inner: &mut write_half,
@@ -224,6 +228,12 @@ pub async fn run_bot<B: Bot>(
             // transient disconnect. Do not reconnect-retry; propagate so the
             // process exits non-zero.
             Err(e @ Error::BotDecision(_)) => return Err(e),
+            // A terminal 4xxx close (4013 protocol_mismatch, ...): the server
+            // will refuse a reconnect the same way. Surface it, no retries.
+            Err(e @ Error::ProtocolClose { .. }) => {
+                eprintln!("{}", protocol_close_log(&ctx.match_id, &e));
+                return Err(e);
+            }
             Err(err) => {
                 retries += 1;
                 if retries > max_attempts {
@@ -275,6 +285,13 @@ pub trait MessageReader: Send {
     fn close_code(&self) -> Option<u16> {
         None
     }
+
+    /// The close reason the server sent, once [`next`](Self::next) has
+    /// returned `None`. `None` while open, or when there was no close frame.
+    /// Readers that cannot tell keep the default.
+    fn close_reason(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Push-based async sender for outbound messages.
@@ -295,6 +312,10 @@ impl MessageReader for Box<dyn MessageReader> {
     fn close_code(&self) -> Option<u16> {
         (**self).close_code()
     }
+
+    fn close_reason(&self) -> Option<String> {
+        (**self).close_reason()
+    }
 }
 
 #[async_trait]
@@ -314,7 +335,9 @@ impl MessageWriter for Box<dyn MessageWriter> {
 /// `decide()` panics under `ctx.safe_mode = false`, and
 /// [`Error::SeatReplaced`] on a `4000` close or the
 /// `replaced_by_new_connection` error frame before it (another connection of
-/// this bot took the seat over; the caller must not reconnect).
+/// this bot took the seat over; the caller must not reconnect). Returns
+/// [`Error::ProtocolClose`] on a terminal 4xxx close (`4013`, ...): the
+/// server would refuse a reconnect the same way.
 pub async fn _run_session<R, W, B>(
     reader: &mut R,
     writer: &mut W,
@@ -345,6 +368,9 @@ where
     let Some(hello_raw) = reader.next().await? else {
         if reader.close_code() == Some(CLOSE_REPLACED_BY_NEW_CONNECTION) {
             return Err(Error::SeatReplaced);
+        }
+        if let Some(err) = terminal_close_of(reader) {
+            return Err(err);
         }
         return Err(Error::ConnectionClosed {
             context: "server hello",
@@ -550,6 +576,9 @@ where
 
     if reader.close_code() == Some(CLOSE_REPLACED_BY_NEW_CONNECTION) {
         return Err(Error::SeatReplaced);
+    }
+    if let Some(err) = terminal_close_of(reader) {
+        return Err(err);
     }
     // Stream closed without match_end. Caller decides whether to retry.
     Ok(None)
@@ -954,6 +983,7 @@ where
 {
     inner: &'a mut S,
     close_code: Option<u16>,
+    close_reason: Option<String>,
 }
 
 #[async_trait]
@@ -973,7 +1003,8 @@ where
                     continue;
                 }
                 Some(Ok(Message::Close(frame))) => {
-                    self.close_code = frame.map(|f| u16::from(f.code));
+                    self.close_code = frame.as_ref().map(|f| u16::from(f.code));
+                    self.close_reason = frame.map(|f| f.reason.to_string());
                     return Ok(None);
                 }
                 None => return Ok(None),
@@ -985,6 +1016,10 @@ where
 
     fn close_code(&self) -> Option<u16> {
         self.close_code
+    }
+
+    fn close_reason(&self) -> Option<String> {
+        self.close_reason.clone()
     }
 }
 

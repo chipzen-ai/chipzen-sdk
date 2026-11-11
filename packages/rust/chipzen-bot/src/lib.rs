@@ -43,6 +43,7 @@
 
 mod bot;
 mod client;
+mod close_codes;
 mod config;
 mod conformance;
 mod connect;
@@ -57,6 +58,7 @@ pub use client::{
     default_user_agent, run_bot, MessageReader, MessageWriter, RunBotOptions, SessionContext,
     CLOSE_REPLACED_BY_NEW_CONNECTION, REPLACED_BY_NEW_CONNECTION, SUPPORTED_PROTOCOL_VERSIONS,
 };
+pub use close_codes::{is_terminal_close, TERMINAL_CLOSE_CODES};
 pub use config::{
     discover_config_path, load_chipzen_config, resolve_token, resolve_url, ChipzenConfig,
     CONFIG_FILENAME, SECTION_NAME,

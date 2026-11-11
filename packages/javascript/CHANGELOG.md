@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A match socket the server closes with `4013` (no mutually supported
+  protocol version) is no longer retried**
+  ([Chipzen #7008](https://github.com/chipzen-ai/Chipzen/issues/7008)). The SDK
+  read every close without a `match_end` as a drop and reconnected until the
+  retry budget ran out, so a version refusal just looped. The 4xxx codes in
+  `TERMINAL_CLOSE_CODES` (4003, 4005, 4006, 4010, 4012, 4013) now end the
+  match at once: one `console.error` line with the code and the server's
+  reason, and a `ProtocolCloseError` (`code`, `reason`). `runBot()` rejects
+  with it. `runExternalBot()` records the match with `end: null`, `closeCode`
+  and `closeReason`, and counts it toward `maxMatches`. Other closes are
+  unchanged: 1000 / 1001 still end normally, and 4000 and every other code
+  are handled as before.
+
 - **`chipzen-sdk init` writes the current JavaScript starter, and `validate`
   fails a bot the uploaded image could not start**
   ([#239](https://github.com/chipzen-ai/chipzen-sdk/issues/239),
