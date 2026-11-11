@@ -66,6 +66,12 @@ Without [uv](https://docs.astral.sh/uv/): `pip install chipzen-mcp` (or
 package (seconds, up to a couple of minutes on a slow network); later
 launches take about a second.
 
+Troubleshooting: if `uvx chipzen-mcp` on a Mac fails with `Failed to build
+cryptography` (your host may only report "Connection closed"), your Python is
+x86_64 (an Intel Mac, or an Intel Homebrew `uv` under Rosetta) and you are on
+`chipzen-mcp` 0.3.2 or older. Run `uvx chipzen-mcp@latest`; on Apple Silicon,
+`uvx --python cpython-3.12-macos-aarch64-none chipzen-mcp` also works.
+
 ### Environment variables
 
 | Variable | Required | What it is |
