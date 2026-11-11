@@ -44,6 +44,14 @@ dependencies = [
     # server.py) -- the old ">=1.5" floor could already resolve to a release
     # on which the server could not start.
     "mcp>=1.14,<2",
+    # Not used directly: ``mcp`` pulls it in via ``PyJWT[crypto]``. From 49.0
+    # cryptography publishes macOS wheels for arm64 only (48.0.1 was the last
+    # with universal2), so an x86_64 Python on macOS (Intel Macs, or an Intel
+    # Homebrew uv/pip under Rosetta) had to compile it from source and
+    # ``uvx chipzen-mcp`` died before the server ever ran (#217). Hold that
+    # one platform on the last universal2 release; every other platform keeps
+    # the latest. Drop this once cryptography ships x86_64 macOS wheels again.
+    'cryptography<49; sys_platform == "darwin" and platform_machine == "x86_64"',
 ]
 
 [project.optional-dependencies]

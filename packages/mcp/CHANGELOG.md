@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`uvx chipzen-mcp` installs on an x86_64 Python on macOS** (Intel Macs, or
+  an Intel Homebrew `uv`/`pip` under Rosetta). cryptography, which `mcp` pulls
+  in through `PyJWT[crypto]`, ships macOS wheels for arm64 only from 49.0, so
+  that platform had to compile it from source and the server never started
+  (#217). `chipzen-mcp` now holds `cryptography<49` on x86_64 macOS only (48.0.1
+  has a universal2 wheel); every other platform keeps the latest.
+
 ## [0.3.2] — 2026-11-05
 
 ### Changed
