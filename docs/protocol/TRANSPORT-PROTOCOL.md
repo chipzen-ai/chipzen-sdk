@@ -279,7 +279,7 @@ Sent after the server has received the bot's `authenticate` message. It is the f
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `supported_versions` | string[] | yes | Protocol versions supported by the server (major.minor format). Currently `["1.0"]`. |
-| `selected_version` | string | yes | The server's preferred version (the first entry of `supported_versions`). It is sent before the bot's `hello`, so it is not negotiated; the server checks for an overlap when the bot's `hello` arrives and closes with code 4013 if there is none (section 16.3). |
+| `selected_version` | string | yes | The version the server selected (section 16.3). If the bot's `authenticate` carried `supported_versions`, this is the highest version both sides support. Otherwise it is the server's preferred version (the first entry of `supported_versions`), because this `hello` is sent before the bot's `hello`. Either way the server checks for an overlap when the bot's `hello` arrives and closes with code 4013 if there is none. |
 | `server_name` | string | yes | Always `"chipzen"`. |
 | `game_type` | string | yes | The game this seat is playing. `"poker"` for NLHE. |
 | `capabilities` | string[] | yes | Server capabilities. The server sends `["reconnect"]` while reconnection is enabled, and `[]` when it has been switched off. |
@@ -759,7 +759,12 @@ Or for bot endpoints:
     "type": { "const": "authenticate" },
     "match_id": { "type": "string", "format": "uuid" },
     "ticket": { "type": "string" },
-    "token": { "type": "string" }
+    "token": { "type": "string" },
+    "supported_versions": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+      "minItems": 1
+    }
   },
   "required": ["type", "match_id"],
   "additionalProperties": false,
@@ -774,6 +779,7 @@ Or for bot endpoints:
 |-------|------|----------|-------------|
 | `ticket` | string | conditional | One-time-use connection ticket, obtained from the matchmaking API. Required for competitive endpoints. |
 | `token` | string | conditional | Long-lived authentication token for internal bot endpoints. Required for bot endpoints. |
+| `supported_versions` | string[] | no | Protocol versions the bot supports (major.minor format), so the server can select one before it sends its `hello` (section 16.3). A bot that omits it gets the server's preferred version, as before. It does not replace `supported_versions` in the bot's `hello`, which stays required. |
 
 Exactly one of `ticket` or `token` must be provided. If neither or both are present, the server closes with code 4001.
 
@@ -949,10 +955,15 @@ Bot messages use `additionalProperties: false`. The server rejects bot messages 
 
 ### 16.3 Version Negotiation
 
-The server and bot exchange `supported_versions` arrays in their `hello` messages. Each version string follows `major.minor` format. The server speaks first, so its `selected_version` is its own preferred version, not a negotiated one. When the bot's `hello` arrives the server checks for a mutually supported version and, if there is none, closes the connection with code 4013 (`protocol_mismatch`). The server currently supports only `1.0`.
+The server and bot exchange `supported_versions` arrays in their `hello` messages. Each version string follows `major.minor` format. The server speaks first, so it can take the bot's versions into account only if the bot also sent `supported_versions` in its `authenticate` message (section 9.4, chipzen-ai/Chipzen#5474):
+
+- **`authenticate` lists versions:** `selected_version` is the highest version both sides support, whatever order the bot listed them in. The server never selects a version the bot did not list. If there is no overlap, the server sends no `hello` and closes the connection with code 4013 (`protocol_mismatch`).
+- **`authenticate` lists no versions:** `selected_version` is the server's preferred version, the first entry of its `supported_versions`.
+
+In both cases, when the bot's `hello` arrives the server checks for a mutually supported version and, if there is none, closes the connection with code 4013. The server currently supports only `1.0`.
 
 - **Major version change:** Breaking changes. Server and bot must agree on the major version.
-- **Minor version change:** Backward-compatible additions (new message types, new fields). A bot supporting version 1.0 can connect to a server running 1.3 without issues, as the server will select 1.0.
+- **Minor version change:** Backward-compatible additions (new message types, new fields). A bot supporting version 1.0 can connect to a server running 1.3 without issues, as the server will select 1.0 (list your versions in `authenticate` so the server `hello` already says so).
 
 ### 16.4 Reserved Namespaces
 
