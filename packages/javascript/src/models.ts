@@ -383,9 +383,16 @@ export interface GameState {
   readonly pot: number;
   readonly yourStack: number;
   readonly opponentStacks: readonly number[];
-  /** Your seat index, 0-indexed: the turn state's `your_seat` (OFC), else the `match_start` seat. */
+  /**
+   * Your seat index, 0-indexed: the turn state's `your_seat` (OFC), else the
+   * `match_start` seat, else (a session that reconnected) `turn_request.seat`.
+   */
   readonly yourSeat: number;
-  /** The button's seat index: the turn state's `dealer_seat` (OFC), else the latest `round_start`'s. */
+  /**
+   * The button's seat index: the turn state's `dealer_seat` (OFC), else the
+   * latest `round_start`'s, else (a session that reconnected mid-hand) the
+   * seat worked out from the hand's blinds.
+   */
   readonly dealerSeat: number;
   readonly toCall: number;
   readonly minRaise: number;
@@ -639,6 +646,70 @@ function numberOrZero(v: unknown): number {
 
 function numberOr(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Seat context for a session that missed match_start / round_start (#199)
+// ---------------------------------------------------------------------------
+
+/**
+ * The button, worked out from a hold'em or 27TD turn state's blinds.
+ *
+ * POKER-GAME-STATE-PROTOCOL sections 5.3 and 5.9: with two live seats the
+ * button posts the small blind; with three or more it is the live seat just
+ * before the small blind. A live seat is your own, or one that has chips or
+ * appears in this hand's `action_history`. `null` when the state carries no
+ * `post_small_blind` entry (an OFC state, a malformed one) or the seats do
+ * not add up. Internal; mirrors the Python SDK's `_derive_dealer_seat`.
+ */
+export function _deriveDealerSeat(state: Record<string, unknown>, yourSeat: number): number | null {
+  const stacks = asList(state["opponent_stacks"]).map((s) => numberOrZero(s));
+  const history = asList(state["action_history"]).filter(
+    (e): e is Record<string, unknown> => typeof e === "object" && e !== null && !Array.isArray(e),
+  );
+  const tableSize = stacks.length + 1;
+  if (!Number.isInteger(yourSeat) || yourSeat < 0 || yourSeat >= tableSize) return null;
+  const acted = new Set(history.map((e) => numberOr(e["seat"], -1)));
+  const others = Array.from({ length: tableSize }, (_, s) => s).filter((s) => s !== yourSeat);
+  const live = new Set([yourSeat]);
+  others.forEach((seat, i) => {
+    if ((stacks[i] ?? 0) > 0 || acted.has(seat)) live.add(seat);
+  });
+  const liveSeats = [...live].sort((a, b) => a - b);
+  const sbEntry = history.find((e) => e["action"] === "post_small_blind");
+  const smallBlind = sbEntry ? numberOr(sbEntry["seat"], -1) : -1;
+  const index = liveSeats.indexOf(smallBlind);
+  if (index < 0 || liveSeats.length < 2) return null;
+  if (liveSeats.length === 2) return smallBlind;
+  return liveSeats[(index - 1 + liveSeats.length) % liveSeats.length] ?? null;
+}
+
+/**
+ * Seat and button for a turn, when the session missed the frames that carry
+ * them (chipzen-ai/chipzen-sdk#199).
+ *
+ * A reconnecting bot starts a fresh session that never sees `match_start` or
+ * this hand's `round_start`. The seat is then the Layer 1
+ * `turn_request.seat`, which is always the receiving client's seat
+ * (TRANSPORT-PROTOCOL section 8.5); the button is derived from the hand's
+ * blinds until the next `round_start`. Values the session did see are kept
+ * unchanged, and a turn state's own `your_seat` / `dealer_seat` (OFC) still
+ * wins in `parseGameState`. Internal; mirrors the Python SDK.
+ */
+export function _turnSeatContext(
+  message: Record<string, unknown>,
+  seats: { yourSeat: number; dealerSeat: number; seatKnown: boolean; dealerKnown: boolean },
+): { yourSeat: number; dealerSeat: number } {
+  let { yourSeat, dealerSeat } = seats;
+  if (!seats.seatKnown) yourSeat = numberOr(message["seat"], yourSeat);
+  if (!seats.dealerKnown) {
+    const state = message["state"];
+    if (typeof state === "object" && state !== null && !Array.isArray(state)) {
+      const derived = _deriveDealerSeat(state as Record<string, unknown>, yourSeat);
+      if (derived !== null) dealerSeat = derived;
+    }
+  }
+  return { yourSeat, dealerSeat };
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **After a real reconnect, the bot reads its own seat and the button**
+  ([#199](https://github.com/chipzen-ai/chipzen-sdk/issues/199)). The match
+  server sends no `reconnected` frame: a reconnecting bot runs the handshake
+  again and the new session gets the next game frames, never `match_start`
+  or the current hand's `round_start`. So `GameState.your_seat` read 0 for the rest of the
+  match, and `dealer_seat` read 0 until the next hand. Until the session sees those
+  frames, the seat now comes from the Layer 1 `turn_request.seat` (always the
+  receiving bot's seat) and the button is worked out from the hand's blinds
+  (protocol sections 5.3 and 5.9). No platform change; a session that saw
+  `match_start` and `round_start` behaves exactly as before, and an OFC turn
+  state's own `your_seat` / `dealer_seat` still win.
+
 - **A match socket the server closes with `4013` (no mutually supported
   protocol version) is no longer retried**
   ([Chipzen #7008](https://github.com/chipzen-ai/Chipzen/issues/7008)). The SDK
