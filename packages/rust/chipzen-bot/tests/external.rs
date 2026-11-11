@@ -855,6 +855,28 @@ async fn test_the_error_frame_before_the_hello_ends_the_match_without_reconnecti
 }
 
 #[tokio::test]
+async fn test_a_4013_close_ends_the_match_without_reconnecting() {
+    // Chipzen #7008: the gateway passes the executor's version refusal through.
+    // The match is over for this bot, so it counts toward max_matches (the
+    // session stops) and records a result with no match_end.
+    _set_lobby_recv_timeout_ms(5);
+    let (transport, calls) = ScriptedTransport::new(
+        vec![vec![Some(server_hello_lobby()), Some(matched())]],
+        vec![vec![close_with(4013)]],
+    );
+    let opts = RunExternalOptions {
+        retry_policy: Some(RetryPolicy::new(5, 1, 1, 2.0).unwrap()),
+        max_matches: Some(1),
+        ..opts_with_token()
+    };
+    let results = run(CollectBot::default, opts, transport).await.unwrap();
+    assert_eq!(gateway_ids(&calls), vec!["m1/p1"]); // no reconnect
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].match_id.as_deref(), Some("m1"));
+    assert!(results[0].end.is_none());
+}
+
+#[tokio::test]
 async fn test_other_drops_still_reconnect() {
     for drop in [None, Some(1011), Some(4001)] {
         _set_lobby_recv_timeout_ms(5);

@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A match socket the server closes with `4013` (no mutually supported
+  protocol version) is no longer retried**
+  ([Chipzen #7008](https://github.com/chipzen-ai/Chipzen/issues/7008)). The SDK
+  read every close without a `match_end` as a drop and reconnected until the
+  retry budget ran out, so a version refusal just looped. The 4xxx codes in
+  `TERMINAL_CLOSE_CODES` (4003, 4005, 4006, 4010, 4012, 4013) now end the
+  match at once: one stderr line with the code and the server's reason, and
+  the new `Error::ProtocolClose { code, reason }` (`Error` is
+  `#[non_exhaustive]`, so this is additive). `run_bot()` returns it.
+  `run_external_bot()` records the match with `end: None` and counts it toward
+  `max_matches`. `MessageReader` gains a defaulted `close_reason()`. Other
+  closes are unchanged: 1000 / 1001 still end normally, and 4000 and every
+  other code are handled as before.
+
 - **A lobby reconnect during a live match no longer opens a second gateway**
   ([#241](https://github.com/chipzen-ai/chipzen-sdk/issues/241)). The
   platform re-sends `matched` for an in-flight match on every lobby connect.

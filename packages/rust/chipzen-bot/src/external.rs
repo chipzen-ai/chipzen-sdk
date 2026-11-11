@@ -43,6 +43,7 @@ use crate::client::{
     _run_session, default_user_agent, seat_replaced_log, MessageReader, MessageWriter,
     SessionContext,
 };
+use crate::close_codes::protocol_close_log;
 use crate::config::{load_chipzen_config, resolve_token, ChipzenConfig};
 use crate::connect::{connect_to_chipzen, EnvName};
 use crate::error::Error;
@@ -165,7 +166,9 @@ pub struct MatchResult {
     /// The match id, when known (from the `match_end` payload).
     pub match_id: Option<String>,
     /// The full `match_end` payload on a clean finish, or `None` if the
-    /// match was abandoned after exhausting the reconnect budget.
+    /// match was abandoned after exhausting the reconnect budget, or the
+    /// server ended it with a terminal 4xxx close (logged to stderr with the
+    /// code and reason).
     pub end: Option<Value>,
 }
 
@@ -800,6 +803,17 @@ fn record_match_outcome(
             stop.store(true, Ordering::SeqCst);
             return;
         }
+        // A terminal 4xxx close (already logged by play_one_match, with the
+        // code and reason). The match is over for this bot, as it was when the
+        // gateway masked the close as a match_end, so it counts toward
+        // `max_matches`.
+        Err(Error::ProtocolClose { .. }) => {
+            completed.fetch_add(1, Ordering::SeqCst);
+            results.lock().unwrap().push(MatchResult {
+                match_id: Some(match_id.to_string()),
+                end: None,
+            });
+        }
         Err(_other) => {
             // Record, never crash the lobby. (Connect/transport errors that
             // outlived the reconnect budget land here as the match abandoned.)
@@ -847,6 +861,11 @@ fn record_match_outcome(
 /// a drop: reconnecting would take the seat back, and two live copies of one
 /// bot would trade it forever. It logs one line and returns
 /// [`Error::SeatReplaced`], so the match's task ends with no result.
+///
+/// A terminal 4xxx close ([`TERMINAL_CLOSE_CODES`](crate::TERMINAL_CLOSE_CODES),
+/// for example `4013`, no mutually supported protocol version) is not a drop
+/// either: it logs one line with the code and reason and returns
+/// [`Error::ProtocolClose`], never reconnecting.
 async fn play_one_match<B, T>(
     transport: &T,
     gateway_url: &str,
@@ -889,6 +908,12 @@ where
                     // The seat is held by another connection — never reconnect.
                     Err(e @ Error::SeatReplaced) => {
                         eprintln!("{}", seat_replaced_log(match_id));
+                        return Err(e);
+                    }
+                    // A terminal 4xxx close (4013, ...): a reconnect would be
+                    // refused the same way. Surface it, never reconnect.
+                    Err(e @ Error::ProtocolClose { .. }) => {
+                        eprintln!("{}", protocol_close_log(match_id, &e));
                         return Err(e);
                     }
                     // Transport/protocol error mid-session — try to resume.
@@ -990,6 +1015,7 @@ mod ws_transport {
         let reader: Box<dyn MessageReader> = Box::new(OwnedWsReader {
             inner: read_half,
             close_code: None,
+            close_reason: None,
         });
         let writer: Box<dyn MessageWriter> = Box::new(OwnedWsWriter { inner: write_half });
         Ok((reader, writer))
@@ -998,6 +1024,7 @@ mod ws_transport {
     struct OwnedWsReader {
         inner: SplitStream<WsStream>,
         close_code: Option<u16>,
+        close_reason: Option<String>,
     }
 
     #[async_trait]
@@ -1008,7 +1035,8 @@ mod ws_transport {
                     Some(Ok(Message::Text(t))) => return Ok(Some(t.to_string())),
                     Some(Ok(Message::Ping(_))) => continue,
                     Some(Ok(Message::Close(frame))) => {
-                        self.close_code = frame.map(|f| u16::from(f.code));
+                        self.close_code = frame.as_ref().map(|f| u16::from(f.code));
+                        self.close_reason = frame.map(|f| f.reason.to_string());
                         return Ok(None);
                     }
                     None => return Ok(None),
@@ -1020,6 +1048,10 @@ mod ws_transport {
 
         fn close_code(&self) -> Option<u16> {
             self.close_code
+        }
+
+        fn close_reason(&self) -> Option<String> {
+            self.close_reason.clone()
         }
     }
 
