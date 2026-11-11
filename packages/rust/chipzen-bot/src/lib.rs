@@ -48,6 +48,7 @@ mod conformance;
 mod connect;
 mod error;
 mod external;
+mod lobby_liveness;
 mod models;
 mod retry;
 
@@ -70,6 +71,7 @@ pub use external::{
     bot_token_subprotocols, resolve_gateway_url, run_external_bot, run_external_cli, MatchResult,
     RunExternalArgs, RunExternalOptions, BOT_TOKEN_SUBPROTOCOL,
 };
+pub use lobby_liveness::{LobbySilenceTimeout, DEFAULT_LOBBY_SILENCE_TIMEOUT};
 pub use models::{
     parse_card, parse_game_state, Action, ActionHistoryEntry, ActionKind, Card, DiscardItem,
     GameState, Placement,
