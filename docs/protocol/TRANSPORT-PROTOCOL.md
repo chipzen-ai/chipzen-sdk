@@ -388,9 +388,9 @@ Requests an action from the bot. The bot must respond with a `turn_action` befor
 |-------|------|----------|-------------|
 | `seat` | integer | yes | The seat index of the participant whose turn it is (always the receiving client's seat) |
 | `request_id` | string | yes | Unique identifier for this turn request (`req_` plus 12 hex characters). Must be echoed in the response. Used for correlation, idempotency, and deduplication. |
-| `timeout_ms` | integer | yes | Time allowed to submit an action, in milliseconds |
+| `timeout_ms` | integer | yes | Time allowed to submit an action, in milliseconds. This is the decision budget: plan every decision to arrive within it |
 | `turn_duration_ms` | integer | yes | The same window as `timeout_ms`, for a client to start a countdown of that length when the frame arrives (chipzen-ai/Chipzen#2581) |
-| `deadline_ts` | integer | yes | The server's enforcement deadline as Unix epoch milliseconds (chipzen-ai/Chipzen#2562). For a bot it is send time plus `timeout_ms`, with one exception today: a remote (External API) bot seated in a tournament bracket gets a 15 s relay grace on top, so its `deadline_ts` is send time plus `timeout_ms` plus 15000 (chipzen-ai/Chipzen#6782 tracks aligning the two). Plan your decision around `timeout_ms`; the grace covers the relay hop, not thinking time. |
+| `deadline_ts` | integer | yes | The server's enforcement deadline as Unix epoch milliseconds (chipzen-ai/Chipzen#2562): the moment the server stops waiting and auto-acts. For most bots it is send time plus `timeout_ms`. A remote (External API) bot seated in a tournament bracket also gets a 15 s relay grace, so its `deadline_ts` is send time plus `timeout_ms` plus 15000. The relay grace is network slack, not thinking time: it absorbs the relay hop and internet round-trip time between the server and the bot. Bots must not plan around it. Budget every decision within `timeout_ms`, and treat the gap between `timeout_ms` and `deadline_ts` as reserved for the network. A container seat in the same bracket, such as a house-fill opponent, has no relay hop and gets no relay grace (chipzen-ai/Chipzen#6782). |
 | `valid_actions` | string[] | yes | List of valid action type strings for this turn |
 | `state` | object | yes | Current game-specific state (opaque to Layer 1) |
 
@@ -796,8 +796,9 @@ Exactly one of `ticket` or `token` must be provided. If neither or both are pres
 
 1. Server sends `turn_request` with `timeout_ms`.
 2. Timer starts on the server when the message is sent (not when the bot receives it).
-3. If the bot sends an invalid action, the server sends `action_rejected` with `remaining_ms`. The bot may retry within the remaining time.
-4. If the timer expires before a valid action is received, the server applies the auto-action (check if legal, otherwise fold) and reports it in `turn_result` with `details.is_timeout: true`. No `action_timeout` frame is sent (section 8.12).
+3. If the bot sends an invalid action, the server sends `action_rejected` with `remaining_ms`. The bot may retry within the remaining time. `remaining_ms` counts against `timeout_ms` only; a relay grace (section 8.5, `deadline_ts`) is not added to the retry window.
+4. A seat with a relay grace (a remote bot in a tournament bracket, section 8.5) is held until `deadline_ts` rather than `timeout_ms`. That grace is network slack that bots must not plan around.
+5. If the timer expires before a valid action is received, the server applies the auto-action (check if legal, otherwise fold) and reports it in `turn_result` with `details.is_timeout: true`. No `action_timeout` frame is sent (section 8.12).
 
 ### 10.3 Action Delivery Jitter
 
