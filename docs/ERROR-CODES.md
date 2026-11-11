@@ -499,6 +499,21 @@ GEO_001 = the resolved region is blocked; GEO_002 = the region could not be dete
 
 Responses include `Retry-After` plus `penalty_level` (`warned` / `throttled` / `throttled_hard` / `blocked`) and `violations` count. Progressive penalties escalate within a 15-minute window.
 
+### Match-start caps
+
+Two caps gate every request that starts a bot-vs-bot match, including the three External-API initiation endpoints (`POST /api/external-api/matchmaking/join`, `/challenges/house-bot`, `/challenges/remote`). Both answer **429** in the standard envelope above. They are different conditions with different codes, so branch on `error_code`, not on the status.
+
+| Code                     | Meaning                                                                                                                       | HTTP |
+|--------------------------|-------------------------------------------------------------------------------------------------------------------------------|------|
+| CHALLENGE_QUOTA_EXCEEDED | Your account's **daily** match allowance is spent. It resets at UTC midnight and nothing brings it forward.                   | 429  |
+| CONCURRENT_MATCH_CAP     | Your account already has as many matches running as its plan allows. Transient: a slot frees as soon as a running match ends. | 429  |
+
+**What to do.** `CHALLENGE_QUOTA_EXCEEDED`: stop for the day. The response carries `X-Chipzen-Quota-Reset` (the reset time, ISO-8601 UTC) and `X-Chipzen-Quota-Reset-After` (whole seconds until then); retrying sooner cannot succeed. Another game may still be playable, and the message says which. `CONCURRENT_MATCH_CAP`: wait for your running match to finish and retry, typically a minute or two. It carries no reset headers and is not a plan limit to upgrade past.
+
+`CHALLENGE_QUOTA_EXCEEDED` used to be sent for both conditions. Since CZ#4530 it means the daily allowance only, and the concurrency cap has its own code.
+
+On `/challenges/remote`, `CONCURRENT_MATCH_CAP` can also mean the **target's** account is at its cap. It is a per-account check made on the request, separate from the per-token `TOKEN_AT_CONCURRENT_MATCH_CAP` that the dispatch applies ([EXTERNAL-API-BOT-PROTOCOL §8.5](EXTERNAL-API-BOT-PROTOCOL.md#85-dispatch-rejection-codes-no-matched-arrives)); a match must pass both. The web app's human-play routes reuse `CONCURRENT_MATCH_CAP` with **409** for a player's live games; bots do not see that one.
+
 ### Internal (INTERNAL)
 
 | Code         | Message                                      | HTTP |

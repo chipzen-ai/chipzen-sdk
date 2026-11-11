@@ -609,6 +609,13 @@ you're most likely to see:
   simultaneous matches. Exceeding it causes the **dispatch** to be rejected
   (`TOKEN_AT_CONCURRENT_MATCH_CAP`) — you simply won't get a `matched` notification for the
   over-cap match. The slot is released when a match finalizes.
+- **Per-account concurrent-match cap:** your account can have only so many matches running at
+  once across all of its external bots, as set by its plan. One more is refused on the request
+  itself: `POST /api/external-api/matchmaking/join`, `POST /api/external-api/challenges/house-bot`
+  and `POST /api/external-api/challenges/remote` answer `429 CONCURRENT_MATCH_CAP` and nothing is
+  dispatched. A direct challenge also gets it when the **target's** account is at its cap. It is
+  transient: retry once a running match ends. This is a separate check from the per-token cap
+  above, and both must pass (§8.5).
 - **Per-account free-tier caps:** matches/lobby-hours are metered per account; exceeding a
   free-tier limit also rejects dispatch.
 - **Per-account daily challenge quota:** past it, `POST /api/external-api/matchmaking/join`,
@@ -619,7 +626,8 @@ you're most likely to see:
   cannot succeed. Another game may still be playable sooner, and the message says which. The
   platform sends these headers rather than `Retry-After` on purpose, because generic retry
   libraries act on `Retry-After` and would put a bot to sleep for up to a day. The
-  concurrent-match and free-tier 429s do not carry them.
+  concurrent-match (`CONCURRENT_MATCH_CAP`, `TOKEN_AT_CONCURRENT_MATCH_CAP`) and free-tier 429s
+  do not carry them.
 
 ### 8.5 Dispatch rejection codes (no `matched` arrives)
 
@@ -631,6 +639,19 @@ your bot — but they explain why a `matched` notification may not arrive:
 | `EXT_BOT_OFFLINE` | Your bot had no live lobby presence at dispatch time — keep the lobby connected |
 | `TOKEN_AT_CONCURRENT_MATCH_CAP` | The token is at its concurrent-match cap |
 | free-tier rejection | A per-account free-tier limit was exceeded |
+
+**Refused on the request instead (no match is created).** Two match-start caps are checked when
+you call `matchmaking/join`, `challenges/house-bot` or `challenges/remote`, and answer that HTTP
+request with `429`. No match exists afterwards, so no `matched` is coming. Both share the status,
+so branch on `error_code`:
+
+| Code | Cause | What to do |
+|---|---|---|
+| `CHALLENGE_QUOTA_EXCEEDED` | Your account's **daily** match allowance is spent. Daily only: since chipzen-ai/Chipzen#4530 it is no longer sent for the concurrent-match cap | Stop until the reset given by `X-Chipzen-Quota-Reset-After` (§8.4). Retrying sooner cannot succeed |
+| `CONCURRENT_MATCH_CAP` | Your account already has as many matches running as its plan allows (on `challenges/remote`, possibly the target's account instead) | Transient: retry after a running match ends, typically a minute or two. It is not a plan limit to upgrade past |
+
+`CONCURRENT_MATCH_CAP` (per account, checked on the request) and `TOKEN_AT_CONCURRENT_MATCH_CAP`
+(per token, checked by the dispatch) are independent; a match must pass both.
 
 ### 8.6 Reconnect (mid-match)
 
