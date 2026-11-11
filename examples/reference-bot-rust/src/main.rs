@@ -82,17 +82,29 @@ fn preflop_bucket(hole_cards: &[Card]) -> Bucket {
 
     // Broadways with an ace
     if high == 'A' && matches!(low, 'Q' | 'J' | 'T') {
-        return if suited { Bucket::Strong } else { Bucket::Medium };
+        return if suited {
+            Bucket::Strong
+        } else {
+            Bucket::Medium
+        };
     }
 
     // KQ, KJ
     if high == 'K' && matches!(low, 'Q' | 'J') {
-        return if suited { Bucket::Strong } else { Bucket::Medium };
+        return if suited {
+            Bucket::Strong
+        } else {
+            Bucket::Medium
+        };
     }
 
     // Connected broadways
     if matches!(high, 'Q' | 'J') && matches!(low, 'T' | '9') {
-        return if suited { Bucket::Strong } else { Bucket::Medium };
+        return if suited {
+            Bucket::Strong
+        } else {
+            Bucket::Medium
+        };
     }
 
     // Weak ace (any)
@@ -189,7 +201,11 @@ impl ReferenceBot {
             if has("call") {
                 return Action::Call;
             }
-            return if has("check") { Action::Check } else { Action::Fold };
+            return if has("check") {
+                Action::Check
+            } else {
+                Action::Fold
+            };
         }
 
         // Strong: raise unopened pots, otherwise call cheap.
@@ -202,7 +218,11 @@ impl ReferenceBot {
             if has("call") && state.to_call <= state.your_stack / 10 {
                 return Action::Call;
             }
-            return if has("check") { Action::Check } else { Action::Fold };
+            return if has("check") {
+                Action::Check
+            } else {
+                Action::Fold
+            };
         }
 
         // Medium: only call free / very cheap.
@@ -239,7 +259,11 @@ impl ReferenceBot {
             if has("call") {
                 return Action::Call;
             }
-            return if has("check") { Action::Check } else { Action::Fold };
+            return if has("check") {
+                Action::Check
+            } else {
+                Action::Fold
+            };
         }
 
         // One pair: check, call small bets, fold to pressure.
@@ -308,13 +332,13 @@ impl Bot for ReferenceBot {
 
     fn on_turn_result(&mut self, msg: &Value) {
         let details = msg.get("details");
-        let seat = details
-            .and_then(|d| d.get("seat"))
-            .and_then(|v| v.as_i64());
+        let seat = details.and_then(|d| d.get("seat")).and_then(|v| v.as_i64());
         if seat == self.my_seat {
             return;
         }
-        let action = details.and_then(|d| d.get("action")).and_then(|v| v.as_str());
+        let action = details
+            .and_then(|d| d.get("action"))
+            .and_then(|v| v.as_str());
         if matches!(action, Some("raise") | Some("all_in")) {
             self.opponent_raises_this_hand += 1;
         }
