@@ -32,6 +32,11 @@
 //! session so a lobby reconnect doesn't kill in-flight matches, and a
 //! dropped gateway socket reconnects and resumes via the server's
 //! `reconnected` / `pending_request` frame.
+//!
+//! The lobby also watches its own liveness (see [`LobbySilenceTimeout`]): a
+//! lobby that hears nothing at all for the timeout is dropped and
+//! reconnected, which catches a half-open socket after the host sleeps
+//! (chipzen-ai/chipzen-sdk#136).
 
 use crate::bot::Bot;
 use crate::client::{
@@ -41,6 +46,7 @@ use crate::client::{
 use crate::config::{load_chipzen_config, resolve_token, ChipzenConfig};
 use crate::connect::{connect_to_chipzen, EnvName};
 use crate::error::Error;
+use crate::lobby_liveness::{lobby_silence_log, LobbyLiveness, LobbySilenceTimeout};
 use crate::retry::RetryPolicy;
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -203,6 +209,15 @@ pub struct RunExternalOptions {
     /// unchanged; an empty list is sent as is. See
     /// [`crate::RunBotOptions::supported_games`].
     pub supported_games: Option<Vec<String>>,
+    /// How long the lobby may go without receiving any frame before the SDK
+    /// treats the socket as dead, drops it and reconnects with the
+    /// `retry_policy` backoff. The default (45 seconds) is three missed
+    /// server pings. This is what notices a lobby the server closed while the
+    /// host was asleep (chipzen-ai/chipzen-sdk#136). In-flight matches are not
+    /// affected: they play on their own sockets.
+    /// [`LobbySilenceTimeout::Off`] turns the check off. Sends nothing new on
+    /// the wire.
+    pub lobby_silence_timeout: LobbySilenceTimeout,
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +321,10 @@ where
 /// A connection is returned as a boxed [`MessageReader`] + [`MessageWriter`]
 /// pair. Implementors must be `Send + Sync + 'static` (a single transport is
 /// shared across the lobby loop and every spawned match task).
+///
+/// Dropping both halves should drop the connection without a close
+/// handshake: that is how the lobby abandons a socket that has gone silent,
+/// since a half-open socket never answers a close frame.
 #[async_trait]
 pub trait LobbyTransport: Send + Sync + 'static {
     /// Open the lobby WS at `url`, sending `user_agent` on the handshake.
@@ -367,8 +386,9 @@ impl LobbyTransport for WsTransport {
 ///
 /// # Errors
 ///
-/// * [`Error::Protocol`] if no token can be resolved, or neither `url` nor a
-///   `bot_id` is available to build the lobby URL.
+/// * [`Error::Protocol`] if no token can be resolved, neither `url` nor a
+///   `bot_id` is available to build the lobby URL, or `lobby_silence_timeout`
+///   is `After(Duration::ZERO)`.
 /// * [`Error::BotDecision`] if `decide()` panics under `safe_mode = false`.
 pub async fn run_external_bot<B, F>(
     factory: F,
@@ -434,6 +454,7 @@ where
                 .to_string(),
         ));
     };
+    let silence_timeout = options.lobby_silence_timeout.resolve()?;
 
     let client_version = options
         .client_version
@@ -458,6 +479,7 @@ where
         policy,
         max_matches: options.max_matches,
         supported_games: options.supported_games,
+        silence_timeout,
     });
 
     // Shared mutable session state — owned HERE, not by a single lobby
@@ -553,6 +575,8 @@ struct SessionParams {
     policy: RetryPolicy,
     max_matches: Option<u64>,
     supported_games: Option<Vec<String>>,
+    /// Silence that counts as a dead lobby, or `None` for no check.
+    silence_timeout: Option<Duration>,
 }
 
 /// Why a single lobby connection ended.
@@ -561,7 +585,9 @@ enum LobbyStatus {
     Stopped,
     /// The lobby evicted us (a newer connection replaced this one).
     Evicted,
-    /// The lobby connection closed unexpectedly — the caller may reconnect.
+    /// The lobby connection closed unexpectedly, or no frame arrived for the
+    /// silence timeout (a half-open socket, for example after the host
+    /// slept) — the caller may reconnect.
     Closed,
 }
 
@@ -604,11 +630,23 @@ where
         .send(json!({ "type": "authenticate", "token": session.token }).to_string())
         .await?;
 
+    let mut liveness = LobbyLiveness::new(session.silence_timeout);
     while !stop.load(Ordering::SeqCst) {
         let recv = tokio::time::timeout(lobby_recv_timeout(), reader.next()).await;
         let raw = match recv {
-            // Periodic wake to re-check the stop signal.
-            Err(_elapsed) => continue,
+            // Periodic wake to re-check the stop signal and the lobby's
+            // liveness. The server pings every 15s; total silence for the
+            // timeout means the socket is dead even if it still looks open
+            // (#136: host sleep, server already closed it). Returning drops
+            // the reader and writer, which drops the socket without a close
+            // handshake the dead peer would never answer.
+            Err(_elapsed) => {
+                if liveness.expired() {
+                    eprintln!("{}", lobby_silence_log(liveness.silent_for()));
+                    return Ok(LobbyStatus::Closed);
+                }
+                continue;
+            }
             Ok(Ok(Some(raw))) => raw,
             // Clean close.
             Ok(Ok(None)) => return Ok(LobbyStatus::Closed),
@@ -616,6 +654,7 @@ where
             Ok(Err(_)) => return Ok(LobbyStatus::Closed),
         };
 
+        liveness.mark();
         let msg = loads(&raw);
         match msg.get("type").and_then(|v| v.as_str()) {
             Some("ping") => {

@@ -20,6 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process has nothing in play, so it still picks its match back up. The
   Python and JavaScript SDKs got the same fix in #231.
 
+- **`run_external_bot()` now notices a dead lobby after the host sleeps and
+  reconnects** ([#136](https://github.com/chipzen-ai/chipzen-sdk/issues/136)).
+  When a laptop slept, the server timed the bot out and closed the lobby, but the
+  local socket could still look open for a long time after waking, so the SDK did
+  not reconnect and missed its matches. The server pings the lobby every 15
+  seconds, so the SDK now treats a lobby that has sent nothing at all for
+  `RunExternalOptions::lobby_silence_timeout` (default 45 seconds, three missed
+  pings) as dead: it drops the socket without a close handshake and reconnects
+  with the retry policy's backoff. The gap is measured on the wall clock as well
+  as the monotonic clock, so the first check after waking sees the whole sleep.
+  Matches in progress are not affected, since they play on their own sockets.
+  Nothing new is sent on the wire. The new field takes a `LobbySilenceTimeout`:
+  `Default` (45 seconds), `After(duration)`, or `Off` to turn the check off;
+  `After(Duration::ZERO)` is an error. `DEFAULT_LOBBY_SILENCE_TIMEOUT` is
+  exported. A `RunExternalOptions` struct literal that names every field must
+  add this one or end with `..Default::default()`. Same behaviour as the Python
+  SDK (#254) and the JavaScript SDK (#258).
+
 ## [0.4.0] — 2026-11-06
 
 **This release breaks the public API (pre-1.0, so a minor bump).** Code that
