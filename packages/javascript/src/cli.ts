@@ -96,8 +96,11 @@ async function initCli(args: string[]): Promise<void> {
     console.log("Next steps:");
     console.log(`  cd ${name}`);
     console.log("  npm install");
-    console.log("  # Edit bot.js to implement your strategy");
-    console.log("  chipzen-sdk validate .");
+    console.log("  # Edit decide() in bot.js. Keep main() and the entry block at the bottom.");
+    console.log("  npx chipzen-sdk validate .");
+    console.log("  docker build -t my-bot:v1 .");
+    console.log("  docker save my-bot:v1 | gzip > my-bot.tar.gz");
+    console.log("  # Upload my-bot.tar.gz through the Chipzen web UI. See README.md.");
   } catch (err) {
     console.error(`error: ${(err as Error).message}`);
     process.exit(1);
@@ -119,6 +122,8 @@ async function validateCli(args: string[]): Promise<void> {
     console.log("  imports         No blocked sandbox modules; warn on fs/fs-promises");
     console.log("  bot_class       Class extending Bot, ChipzenBot or BigBadBotsBot exists");
     console.log("  decide_method   Bot class implements decide()");
+    console.log("  dockerfile      A Dockerfile whose ENTRYPOINT/CMD starts the bot");
+    console.log("  entry_main      The entry point calls main() (the starter's entry block)");
     console.log("  smoke_test      Bot can be instantiated; decide() returns an Action");
     console.log("  timeout         decide() completes within time limits");
     console.log("");

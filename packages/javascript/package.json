@@ -42,7 +42,12 @@
   "files": [
     "dist",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "starters/javascript/bot.js",
+    "starters/javascript/package.json",
+    "starters/javascript/Dockerfile",
+    "starters/javascript/.dockerignore",
+    "starters/javascript/README.md"
   ],
   "publishConfig": {
     "access": "public",

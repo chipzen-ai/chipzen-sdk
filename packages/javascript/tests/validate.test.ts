@@ -17,6 +17,18 @@ afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
+/** A main() and the entry block that calls it, as in the starter. */
+const IMAGE_READY_TAIL = `
+export async function main() {}
+
+if (import.meta.main) {
+  await main();
+}
+`;
+
+const IMAGE_READY_DOCKERFILE =
+  'FROM node:20-slim\nCOPY bot.js package.json ./\nENTRYPOINT ["node", "bot.js"]\n';
+
 /**
  * Write a one-off bot directory with a custom bot.js source. The
  * @chipzen-ai/bot import is rewritten to a relative path into the SDK
@@ -26,7 +38,7 @@ afterAll(() => {
 async function writeBot(
   name: string,
   source: string,
-  options: { skipPackageJson?: boolean } = {},
+  options: { skipPackageJson?: boolean; bare?: boolean } = {},
 ): Promise<string> {
   const dir = path.join(workDir, name);
   await fs.mkdir(dir, { recursive: true });
@@ -41,7 +53,14 @@ async function writeBot(
     `from ${JSON.stringify(`file://${sdkDist}`)}`,
   );
 
-  await fs.writeFile(path.join(dir, "bot.js"), rewritten, "utf-8");
+  // Unless `bare`, give the folder what an uploadable image needs, so the
+  // dockerfile and entry_main checks (issue #260) pass and each test sees
+  // only the problem it is about.
+  const body = options.bare ? rewritten : rewritten + IMAGE_READY_TAIL;
+  await fs.writeFile(path.join(dir, "bot.js"), body, "utf-8");
+  if (!options.bare) {
+    await fs.writeFile(path.join(dir, "Dockerfile"), IMAGE_READY_DOCKERFILE, "utf-8");
+  }
   if (!options.skipPackageJson) {
     await fs.writeFile(
       path.join(dir, "package.json"),
@@ -69,6 +88,8 @@ describe("validateBot — happy paths", () => {
     expect(passes).toContain("imports");
     expect(passes).toContain("bot_class");
     expect(passes).toContain("decide_method");
+    expect(passes).toContain("dockerfile");
+    expect(passes).toContain("entry_main");
   });
 
   it("a bot with the SDK import rewritten to in-repo dist passes everything", async () => {

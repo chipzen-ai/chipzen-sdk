@@ -12,6 +12,9 @@ export default defineConfig([
     external: ["ws"],
     target: "node20",
     outDir: "dist",
+    // The CJS build has no import.meta.url; scaffold.ts uses it to find the
+    // bundled starter folder (issue #239). tsup shims it from __filename.
+    shims: true,
   },
   // CLI bin entry — ESM only, with the shebang preserved by tsup.
   // No .d.ts needed (it's an executable, not a library import).
