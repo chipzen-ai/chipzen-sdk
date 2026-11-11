@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`runExternalBot()` now notices a dead lobby after the host sleeps and
+  reconnects** ([#136](https://github.com/chipzen-ai/chipzen-sdk/issues/136)).
+  When a laptop slept, the server timed the bot out and closed the lobby, but the
+  local socket could still look open for a long time after waking, so the SDK did
+  not reconnect and missed its matches. The server pings the lobby every 15
+  seconds, so the SDK now treats a lobby that has sent nothing at all for
+  `lobbySilenceTimeoutMs` (default 45000, three missed pings) as dead: it drops
+  the socket without a close handshake and reconnects with the retry policy's
+  backoff. The gap is measured on the wall clock as well as the monotonic clock,
+  so the first check after waking sees the whole sleep. Matches in progress are
+  not affected, since they play on their own sockets. Nothing new is sent on the
+  wire. Pass `lobbySilenceTimeoutMs: null` to turn the check off. A custom
+  `transport` may give its connections an optional `abort()` for the drop; one
+  without it is closed with `close()`. Same behaviour as the Python SDK.
+
+- **The `runExternalBot()` lobby no longer loses frames after an idle spell.**
+  The lobby loop wakes every 2 seconds to re-check its stop signal, and each wake
+  left a read queued on the socket that nothing was waiting for. The next frame
+  went to that read and was dropped, so on a real socket a quiet lobby missed
+  later `ping`, `matched` and `evict` frames. The loop now keeps one read pending
+  across wakes.
+
 ## [0.5.3] — 2026-11-06
 
 ### Fixed
