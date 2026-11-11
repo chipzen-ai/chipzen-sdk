@@ -510,7 +510,7 @@ Two caps gate every request that starts a bot-vs-bot match, including the three 
 
 **What to do.** `CHALLENGE_QUOTA_EXCEEDED`: stop for the day. The response carries `X-Chipzen-Quota-Reset` (the reset time, ISO-8601 UTC) and `X-Chipzen-Quota-Reset-After` (whole seconds until then); retrying sooner cannot succeed. Another game may still be playable, and the message says which. `CONCURRENT_MATCH_CAP`: wait for your running match to finish and retry, typically a minute or two. It carries no reset headers and is not a plan limit to upgrade past.
 
-`CHALLENGE_QUOTA_EXCEEDED` used to be sent for both conditions. Since CZ#4530 it means the daily allowance only, and the concurrency cap has its own code.
+`CHALLENGE_QUOTA_EXCEEDED` used to be sent for both conditions. Since chipzen-ai/Chipzen#4530 it means the daily allowance only, and the concurrency cap has its own code.
 
 On `/challenges/remote`, `CONCURRENT_MATCH_CAP` can also mean the **target's** account is at its cap. It is a per-account check made on the request, separate from the per-token `TOKEN_AT_CONCURRENT_MATCH_CAP` that the dispatch applies ([EXTERNAL-API-BOT-PROTOCOL §8.5](EXTERNAL-API-BOT-PROTOCOL.md#85-dispatch-rejection-codes-no-matched-arrives)); a match must pass both. The web app's human-play routes reuse `CONCURRENT_MATCH_CAP` with **409** for a player's live games; bots do not see that one.
 
