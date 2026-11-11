@@ -188,8 +188,8 @@ jobs:
     # workspace at packages/rust which contains chipzen-bot (the SDK
     # library) and chipzen-sdk (the CLI). The IP-protected starter at
     # packages/rust/starters/rust/ is intentionally NOT in the
-    # workspace (so users can copy it standalone) and gets covered by
-    # CI once chipzen-bot is published to crates.io.
+    # workspace (so users can copy it standalone); the rust-starter job
+    # below covers it, and rust-reference-bot covers the Rust example.
     name: Rust SDK (build + test)
     runs-on: ubuntu-latest
     defaults:
@@ -207,6 +207,62 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Cargo test
         run: cargo test --workspace --quiet
+
+  rust-starter:
+    # The starter and the Rust reference example sat broken against every
+    # published chipzen-bot release, because no job built either (issue
+    # #248): the starter's conformance test asserted one scenario while the
+    # SDK has run four since 0.3.0, and the example's `main` did not compile
+    # against run_bot's return type.
+    #
+    # Both depend on chipzen-bot from crates.io at the starter's pin, so this
+    # checks what a user actually gets, not the commit under test (the
+    # rust-sdk job covers that). The starter is copied out of the repo first,
+    # as a user would: inside packages/rust cargo sees the workspace root,
+    # which deliberately does not list it, and refuses to build.
+    name: Rust starter (build + test)
+    runs-on: ubuntu-latest
+    env:
+      STARTER_DIR: /tmp/rust-starter
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy the starter out of the repo
+        run: cp -r packages/rust/starters/rust "$STARTER_DIR"
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.STARTER_DIR }} -> target
+      - name: Cargo fmt check
+        working-directory: ${{ env.STARTER_DIR }}
+        run: cargo fmt --check
+      - name: Cargo clippy
+        working-directory: ${{ env.STARTER_DIR }}
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Cargo test (includes the conformance scenarios)
+        working-directory: ${{ env.STARTER_DIR }}
+        run: cargo test --quiet
+
+  rust-reference-bot:
+    # See rust-starter above (issue #248). The example has no tests, so
+    # clippy (which type-checks every target) is the build gate. It sits
+    # outside any workspace, so it builds in place.
+    name: Rust reference bot (build + lint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/reference-bot-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/reference-bot-rust -> target
+      - name: Cargo fmt check
+        run: cargo fmt --check
+      - name: Cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
 
   protocol-doc-mirror:
     # docs/EXTERNAL-API-BOT-PROTOCOL.md is the CANONICAL copy; the private
