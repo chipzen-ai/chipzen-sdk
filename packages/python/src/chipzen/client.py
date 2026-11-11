@@ -39,6 +39,7 @@ from chipzen.models import (
     Action,
     GameState,
     UnsupportedStateShapeError,
+    _turn_seat_context,
     state_shape_of,
 )
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
@@ -655,6 +656,12 @@ async def _session_loop(
     # --- Session state tracked across messages ------------------------
     your_seat: int = 0
     dealer_seat: int = 0
+    # Whether this session saw the frame that carries each one. A reconnect
+    # runs a fresh session that sees neither ``match_start`` nor this hand's
+    # ``round_start``; until it does, the seat comes from ``turn_request.seat``
+    # and the button from the hand's blinds (chipzen-ai/chipzen-sdk#199).
+    seat_known = False
+    dealer_known = False
     current_round_id: str = ""
     last_seq: int | None = None
     # The last turn we answered, kept so an ``action_rejected`` for it can be
@@ -697,12 +704,15 @@ async def _session_loop(
             for seat_info in payload.get("seats", []) or []:
                 if seat_info.get("is_self"):
                     your_seat = int(seat_info.get("seat", 0))
+                    seat_known = True
                     break
             _call_hook(bot.on_match_start, payload)
 
         elif msg_type == "round_start":
             state = payload.get("state", {}) or {}
-            dealer_seat = int(state.get("dealer_seat", dealer_seat))
+            if "dealer_seat" in state:
+                dealer_seat = int(state["dealer_seat"])
+                dealer_known = True
             current_round_id = str(payload.get("round_id", current_round_id))
             _call_hook(bot.on_round_start, payload)
 
@@ -715,10 +725,17 @@ async def _session_loop(
             if is_bigbadbots:
                 await _answer_bigbadbots(payload)
                 continue
-            state = GameState.from_turn_request(
+            turn_seat, turn_dealer = _turn_seat_context(
                 payload,
                 your_seat=your_seat,
                 dealer_seat=dealer_seat,
+                seat_known=seat_known,
+                dealer_known=dealer_known,
+            )
+            state = GameState.from_turn_request(
+                payload,
+                your_seat=turn_seat,
+                dealer_seat=turn_dealer,
             )
             last_turn = state
             action, decision_ms = await _decide(state)
@@ -846,6 +863,7 @@ async def _session_loop(
             for seat_info in payload.get("seats", []) or []:
                 if seat_info.get("is_self"):
                     your_seat = int(seat_info.get("seat", 0))
+                    seat_known = True
                     break
             _call_hook(bot.on_reconnected, payload)
             pending = payload.get("pending_request")
@@ -853,10 +871,17 @@ async def _session_loop(
                 await _answer_bigbadbots(pending)
             elif pending:
                 # Treat the pending request exactly like a ``turn_request``.
-                state = GameState.from_turn_request(
+                turn_seat, turn_dealer = _turn_seat_context(
                     pending,
                     your_seat=your_seat,
                     dealer_seat=dealer_seat,
+                    seat_known=seat_known,
+                    dealer_known=dealer_known,
+                )
+                state = GameState.from_turn_request(
+                    pending,
+                    your_seat=turn_seat,
+                    dealer_seat=turn_dealer,
                 )
                 last_turn = state
                 action, decision_ms = await _decide(state)

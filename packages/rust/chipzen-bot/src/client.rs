@@ -457,6 +457,7 @@ where
             "match_start" => {
                 if let Some(seat) = self_seat(&msg) {
                     seats.your_seat = seat;
+                    seats.seat_known = true;
                 }
                 call_hook("on_match_start", ctx.safe_mode, || bot.on_match_start(&msg))?
             }
@@ -467,6 +468,7 @@ where
                     .and_then(Value::as_i64)
                 {
                     seats.dealer_seat = dealer;
+                    seats.dealer_known = true;
                 }
                 call_hook("on_round_start", ctx.safe_mode, || bot.on_round_start(&msg))?
             }
@@ -529,6 +531,7 @@ where
                 // The button is kept from the last `round_start` seen.
                 if let Some(seat) = self_seat(&msg) {
                     seats.your_seat = seat;
+                    seats.seat_known = true;
                 }
                 call_hook("on_reconnected", ctx.safe_mode, || bot.on_reconnected(&msg))?;
                 // Replay the pending request as if it were a fresh
@@ -607,12 +610,20 @@ fn state_shape_of(hello: &Value) -> Result<Option<&str>, String> {
 }
 
 /// Seat context the session loop carries into each turn.
+///
+/// `seat_known` / `dealer_known` record whether this session saw the frame
+/// that carries each one. A reconnect runs a fresh session that sees neither
+/// `match_start` nor this hand's `round_start`; until it does, the seat comes
+/// from `turn_request.seat` and the button from the hand's blinds
+/// (chipzen-ai/chipzen-sdk#199).
 #[derive(Debug, Default)]
 struct Seats {
     /// The bot's seat, from `match_start` / `reconnected`.
     your_seat: i64,
     /// The button, from the latest `round_start`.
     dealer_seat: i64,
+    seat_known: bool,
+    dealer_known: bool,
 }
 
 /// `seats[].seat` of the entry flagged `is_self` in a `match_start` or
@@ -629,6 +640,11 @@ fn self_seat(msg: &Value) -> Option<i64> {
 /// Parse a `turn_request` with the session's seat context filled in where
 /// the turn state does not carry it (a hold'em or 27TD state never does; an
 /// OFC state does, and its own values win).
+///
+/// When the session never saw the frame that carries a value (a reconnect,
+/// chipzen-ai/chipzen-sdk#199), the seat is the Layer 1 `turn_request.seat`,
+/// which is always the receiving client's seat (TRANSPORT-PROTOCOL section
+/// 8.5), and the button is derived from the hand's blinds.
 fn parse_turn(msg: &Value, seats: &Seats) -> GameState {
     let mut state = parse_game_state(msg);
     let raw_int = |key: &str| {
@@ -636,13 +652,71 @@ fn parse_turn(msg: &Value, seats: &Seats) -> GameState {
             .and_then(|s| s.get(key))
             .and_then(Value::as_i64)
     };
+    let your_seat = if seats.seat_known {
+        seats.your_seat
+    } else {
+        msg.get("seat")
+            .and_then(Value::as_i64)
+            .unwrap_or(seats.your_seat)
+    };
+    let dealer_seat = if seats.dealer_known {
+        seats.dealer_seat
+    } else {
+        msg.get("state")
+            .and_then(|s| derive_dealer_seat(s, your_seat))
+            .unwrap_or(seats.dealer_seat)
+    };
     if raw_int("your_seat").is_none() {
-        state.your_seat = seats.your_seat;
+        state.your_seat = your_seat;
     }
     if raw_int("dealer_seat").is_none() {
-        state.dealer_seat = seats.dealer_seat;
+        state.dealer_seat = dealer_seat;
     }
     state
+}
+
+/// The button, worked out from a hold'em or 27TD turn state's blinds.
+///
+/// POKER-GAME-STATE-PROTOCOL sections 5.3 and 5.9: with two live seats the
+/// button posts the small blind; with three or more it is the live seat just
+/// before the small blind. A live seat is your own, or one that has chips or
+/// appears in this hand's `action_history`. `None` when the state carries no
+/// `post_small_blind` entry (an OFC state, a malformed one) or the seats do
+/// not add up. Mirrors the Python SDK's `_derive_dealer_seat`.
+pub(crate) fn derive_dealer_seat(state: &Value, your_seat: i64) -> Option<i64> {
+    let stacks: Vec<i64> = state
+        .get("opponent_stacks")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().map(|v| v.as_i64().unwrap_or(0)).collect())
+        .unwrap_or_default();
+    let history: Vec<&Value> = state
+        .get("action_history")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter(|e| e.is_object()).collect())
+        .unwrap_or_default();
+    let table_size = stacks.len() as i64 + 1;
+    if !(0..table_size).contains(&your_seat) {
+        return None;
+    }
+    let seat_of = |e: &Value| e.get("seat").and_then(Value::as_i64);
+    let others = (0..table_size).filter(|s| *s != your_seat);
+    let mut live: Vec<i64> = others
+        .zip(stacks.iter())
+        .filter(|(seat, stack)| **stack > 0 || history.iter().any(|e| seat_of(e) == Some(*seat)))
+        .map(|(seat, _)| seat)
+        .collect();
+    live.push(your_seat);
+    live.sort_unstable();
+    let small_blind = history
+        .iter()
+        .find(|e| e.get("action").and_then(Value::as_str) == Some("post_small_blind"))
+        .and_then(|e| seat_of(e))?;
+    let index = live.iter().position(|s| *s == small_blind)?;
+    match live.len() {
+        0 | 1 => None,
+        2 => Some(small_blind),
+        n => Some(live[(index + n - 1) % n]),
+    }
 }
 
 /// The Layer 1 client `hello` frame.

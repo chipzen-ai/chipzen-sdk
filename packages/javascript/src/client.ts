@@ -18,6 +18,7 @@ import { BigBadBotsBot, fallbackAction, isAnswerShaped } from "./bigbadbots_bot.
 import type { Bot } from "./bot.js";
 import { _protocolCloseFor, _protocolCloseLog, ProtocolCloseError } from "./close_codes.js";
 import {
+  _turnSeatContext,
   Action,
   type GameState,
   parseGameState,
@@ -457,8 +458,12 @@ export async function _runSession(
   // turn state carries neither `your_seat` nor `dealer_seat`, so the seat is
   // taken from `match_start` (or `reconnected`) and the button from each
   // `round_start`. An OFC turn state carries both, and its own values win
-  // (parseGameState).
-  const seats: { yourSeat: number; dealerSeat: number } = { yourSeat: 0, dealerSeat: 0 };
+  // (parseGameState). `seatKnown` / `dealerKnown` record whether this
+  // session saw the frame that carries each one: a reconnect runs a fresh
+  // session that sees neither `match_start` nor this hand's `round_start`,
+  // and until it does the seat comes from `turn_request.seat` and the button
+  // from the hand's blinds (chipzen-ai/chipzen-sdk#199).
+  const seats = { yourSeat: 0, dealerSeat: 0, seatKnown: false, dealerKnown: false };
   for (;;) {
     const raw = await reader.next();
     if (raw === null) {
@@ -497,7 +502,10 @@ export async function _runSession(
 
       case "match_start": {
         const selfSeat = _selfSeat(msg);
-        if (selfSeat !== null) seats.yourSeat = selfSeat;
+        if (selfSeat !== null) {
+          seats.yourSeat = selfSeat;
+          seats.seatKnown = true;
+        }
         _callHook("onMatchStart", () => bot.onMatchStart(msg), safeMode);
         break;
       }
@@ -505,7 +513,10 @@ export async function _runSession(
       case "round_start": {
         const roundState = msg.state as Record<string, unknown> | undefined;
         const dealer = roundState && typeof roundState === "object" ? roundState.dealer_seat : undefined;
-        if (typeof dealer === "number" && Number.isFinite(dealer)) seats.dealerSeat = dealer;
+        if (typeof dealer === "number" && Number.isFinite(dealer)) {
+          seats.dealerSeat = dealer;
+          seats.dealerKnown = true;
+        }
         _callHook("onRoundStart", () => bot.onRoundStart(msg), safeMode);
         break;
       }
@@ -529,7 +540,7 @@ export async function _runSession(
           break;
         }
         const requestId = (msg.request_id as string | undefined) ?? "";
-        const state = parseGameState(msg, seats);
+        const state = parseGameState(msg, _turnSeatContext(msg, seats));
         lastTurn = { requestId, state };
         // _decide handles timing + safeMode; under safeMode=false it
         // throws BotDecisionError, which propagates out of _runSession.
@@ -579,7 +590,10 @@ export async function _runSession(
         // (chipzen-ai/chipzen-sdk#121, the JS analog of #119).
         // The button is kept from the last `round_start` this session saw.
         const relearnedSeat = _selfSeat(msg);
-        if (relearnedSeat !== null) seats.yourSeat = relearnedSeat;
+        if (relearnedSeat !== null) {
+          seats.yourSeat = relearnedSeat;
+          seats.seatKnown = true;
+        }
         _callHook("onReconnected", () => bot.onReconnected(msg), safeMode);
         // If a pending_request is included, dispatch it as if it were a
         // fresh turn_request.
@@ -592,7 +606,7 @@ export async function _runSession(
           // or 27TD state does not carry `your_seat`; an OFC state does, and
           // the state's own value wins (as in the Python SDK).
           const requestId = (pending.request_id as string | undefined) ?? "";
-          const state = parseGameState(pending, seats);
+          const state = parseGameState(pending, _turnSeatContext(pending, seats));
           lastTurn = { requestId, state };
           const { action, latencyMs } = _decide(
             bot,

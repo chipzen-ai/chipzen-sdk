@@ -617,6 +617,69 @@ class GameState:
 
 
 # ---------------------------------------------------------------------------
+# Seat context for a session that missed match_start / round_start (#199)
+# ---------------------------------------------------------------------------
+
+
+def _derive_dealer_seat(state: Mapping[str, Any], your_seat: int) -> int | None:
+    """The button, worked out from a hold'em or 27TD turn state's blinds.
+
+    POKER-GAME-STATE-PROTOCOL section 5.3 and 5.9: with two live seats the
+    button posts the small blind; with three or more it is the live seat
+    just before the small blind. A live seat is your own, or one that has
+    chips or appears in this hand's ``action_history``. ``None`` when the
+    state carries no ``post_small_blind`` entry (an OFC state, a malformed
+    one) or the seats do not add up.
+    """
+    stacks = [_as_int(s) for s in _as_list(state.get("opponent_stacks"))]
+    history = [e for e in _as_list(state.get("action_history")) if isinstance(e, Mapping)]
+    table_size = len(stacks) + 1
+    if not 0 <= your_seat < table_size:
+        return None
+    acted = {_as_int(e.get("seat"), -1) for e in history}
+    others = [s for s in range(table_size) if s != your_seat]
+    live = sorted({your_seat} | {s for s, stack in zip(others, stacks) if stack > 0 or s in acted})
+    small_blind = next(
+        (_as_int(e.get("seat"), -1) for e in history if e.get("action") == "post_small_blind"),
+        None,
+    )
+    if small_blind not in live or len(live) < 2:
+        return None
+    if len(live) == 2:
+        return small_blind
+    return live[live.index(small_blind) - 1]
+
+
+def _turn_seat_context(
+    message: Mapping[str, Any],
+    *,
+    your_seat: int,
+    dealer_seat: int,
+    seat_known: bool,
+    dealer_known: bool,
+) -> tuple[int, int]:
+    """Seat and button for a turn, when the session missed the frames that carry them.
+
+    A reconnecting bot starts a fresh session that never sees ``match_start``
+    or this hand's ``round_start`` (chipzen-ai/chipzen-sdk#199). The seat is
+    then the Layer 1 ``turn_request.seat``, which is always the receiving
+    client's seat (TRANSPORT-PROTOCOL section 8.5); the button is derived
+    from the hand's blinds until the next ``round_start``. Values the session
+    did see are kept unchanged, and a turn state's own ``your_seat`` /
+    ``dealer_seat`` (OFC) still wins in :meth:`GameState.from_turn_request`.
+    """
+    if not seat_known:
+        your_seat = _as_int(message.get("seat"), your_seat)
+    if not dealer_known:
+        state = message.get("state")
+        if isinstance(state, Mapping):
+            derived = _derive_dealer_seat(state, your_seat)
+            if derived is not None:
+                dealer_seat = derived
+    return your_seat, dealer_seat
+
+
+# ---------------------------------------------------------------------------
 # Routing on ``state_shape`` (LAYER2-COMMON section 2)
 # ---------------------------------------------------------------------------
 
