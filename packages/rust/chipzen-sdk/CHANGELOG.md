@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-12
+
+Released in lockstep with `chipzen-bot` 0.5.0, which it now requires
+(`chipzen-bot = "0.5"`). `chipzen-sdk init` now starts new projects on the
+current SDK.
+
+### Fixed
+
+- **`chipzen-sdk init` pins the current `chipzen-bot`.** The `Cargo.toml` it
+  wrote asked for `chipzen-bot = "0.3"`, so a new project built against 0.3.x
+  and missed every fix since. It now asks for `"0.5"`. The `validate` hint for
+  a missing `chipzen-bot` dependency names `"0.5"` too (it said `"0.2"`).
+
 ## [0.4.0] — 2026-11-06
 
 ### Changed
@@ -129,6 +142,8 @@ template.
 
 Apache-2.0.
 
+[0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.5.0
+[0.4.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.4.0
 [0.3.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.2
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.1
 [0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.0

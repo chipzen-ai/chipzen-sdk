@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-12
+
+Minor release (pre-1.0). `RunExternalOptions` gains a public field,
+`lobby_silence_timeout`, and `Error` gains a variant, `ProtocolClose`. A
+`RunExternalOptions` struct literal that names every field must add the new
+one or end with `..Default::default()`. `Error` is `#[non_exhaustive]`, so a
+`match` on it already has a `_` arm and keeps compiling.
+
+- **A remote bot comes back after the computer sleeps.** `run_external_bot()`
+  notices a lobby that went quiet during sleep and reconnects by itself, so
+  it no longer misses its matches.
+- **A lobby reconnect during a live match no longer forfeits that match.**
+- **A match the server ends for good stops at once.** A close code such as
+  `4013` (no shared protocol version) now ends the match with a clear error
+  instead of reconnecting in a loop.
+- **After a reconnect, the bot knows its own seat and the button again.**
+
+Upgrade with `chipzen-bot = "0.5"` in `Cargo.toml`. The details of each fix
+follow.
+
 ### Fixed
 
 - **After a real reconnect, the bot reads its own seat and the button**
@@ -495,6 +515,8 @@ and
 
 Apache-2.0.
 
+[0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.5.0
+[0.4.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.4.0
 [0.3.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.2
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.1
 [0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.0
