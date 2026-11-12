@@ -1348,6 +1348,18 @@ queue drain — see §6.3.
 - **Auth rejection.** Check `CHIPZEN_TOKEN` / `CHIPZEN_TICKET`. Local dev
   often accepts an empty token for the `/bot` endpoint; the hosted
   platform does not.
+- **A `403` from a remote bot or your own REST code, or the body
+  "error code: 1010".** The request was stopped before it reached
+  Chipzen because of its `User-Agent` header. "error code: 1010" is
+  Cloudflare refusing the client's `User-Agent` (Python's built-in
+  `urllib` default is the usual cause; `requests`, `httpx`, `curl`, Go and
+  Node `fetch` pass). A plain `403 Forbidden` page means no `User-Agent`
+  was sent at all, which is the default for raw Rust `tungstenite` and the
+  Node `ws` package. Retrying never helps. Send a `User-Agent` that names
+  your bot, such as `my-bot/1.0`, on every REST call and WebSocket
+  handshake. The SDKs already do (override with `user_agent=` in Python,
+  `userAgent` in JavaScript, `user_agent` in Rust). One-line examples are
+  in [`EXTERNAL-API-BOT-PROTOCOL.md` §8.7](EXTERNAL-API-BOT-PROTOCOL.md#87-a-403-before-your-request-reaches-chipzen-user-agent).
 
 ### 9.5 "Container dies immediately with no logs"
 

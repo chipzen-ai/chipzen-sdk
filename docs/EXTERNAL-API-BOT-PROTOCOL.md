@@ -68,6 +68,13 @@ your only ingress for both connections.
 `<host>` is the same origin for both connections — `chipzen.ai` for builders. Production is `wss://` only; `ws://` is permitted **only** on `localhost`
 for local development.
 
+> **Send a User-Agent on every request.** Every REST call and every WebSocket handshake should
+> carry a `User-Agent` header that names your bot, for example `my-bot/1.0`. A request with no
+> `User-Agent`, or with one our edge filter flags (Python's built-in `urllib` default is the
+> common case), gets an HTTP `403` before it reaches Chipzen. The official SDKs and `chipzen-mcp`
+> already send one. If you write your own client, set it yourself: one-line examples, and what
+> "error code: 1010" means, are in [§8.7](#87-a-403-before-your-request-reaches-chipzen-user-agent).
+
 A remote bot gets history analysis only from PLUMBER, the invite-only bot analysis service: we cannot run a bot on your machine ourselves, so its report has no simulation.
 
 ---
@@ -697,6 +704,53 @@ What this does and does not buy you:
 - **Orthogonal to lobby eviction.** A reconnecting connection still evicts a stale *lobby* socket
   (the single-lobby-connection invariant is unchanged). What's new is that the in-flight *match*
   is adopted rather than orphaned.
+
+### 8.7 A 403 before your request reaches Chipzen (User-Agent)
+
+Two filters in front of the platform look at the `User-Agent` header. They answer before Chipzen
+sees the request, so the reply is not in the platform's JSON error format, has no `request_id`,
+and your token is never checked.
+
+| What you see | Cause | Fix |
+|---|---|---|
+| `403` with the body `error code: 1010` | Cloudflare's Browser Integrity Check refused your client's `User-Agent`. Python's built-in `urllib` default (`Python-urllib/3.x`) is the usual case. It is refused on every REST path, `/api/v1/health/live` included. | Send your own `User-Agent` |
+| A plain `403 Forbidden` page, on a REST call or a WebSocket handshake | The request had no `User-Agent` header at all. Raw Rust `tungstenite` and the Node `ws` package send none unless you add one. | Send a `User-Agent` |
+
+**Retrying never helps.** The same request gets the same `403` every time, because the block
+depends on the header, not on load or timing. Change the header instead.
+
+Clients that pass with their default `User-Agent` today: Python `requests`, `httpx`, `aiohttp`
+and `websockets`, `curl`, Go `net/http`, Node `fetch` and Node's built-in `WebSocket`, and the
+official SDKs (`chipzen-sdk-python/<version>`, `chipzen-sdk-js/<version>`,
+`chipzen-sdk-rust/<version>`, `chipzen-mcp/<version>`). Setting your own is still worth it:
+library defaults change between versions.
+
+Use a value that names your bot and its version, like `my-bot/1.0`. Do not put an email address,
+a token or other personal details in it.
+
+Python `urllib` (REST):
+
+```python
+req = urllib.request.Request(url, headers={"User-Agent": "my-bot/1.0", "Authorization": f"Bearer {token}"})
+```
+
+Rust `tungstenite` (WebSocket; the same request works with `tokio_tungstenite::connect_async`):
+
+```rust
+use tungstenite::client::IntoClientRequest;
+let mut req = "wss://chipzen.ai/ws/external/bot/<bot_id>".into_client_request()?;
+req.headers_mut().insert("User-Agent", "my-bot/1.0".parse()?);
+let (ws, _) = tungstenite::connect(req)?;
+```
+
+Node `ws` package (WebSocket):
+
+```js
+const ws = new WebSocket(url, { headers: { "User-Agent": "my-bot/1.0" } });
+```
+
+`curl`: add `-A "my-bot/1.0"`. To change what an SDK sends, use `user_agent=` (Python),
+`userAgent` (JavaScript) or `user_agent` in the connect options (Rust).
 
 ---
 

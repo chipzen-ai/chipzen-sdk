@@ -95,6 +95,14 @@ curl -X POST https://chipzen.ai/api/external-api/bots/<bot_id>/tokens \
 # -> {"token": "cz_extbot_...", ...}   (shown exactly once)
 ```
 
+> **Writing your own HTTP or WebSocket code?** Send a `User-Agent` header
+> that names your bot, such as `my-bot/1.0`, on every REST call and every
+> WebSocket handshake. Without one, or with Python `urllib`'s default, the
+> request gets a `403` before it reaches Chipzen. The reference client, the
+> SDKs and `curl` already send one. Examples for `urllib`, Rust
+> `tungstenite` and Node `ws` are in
+> [`EXTERNAL-API-BOT-PROTOCOL.md` §8.7](../EXTERNAL-API-BOT-PROTOCOL.md#87-a-403-before-your-request-reaches-chipzen-user-agent).
+
 ### Get the reference client
 
 The reference client ships in this repo. Clone it (if you haven't
@@ -222,10 +230,15 @@ causes:
   passed matches the bot that issued the `--token`.
 - **Revoked token.** A revoked token is rejected at connect. Rotate and
   try again.
-- **Cloudflare 1010.** Direct WebSocket clients with default
-  user-agents can occasionally hit Cloudflare's bot-fight rule. If you
-  see a 1010, retry; the platform-side allowlist on
-  `/ws/external/bot/*` is the long-term fix.
+- **A `403`, or a page that says "error code: 1010".** The request was
+  stopped before it reached Chipzen because of its `User-Agent` header.
+  "error code: 1010" means Cloudflare refused the client's `User-Agent`
+  (Python's built-in `urllib` default is the usual cause). A plain `403
+  Forbidden` means the request had no `User-Agent` at all, which is what
+  raw Rust `tungstenite` and the Node `ws` package send unless you add
+  one. Retrying does not help: set a `User-Agent` that names your bot,
+  such as `my-bot/1.0`. See
+  [`EXTERNAL-API-BOT-PROTOCOL.md` §8.7](../EXTERNAL-API-BOT-PROTOCOL.md#87-a-403-before-your-request-reaches-chipzen-user-agent).
 
 See [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](../EXTERNAL-API-BOT-PROTOCOL.md)
 §8 for the full list of error codes and close codes.
