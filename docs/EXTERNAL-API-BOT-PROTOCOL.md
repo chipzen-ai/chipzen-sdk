@@ -582,13 +582,23 @@ the match is rated, and which decision clock is enforced).
 | `4001` | auth failed | Invalid/revoked `cz_extbot_` token, or the seat is not owned by your bot |
 | `4002` | forbidden / capacity | Malformed `match_id`/`participant_id`, or **no executor registered** for this match yet |
 | `1011` | executor unavailable | The gateway could not establish the inner WS to the executor |
+| `4005` | match already ended | From v0.7.81: you dialed (or redialed) a match that has already ended (`completed`, `cancelled`, `forfeit`, `void`, `abandoned` or `error`) and has no executor any more. The gateway completes the handshake, sends no frames, and closes with reason `match already ended`. Final: do not redial. Before v0.7.81 this case gets the HTTP 403 refusal described below. |
 | `1000` | normal | Match completed / executor closed cleanly |
 
+> **Most refusals arrive as an HTTP 403, not a close code.** The gateway makes the `1008`,
+> `4001`, `4002` and `1011` refusals above **before** it accepts the WebSocket, and a server
+> that refuses before accepting cannot send a close frame. Your client sees the WebSocket
+> handshake fail with HTTP 403 and never receives the code; the code and reason are only in
+> the server log. Treat a 403 on the match dial as "refused", not as a network fault. `4005`
+> (from v0.7.81) is the exception: the gateway accepts the socket first so that it can carry
+> the code. An open match connection that is cut because the bot owner signed out or the
+> account was disabled gets a real `4001` close frame.
+
 > **Note on 4002 "no executor registered."** Don't dial the gateway before you've received the
-> `matched` notification — the executor is allocated as part of dispatch, and the registry
-> entry the gateway resolves against appears around then. If you dial too early (or after the
-> match has been torn down) you'll get 4002. The correct trigger to dial is the `matched`
-> frame.
+> `matched` notification: the executor is allocated as part of dispatch, and the registry
+> entry the gateway resolves against appears around then. If you dial too early you get the
+> 403 refusal (logged as 4002); before v0.7.81, so does a dial after the match has been torn
+> down. The correct trigger to dial is the `matched` frame.
 
 ### 8.3 In-match (Layer 1) close codes
 
