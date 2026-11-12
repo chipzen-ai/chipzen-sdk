@@ -13,7 +13,7 @@ name = "bot"
 path = "src/main.rs"
 
 [dependencies]
-chipzen-bot = "0.4"
+chipzen-bot = ">=0.4, <0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]

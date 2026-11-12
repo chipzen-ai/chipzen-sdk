@@ -46,7 +46,7 @@ no Dockerfile of its own).
 
 ## Installing from crates.io
 
-This bot's `Cargo.toml` pulls `chipzen-bot = "0.4"` straight from
+This bot's `Cargo.toml` pulls `chipzen-bot = ">=0.4, <0.6"` straight from
 crates.io, so `cargo run` above just works — the crate is published at
 [crates.io/crates/chipzen-bot](https://crates.io/crates/chipzen-bot).
 

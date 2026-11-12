@@ -74,7 +74,7 @@ name = "bot"
 path = "src/main.rs"
 
 [dependencies]
-chipzen-bot = "0.3"
+chipzen-bot = "0.5"
 tokio = {{ version = "1", features = ["macros", "rt-multi-thread"] }}
 
 [profile.release]

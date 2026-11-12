@@ -59,12 +59,12 @@ More detail:
 ## 2. Install the SDK
 
 Big Bad Bots support is in the JavaScript SDK (`@chipzen-ai/bot`) from 0.4.0.
-The starter's `package.json` already depends on it (`"@chipzen-ai/bot": "^0.5.0"`),
+The starter's `package.json` already depends on it (`"@chipzen-ai/bot": "^0.5.0 || ^0.6.0"`),
 so `npm install` in step 3 installs it. To add it to a bot folder of your own
 instead:
 
 ```bash
-npm install @chipzen-ai/bot@^0.5.0
+npm install @chipzen-ai/bot@^0.6.0
 ```
 
 ## 3. Copy the starter

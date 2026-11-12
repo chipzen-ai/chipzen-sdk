@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-12
+
+Minor release. It adds two public names, `chipzen.ProtocolCloseError` and
+`chipzen.TERMINAL_CLOSE_CODES`, and one `run_external_bot()` option,
+`lobby_silence_timeout`. Bots written for 0.6 keep working without changes.
+
+- **`chipzen-sdk init` now creates a bot that runs.** It writes the current
+  starter (a `bot.py` with `main()` and the IP-protected Dockerfile), and
+  `validate` now fails a project that would upload fine and then never start.
+  Note that `validate` now fails a poker bot folder with no Dockerfile.
+- **A remote bot comes back after the computer sleeps.** `run_external_bot()`
+  notices a lobby that went quiet during sleep and reconnects by itself, so
+  it no longer misses its matches.
+- **A match the server ends for good stops at once.** A close code such as
+  `4013` (no shared protocol version) now ends the match with a clear error
+  instead of reconnecting in a loop.
+- **After a reconnect, the bot knows its own seat and the button again.**
+
+Upgrade with `pip install -U chipzen-bot`. The details of each fix follow.
+
 ### Fixed
 
 - **After a real reconnect, the bot reads its own seat and the button**
@@ -617,6 +637,9 @@ debugging at the wire level:
 Apache-2.0 (changed from MIT in earlier internal builds — aligns with
 the chipzen-sdk repo's root LICENSE).
 
+[0.7.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.7.0
+[0.6.3]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.6.3
+[0.6.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.6.2
 [0.6.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.6.1
 [0.6.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.6.0
 [0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.5.0

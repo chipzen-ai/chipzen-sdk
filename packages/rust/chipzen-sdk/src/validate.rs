@@ -214,7 +214,7 @@ fn check_dependencies(manifest: &CargoManifest) -> Vec<ValidationResult> {
     if !deps.contains("chipzen-bot") {
         out.push(fail(
             "imports",
-            "chipzen-bot dependency missing from Cargo.toml — add `chipzen-bot = \"0.2\"`"
+            "chipzen-bot dependency missing from Cargo.toml — add `chipzen-bot = \"0.5\"`"
                 .to_string(),
         ));
         return out;

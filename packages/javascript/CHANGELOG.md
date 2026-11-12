@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-12
+
+Minor release. It adds two public names, `ProtocolCloseError` and
+`TERMINAL_CLOSE_CODES`, and one `runExternalBot()` option,
+`lobbySilenceTimeoutMs`. Bots written for 0.5 keep working without changes.
+
+- **Lobby frames lost after a long idle are fixed.** A `runExternalBot()`
+  lobby that sat quiet for a while could drop the next `ping`, `matched` or
+  `evict` frame, so the bot missed matches. It now receives every frame.
+- **`chipzen-sdk init` now creates a bot that runs.** It writes the current
+  starter, with a current SDK version instead of 0.2, and `validate` now
+  fails a project that would upload fine and then never start. Note that
+  `validate` now fails a poker bot folder with no Dockerfile.
+- **A remote bot comes back after the computer sleeps.** `runExternalBot()`
+  notices a lobby that went quiet during sleep and reconnects by itself.
+- **A match the server ends for good stops at once.** A close code such as
+  `4013` (no shared protocol version) now ends the match with a clear error
+  instead of reconnecting in a loop.
+- **After a reconnect, the bot knows its own seat and the button again.**
+
+Upgrade with `npm install @chipzen-ai/bot@^0.6.0`. The details of each fix
+follow.
+
 ### Fixed
 
 - **After a real reconnect, the bot reads its own seat and the button**
@@ -547,6 +570,9 @@ and
 
 Apache-2.0.
 
+[0.6.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.6.0
+[0.5.3]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.5.3
+[0.5.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.5.2
 [0.5.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.5.1
 [0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.5.0
 [0.4.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/javascript-v0.4.0
