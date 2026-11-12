@@ -283,9 +283,32 @@ Sent after the server has received the bot's `authenticate` message. It is the f
 | `server_name` | string | yes | Always `"chipzen"`. |
 | `game_type` | string | yes | The game this seat is playing. `"poker"` for NLHE. |
 | `capabilities` | string[] | yes | Server capabilities. The server sends `["reconnect"]` while reconnection is enabled, and `[]` when it has been switched off. |
-| `game` | object | no | Only at a non-poker table: the game's action vocabulary, phase sequence and state-shape marker (chipzen-ai/Chipzen#4245). Absent for poker, so an NLHE `hello` never carries it. |
+| `game` | object | no | Only at a non-poker table: the game's action vocabulary, phase sequence and state-shape marker (chipzen-ai/Chipzen#4245). Absent for poker, so an NLHE `hello` never carries it. See "The `game` descriptor" below. |
 
 There is no `server_id` field.
+
+**The `game` descriptor.** At a non-poker table the server `hello` carries a `game` object that describes the table (chipzen-ai/Chipzen#4245). At a poker table the key is left out entirely, so **absent means poker** and the NLHE `hello` is unchanged. The descriptor at a 2-7 Triple Draw table:
+
+```json
+{
+  "game_type": "draw27",
+  "variant": "27tripledraw",
+  "actions": ["call", "check", "draw", "fold", "raise"],
+  "phases": ["predraw", "draw1", "bet1", "draw2", "bet2", "draw3", "bet3", "showdown", "complete"],
+  "state_shape": "27tripledraw"
+}
+```
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `game_type` | string | The game, the same value as the `hello`'s own `game_type`. |
+| `variant` | string | The Layer 2 dialect, the same string `match_start.game_config.variant` announces. |
+| `actions` | string[] | Every action name a client must be able to send at this table, sorted alphabetically. |
+| `phases` | string[] | The table's phases, in the order they are played. |
+| `state_shape` | string | Names the shape of this table's state payloads. Today it equals `variant`, or `game_type` for a game with no variant. |
+| `unsupported_game_type` | boolean | Present, as `true`, only when the server has no rules for the seat's game and cannot describe it. `variant` is then `""`, `actions` and `phases` are empty, and `state_shape` is `"unknown"`. |
+
+A client MUST read `state_shape` before it parses any state payload, and MUST treat a value it does not know as "I cannot parse this table", never as "drop the keys I do not recognise". Each Layer 2 variant document gives the exact descriptor its tables send. To be seated at a non-poker table, a client must also declare the game in its own `hello` (`supported_games`, section 9.1).
 
 ### 8.2 `session_token`
 
@@ -637,6 +660,19 @@ Bot's response to the server `hello`. Must be sent within 5000ms of receiving th
 }
 ```
 
+A client that can also play 2-7 Triple Draw declares it with `supported_games`:
+
+```json
+{
+  "type": "hello",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "supported_versions": ["1.0"],
+  "client_name": "MyMultiGameBot",
+  "client_version": "1.4.0",
+  "supported_games": ["poker", "draw27"]
+}
+```
+
 **JSON Schema:**
 
 ```json
@@ -651,7 +687,11 @@ Bot's response to the server `hello`. Must be sent within 5000ms of receiving th
       "minItems": 1
     },
     "client_name": { "type": "string", "maxLength": 64 },
-    "client_version": { "type": "string", "maxLength": 32 }
+    "client_version": { "type": "string", "maxLength": 32 },
+    "supported_games": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
   },
   "required": ["type", "match_id", "supported_versions"],
   "additionalProperties": false
@@ -663,6 +703,14 @@ Bot's response to the server `hello`. Must be sent within 5000ms of receiving th
 | `supported_versions` | string[] | yes | Protocol versions the client supports (major.minor format). The server selects the highest mutually supported version. |
 | `client_name` | string | no | Client software name |
 | `client_version` | string | no | Client software version |
+| `supported_games` | string[] | no | The games this client can play, as `game_type` strings (chipzen-ai/Chipzen#4245). **Absent means "poker only"**, which is what a client that predates the field means. Declaring a `game_type` asserts that the client implements everything in that game's Layer 2 document. |
+
+**Declaring games (`supported_games`).** The match server reads `supported_games` from this `hello` only. At a poker table it is never checked. At a non-poker table (the server `hello` carried a `game` descriptor, section 8.1) the seat's `game_type` must be in the list, or the client is rejected **before it is seated**, rather than being seated and auto-played to zero. A missing list, an empty list and a value that is not a list all count as not declaring the game. The rejection is two frames:
+
+1. an `error` frame (section 8.10) with `code: "EXTAPI_CLIENT_GAME_UNSUPPORTED"`, a `message` naming the game and what the client declared, and the seat's `game_type`;
+2. a WebSocket close with code **`4002`** and reason `game_unsupported_by_client`.
+
+The `error` frame is the signal to act on. A relay in front of the match server may not pass the close through as-is: the External-API match gateway relays the `error` frame unchanged, then ends the bot's connection with a `match_end` frame and close `1000`.
 
 ### 9.2 `turn_action`
 
