@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (preview: chess is not live on Chipzen yet)
+
+- **Chess bots, standard chess (rule set `chess-1.0`).** Preview only: chess
+  cannot be played on the platform yet, and the field names may change before
+  it goes live. See [`docs/CHESS-BOTS.md`](../../docs/CHESS-BOTS.md).
+  - `chipzen.chess`: typed models for `state_shape: "chess"` (`ChessState`,
+    `ChessClock`, `ChessGameConfig`), and `Action.move("e2e4")`.
+  - `chipzen.ChessBot`: implement `choose_move(state)` and return one of
+    `state.legal_moves`. The session loop sends a listed fallback move when the
+    bot is too slow, raises, or answers a move that is not listed, and retries
+    an `action_rejected` with another listed move.
+  - `chipzen.chess_uci.UciBridgeBot`: plays the moves of a UCI engine you
+    supply (none is bundled), with a legal fallback.
+  - Two starters, `chipzen-sdk init <name> --template chess` (legal mover) and
+    `--template chess-uci` (UCI bridge), and `chipzen-sdk validate` chess checks
+    against recorded requests from Chipzen's chess engine.
+  - The SDK has no chess rules and no chess library: it only reads the legal
+    moves each request lists.
+
 ## [0.7.0] — 2026-11-12
 
 Minor release. It adds two public names, `chipzen.ProtocolCloseError` and

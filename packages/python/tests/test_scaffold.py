@@ -45,10 +45,13 @@ class TestNoDrift:
         pyproject = tomllib.loads((PACKAGE_DIR / "pyproject.toml").read_text("utf-8"))
         mapping = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
         expected = {
-            f"starters/python/{name}": f"chipzen/{scaffold.PACKAGED_STARTER}/{name}"
-            for name in STARTER_FILES
+            f"starters/{spec.source}/{name}": f"chipzen/{spec.packaged}/{name}"
+            for spec in scaffold.TEMPLATES.values()
+            for name in spec.files
         }
         assert mapping == expected
+        assert scaffold.TEMPLATES["python"].packaged == scaffold.PACKAGED_STARTER
+        assert scaffold.TEMPLATES["python"].files == STARTER_FILES
 
     def test_init_output_is_byte_identical_to_the_starter(self, tmp_path):
         bot_dir = scaffold_bot("drift_bot", parent_dir=tmp_path)

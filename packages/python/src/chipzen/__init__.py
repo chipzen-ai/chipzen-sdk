@@ -24,6 +24,7 @@ except PackageNotFoundError:  # pragma: no cover - running from an uninstalled s
 
 from chipzen.bigbadbots_bot import BigBadBotsBot
 from chipzen.bot import ChipzenBot
+from chipzen.chess_bot import ChessBot
 from chipzen.client import BotDecisionError, run_bot
 from chipzen.close_codes import TERMINAL_CLOSE_CODES, ProtocolCloseError
 from chipzen.config import ChipzenConfig, ChipzenConfigError, load_chipzen_config
@@ -60,6 +61,9 @@ __all__ = [
     "TurnResult",
     # Big Bad Bots bot authoring (state models: chipzen.bigbadbots)
     "BigBadBotsBot",
+    # Chess bot authoring, PREVIEW: chess is not live (state models:
+    # chipzen.chess; UCI bridge: chipzen.chess_uci; docs/CHESS-BOTS.md)
+    "ChessBot",
     # Parsing by the table's state_shape (Big Bad Bots models: chipzen.bigbadbots)
     "parse_turn_request",
     "state_shape_of",
