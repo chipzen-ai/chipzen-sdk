@@ -211,8 +211,8 @@ The core decision payload. Contains everything a bot needs to choose an action.
 | `your_stack`      | integer                | Yes      | The acting player's remaining stack (chips not yet in the pot).                                 |
 | `opponent_stacks` | array of integer       | Yes      | Other players' remaining stacks, ordered by seat (excluding the acting player's seat). Always a list: length N-1 at an N-player table, so exactly one entry in heads-up. Reading `opponent_stacks[0]` sees only one neighbor, not the whole field. See Section 5.9. |
 | `to_call`         | integer                | Yes      | Amount the acting player must add to call. `0` when checking is free.                           |
-| `min_raise`       | integer                | Yes      | Minimum legal raise total. `0` if raising is not a valid action.                                |
-| `max_raise`       | integer                | Yes      | Maximum legal raise total (the acting player's effective stack). `0` if raising is not valid.   |
+| `min_raise`       | integer                | Yes      | Minimum full raise total: the current bet plus the last full raise increment (the big blind before any raise). Always sent, also when `raise` is not in `valid_actions`; that list, not this field, says whether you may raise. Not capped by your stack: it can exceed `max_raise` (see Section 5.4). |
+| `max_raise`       | integer                | Yes      | Maximum raise total: what you have already bet this round plus your stack (an all-in). Always sent. |
 | `action_history`  | array of ActionEntry   | Yes      | All actions taken this hand so far, in chronological order. Includes synthetic blind/ante entries at the start. |
 
 **Raise semantics:** `min_raise` and `max_raise` represent the **total bet size**, not the incremental amount above the current bet. A bot submitting `raise` with `amount: 60` means the total bet is 60, not 60 on top of the existing bet.
@@ -249,7 +249,7 @@ Parameters accompanying the chosen action in `turn_action.action`.
 | `fold`    | `{}` or omitted                        | None.                                              |
 | `check`   | `{}` or omitted                        | None.                                              |
 | `call`    | `{}` or omitted                        | None.                                              |
-| `raise`   | `{"amount": <integer>}`                | `min_raise <= amount <= max_raise`                 |
+| `raise`   | `{"amount": <integer>}`                | `min(min_raise, max_raise) <= amount <= max_raise` (Section 5.4) |
 
 **Example — raise to 60:**
 ```json
@@ -881,21 +881,23 @@ No showdown: Seat 1 folded and Seat 0 wins the pot. Because the hand was won by 
 
 Blinds are posted automatically by the server before any turn requests. They are recorded in `action_history` as **synthetic entries** using the `post_small_blind` and `post_big_blind` actions. These entries always appear at the start of the action history, before any player actions. The pot in the first `turn_request` of a hand already includes posted blinds. Stack values already reflect blind deductions.
 
+**Short all-in big blind (chipzen-ai/Chipzen#5458).** When the big blind's stack is smaller than the big blind, that seat posts its whole stack and is all-in; its `post_big_blind` entry carries the amount actually posted. The bet to match stays at the full big blind, though, so the other seats' `to_call` is measured against the configured `big_blind`, not against the short post. Heads-up, the small blind is told `to_call` = `big_blind` minus its posted small blind, and calling puts in that full amount (or its whole stack, if smaller). The part of the call that the all-in big blind cannot match is uncalled: the server returns it to the caller when the hand settles, inside that seat's `payouts` amount and `stacks`. Chips, pot shares and winners come out the same as under the convention some engines use (pokerkit, for example) of charging only the matchable amount; only `to_call` differs. So in this spot `to_call` overstates what the seat can lose in the hand. A bot that sizes from `to_call` can cap its real exposure at the all-in seat's posted amount minus its own bet this round. This is the platform's convention, documented here; it is not a rules change.
+
 ### 5.2 Ante Posting
 
 When `ante > 0` in `game_config`, antes are posted automatically alongside blinds. They are recorded in `action_history` as synthetic `post_ante` entries, appearing after blind entries and before player actions. Pot and stack values reflect ante deductions.
 
 ### 5.3 Heads-Up Blind Structure
 
-In heads-up (2-player) play:
+Heads-up means two players with chips, at a table of any size. A 6-seat table down to two stacks plays exactly as a 2-seat table does:
 - The **dealer** (button) posts the **small blind** and acts **first preflop**.
 - The **non-dealer** posts the **big blind** and acts **first post-flop** (flop, turn, river).
 
 ### 5.4 Raise Sizing
 
-- `min_raise` is the minimum legal **total bet**. In standard NLHE, the minimum raise is the previous raise increment plus the current bet to match.
-- `max_raise` is the acting player's effective stack (the most they can put in).
-- If a player's stack is less than `min_raise`, `raise` is **still** offered — the server clamps the minimum down to `max_raise` rather than dropping the action, so the short stack can shove.
+- `min_raise` is the minimum full raise as a **total bet**: the current bet plus the previous raise increment (the big blind when nobody has raised yet). It is sent on every `turn_request`, whether or not `raise` is offered.
+- `max_raise` is the most the acting player can put in this round: their bet this round plus their stack.
+- `min_raise` is **not** capped by the stack, so a short stack can see `min_raise > max_raise`. `raise` is still offered when it would otherwise be (the server does not drop the action), and the legal range is then just the all-in: send `amount = max_raise`. In general a valid raise is `min(min_raise, max_raise) <= amount <= max_raise`; the server clamps an amount outside that range into it rather than rejecting it.
 - The `amount` in raise params is the **total bet size**, not the increment.
 
 ### 5.5 All-In
@@ -930,15 +932,22 @@ The protocol is multi-player ready without a breaking change. Heads-up is just t
 
 **Table size.** Read it from `match_start.game_config.num_players`, or derive it from any turn state as `len(opponent_stacks) + 1`.
 
-**Deriving your position.** Position is your seat's offset from the button:
+**Busted seats stay in the list.** A seat that has gone out stays in `opponent_stacks` with a stack of `0` for the rest of the match, and `num_players` keeps counting it. So the table size is the number of chairs, not the number of players still in, and position has to be counted among the seats still in.
+
+**Deriving your position.** Position is your seat's offset from the button, counted among the live seats:
 
 ```
-num_players        = len(opponent_stacks) + 1
-seats_after_button = (your_seat - dealer_seat) mod num_players
+seats              = 0 .. len(opponent_stacks), the whole table; opponent_stacks skips your seat
+live_seats         = your seat, plus every other seat that has chips or appears in this hand's action_history
+seats_after_button = (index of your_seat in live_seats - index of dealer_seat in live_seats) mod len(live_seats)
 ```
 
-- `0` is the button. In heads-up the button posts the small blind and acts first preflop (Section 5.3), so seat-after-button `0` is the small blind and `1` is the big blind.
-- For three or more players, `1` is the small blind, `2` is the big blind, and the remaining offsets are the seats between the big blind and the button, counted clockwise. The offset `num_players - 1`, immediately to the button's right, is the cutoff and acts last postflop.
+A seat that is all-in this hand shows a stack of `0` but has an entry in `action_history`, at least its blind or its bet. A busted seat has neither. `dealer_seat` is always a live seat.
+
+- `0` is the button. With two live seats, at a table of any size, the button posts the small blind and acts first preflop (Section 5.3), so seat-after-button `0` is the small blind and `1` is the big blind.
+- With three or more live seats, `1` is the small blind, `2` is the big blind, and the remaining offsets are the seats between the big blind and the button, counted clockwise. The offset `len(live_seats) - 1`, immediately to the button's right, is the cutoff and acts last postflop.
+
+Example: at a 6-seat table with seats 1, 2 and 5 busted and `dealer_seat` 0, the live seats are 0, 3 and 4. Seat 3 is the small blind and seat 4 the big blind, offsets `1` and `2`, although they sit 3 and 4 chairs from the button.
 
 **Silent-failure risk.** Because `opponent_stacks` is a list, a heads-up bot that hardcodes `opponent_stacks[0]` keeps running at a 3-6 seat table but reads only one neighbor's stack instead of aggregating across opponents. This is a behavioral bug, not a crash, so it will not surface as an error or a rejected action. Iterate the list (for example `sum`, `min`, `max`, or index by the specific seat you care about) rather than assuming a single opponent. The reference starters in `sdk/starters/` show the seat-count-aware pattern, and `docs/DEV-MANUAL.md` carries the bot-author guidance.
 

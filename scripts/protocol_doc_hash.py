@@ -102,20 +102,20 @@ MIRRORED_DOCS: dict[str, str] = {
 #: only is exactly the divergence this exists to catch.
 EXPECTED_DIGESTS: dict[str, str] = {
     "BIGBADBOTS-GAME-STATE-PROTOCOL": (
-        "de08adf2aa49537f08254779265a2952ca7b823098dea6623bf04fb3f1f49fa6"
+        "711326dee24a0a7318f94f2bc0810f39c10f906ca980e7b3359f3fd3bb0a9738"
     ),
     "DRAW27-GAME-STATE-PROTOCOL": (
         "b2e91a9a44096369f863c58ddbca435ecaea119248edcf708c19cf70bf0f0980"
     ),
     "EXTERNAL-API-BOT-PROTOCOL": (
-        "3fc019c65b68653b519aaa1a4bacc783cfc43182e90d71c3e33b72e5bfcc811f"
+        "d4f87798f21c9216dc0f693d9c611c4470cfb13f3ad798d60f5a02692cabfc39"
     ),
-    "LAYER2-COMMON": ("23e075ffa970c77f609c3fa137a62f2b95a077775bb9894ec3868f74f56478d7"),
+    "LAYER2-COMMON": ("20df68f9c5ee596aa27ceeac6bc0d6bdf589e66cdfc12c061bbd334b847484ed"),
     "OFC-GAME-STATE-PROTOCOL": ("b4a4da158cf9f1b08a3c835ba2372c640a8f31f2e1c8ea3cae454df57f99c8cc"),
     "POKER-GAME-STATE-PROTOCOL": (
-        "38d5f4d0e6c70c7d4febd5199d2d07ff4581c5d5db0721d09d56b6c0a59dd141"
+        "d0cf646cea8b0c6ad0491db51b07217c849d125637c1a32060188a7d46a51b5b"
     ),
-    "TRANSPORT-PROTOCOL": ("725d46ff7df52fdb16af22abbffdc37896eeec91caadf020e1a2423c4d796ff4"),
+    "TRANSPORT-PROTOCOL": ("454e83f67b7808b16cc5897ddd8bc90ed4454473b747b44fa27e1060a00fde4c"),
 }
 
 

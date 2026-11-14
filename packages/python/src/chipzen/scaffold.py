@@ -1,124 +1,64 @@
-"""Scaffold a new bot project with starter files.
+"""Scaffold a new bot project from the Python starter.
 
-Creates a directory with everything needed to get started building
-a Chipzen poker bot.
+``chipzen-sdk init <name>`` writes a copy of the canonical starter at
+``packages/python/starters/python/`` in the SDK repo: ``bot.py`` with its
+``main()`` entry point, the IP-protected ``Dockerfile``, ``.dockerignore``,
+``requirements.txt``, ``README.md`` and ``.gitignore``.
+
+The files are not duplicated in this module. The wheel carries the starter
+folder as package data (``chipzen/_starters/python``, mapped in
+``pyproject.toml``), and a source checkout reads the starter folder itself,
+so ``init`` and the starter cannot drift apart again (issue #260: the old
+inline templates wrote a ``main.py`` with no ``main()`` and no Dockerfile).
 """
 
 from __future__ import annotations
 
 import sys
+from importlib import resources
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-MAIN_PY_TEMPLATE = '''\
-"""My Chipzen poker bot."""
+if TYPE_CHECKING:
+    from importlib.abc import Traversable
 
-from chipzen import Bot, GameState, Action
+#: Every file of the Python starter, in the order ``init`` writes them. A
+#: test pins this list against the starter folder and against the wheel's
+#: package-data mapping in ``pyproject.toml``, so a file added to one is not
+#: silently left out of the other.
+STARTER_FILES = (
+    "bot.py",
+    "requirements.txt",
+    "Dockerfile",
+    ".dockerignore",
+    "README.md",
+    ".gitignore",
+)
+
+#: Where the wheel puts the starter, relative to the ``chipzen`` package.
+PACKAGED_STARTER = "_starters/python"
+
+#: The starter folder in a source checkout (``src/chipzen/scaffold.py`` ->
+#: ``packages/python/starters/python``). An editable install has no package
+#: data, so it reads the files from here.
+SOURCE_STARTER = Path(__file__).resolve().parent.parent.parent / "starters" / "python"
 
 
-class MyBot(Bot):
-    """A starter bot -- customize the decide() method to build your strategy."""
+def starter_root() -> Traversable:
+    """The folder ``init`` copies: the packaged starter, else the source tree's.
 
-    def decide(self, state: GameState) -> Action:
-        # Your strategy goes here!
-        # state.valid_actions tells you what you can do: fold, check, call, raise
-        # state.hole_cards has your two cards
-        # state.board has the community cards
-        # state.pot is the total pot size
-        # state.to_call is how much you need to put in to call
-
-        # Simple default: check when free, call small bets, fold large ones
-        if "check" in state.valid_actions:
-            return Action.check()
-
-        if state.to_call < state.pot * 0.3:
-            return Action.call()
-
-        return Action.fold()
-
-    def on_hand_start(self, hand_number: int, hole_cards: list) -> None:
-        """Called at the start of each hand. Use for per-hand setup."""
-        pass
-
-    def on_hand_result(self, result: dict) -> None:
-        """Called after each hand. Use to track opponent tendencies."""
-        pass
-'''
-
-REQUIREMENTS_TEMPLATE = """\
-# Chipzen bot dependencies
-# Only packages in the platform allow-list can be installed in the sandbox.
-#
-# Allowed packages:
-#   websockets    (included automatically)
-#   numpy         (for numerical computing)
-#   scipy         (for scientific computing)
-#   chipzen-sdk   (included automatically)
-#
-# Add your dependencies below:
-"""
-
-README_TEMPLATE = """\
-# {name}
-
-A poker bot for the [Chipzen](https://chipzen.ai) platform.
-
-## Quick Start
-
-1. Install the SDK:
-   ```bash
-   pip install chipzen-bot
-   ```
-
-2. Edit `main.py` to implement your strategy in the `decide()` method.
-
-3. Validate before uploading:
-   ```bash
-   chipzen-sdk validate .
-   ```
-
-4. Zip and upload:
-   ```bash
-   zip {name}.zip main.py requirements.txt
-   # Upload via the Chipzen web UI
-   ```
-
-## Bot API
-
-Your bot receives a `GameState` with:
-- `hole_cards` -- your two private cards
-- `board` -- community cards dealt so far
-- `pot` -- total chips in the pot
-- `to_call` -- chips needed to call (0 means you can check)
-- `valid_actions` -- what you can do right now
-- `min_raise` / `max_raise` -- valid raise range
-
-Return an `Action`:
-- `Action.fold()`
-- `Action.check()`
-- `Action.call()`
-- `Action.raise_to(amount)`
-
-## Tips
-
-- The platform enforces a 500ms decision timeout. Keep your `decide()` fast.
-- Test against all three built-in opponents: `random`, `call`, `tight`
-- Run `chipzen-sdk validate .` before every upload to catch problems early.
-"""
-
-GITIGNORE_TEMPLATE = """\
-__pycache__/
-*.pyc
-*.pyo
-.env
-# Never commit your external-API token.
-chipzen.toml
-.venv/
-venv/
-*.egg-info/
-dist/
-build/
-.pytest_cache/
-"""
+    Raises:
+        FileNotFoundError: Neither is present (a broken install).
+    """
+    packaged = resources.files("chipzen").joinpath(PACKAGED_STARTER)
+    if packaged.joinpath("bot.py").is_file():
+        return packaged
+    if (SOURCE_STARTER / "bot.py").is_file():
+        return SOURCE_STARTER
+    raise FileNotFoundError(
+        "The Python starter is missing from this chipzen-bot install. "
+        "Reinstall it with `pip install --force-reinstall chipzen-bot`."
+    )
 
 
 def scaffold_bot(
@@ -126,7 +66,7 @@ def scaffold_bot(
     *,
     parent_dir: Path | None = None,
 ) -> Path:
-    """Create a new bot project directory with starter files.
+    """Create a new bot project directory holding a copy of the Python starter.
 
     Args:
         name: Name of the bot project (used as directory name).
@@ -137,6 +77,7 @@ def scaffold_bot(
 
     Raises:
         FileExistsError: If the directory already exists.
+        FileNotFoundError: If the starter is missing from the install.
     """
     if parent_dir is None:
         parent_dir = Path.cwd()
@@ -146,12 +87,15 @@ def scaffold_bot(
     if bot_dir.exists():
         raise FileExistsError(f"Directory already exists: {bot_dir}")
 
-    bot_dir.mkdir(parents=True)
+    root = starter_root()
+    # Read everything before creating the folder, so a broken install leaves
+    # nothing half-written behind.
+    contents = {filename: root.joinpath(filename).read_bytes() for filename in STARTER_FILES}
 
-    (bot_dir / "main.py").write_text(MAIN_PY_TEMPLATE)
-    (bot_dir / "requirements.txt").write_text(REQUIREMENTS_TEMPLATE)
-    (bot_dir / "README.md").write_text(README_TEMPLATE.format(name=name))
-    (bot_dir / ".gitignore").write_text(GITIGNORE_TEMPLATE)
+    bot_dir.mkdir(parents=True)
+    for filename, data in contents.items():
+        # Bytes, not text: the copy is exact, line endings included.
+        (bot_dir / filename).write_bytes(data)
 
     return bot_dir
 
@@ -162,7 +106,7 @@ def init_cli(args: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(
         prog="chipzen-sdk init",
-        description="Scaffold a new Chipzen poker bot project",
+        description="Scaffold a new Chipzen poker bot project from the Python starter",
     )
     parser.add_argument(
         "name",
@@ -180,7 +124,7 @@ def init_cli(args: list[str] | None = None) -> None:
 
     try:
         bot_dir = scaffold_bot(parsed.name, parent_dir=parent)
-    except FileExistsError as e:
+    except (FileExistsError, FileNotFoundError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -188,5 +132,8 @@ def init_cli(args: list[str] | None = None) -> None:
     print()
     print("Next steps:")
     print(f"  cd {parsed.name}")
-    print("  # Edit main.py to implement your strategy")
+    print("  # Edit decide() in bot.py. Keep main() at the bottom: the image calls it.")
     print("  chipzen-sdk validate .")
+    print("  docker build -t my-bot:v1 .")
+    print("  docker save my-bot:v1 | gzip > my-bot.tar.gz")
+    print("  # Upload my-bot.tar.gz through the Chipzen web UI. See README.md.")

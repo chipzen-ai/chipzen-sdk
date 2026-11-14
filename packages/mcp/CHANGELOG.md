@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-11-12
+
+Patch release: `uvx chipzen-mcp` now starts on Intel Macs. The tools are
+unchanged. The server still needs `chipzen-bot` 0.4.0 or later, and a fresh
+`uvx chipzen-mcp` picks up the latest `chipzen-bot`, including the lobby
+reconnect fixes in 0.7.0.
+
+### Fixed
+
+- **`uvx chipzen-mcp` installs on an x86_64 Python on macOS** (Intel Macs, or
+  an Intel Homebrew `uv`/`pip` under Rosetta). cryptography, which `mcp` pulls
+  in through `PyJWT[crypto]`, ships macOS wheels for arm64 only from 49.0, so
+  that platform had to compile it from source and the server never started
+  (#217). `chipzen-mcp` now holds `cryptography<49` on x86_64 macOS only (48.0.1
+  has a universal2 wheel); every other platform keeps the latest.
+
+## [0.3.2] — 2026-11-05
+
 ### Changed
 
 - **A spent daily challenge quota has its own error.** `join_rated_queue` and
@@ -172,6 +190,8 @@ five-tool expansion above. This changelog starts at 0.2.0; for the 0.1.x line
 see the release history at
 <https://github.com/chipzen-ai/chipzen-sdk/releases> and the `mcp-v0.1.*` tags.
 
+[0.3.3]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.3.3
+[0.3.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.3.2
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.3.1
 [0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.3.0
 [0.2.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/mcp-v0.2.1

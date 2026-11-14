@@ -16,7 +16,7 @@ from chipzen.validate import (
 
 
 @pytest.fixture
-def tmp_bot(tmp_path):
+def tmp_bot(tmp_path, make_image_ready):
     """Create a minimal valid bot in a temp directory."""
     code = textwrap.dedent("""\
         from chipzen import Bot, GameState, Action
@@ -28,7 +28,7 @@ def tmp_bot(tmp_path):
                 return Action.fold()
     """)
     (tmp_path / "main.py").write_text(code)
-    return tmp_path
+    return make_image_ready(tmp_path)
 
 
 @pytest.fixture
@@ -51,8 +51,10 @@ class TestValidBot:
         assert "decide_method" in check_names
         assert "smoke_test" in check_names
         assert "timeout" in check_names
+        assert "dockerfile" in check_names
+        assert "entry_main" in check_names
 
-    def test_valid_bot_with_bot_py(self, tmp_path):
+    def test_valid_bot_with_bot_py(self, tmp_path, make_image_ready):
         code = textwrap.dedent("""\
             from chipzen import Bot, GameState, Action
 
@@ -61,7 +63,7 @@ class TestValidBot:
                     return Action.call()
         """)
         (tmp_path / "bot.py").write_text(code)
-        results = validate_bot(tmp_path)
+        results = validate_bot(make_image_ready(tmp_path, "bot.py"))
         severities = [sev for sev, _, _ in results]
         assert "fail" not in severities
 
@@ -73,7 +75,7 @@ class TestFileStructure:
         fails = [(name, msg) for sev, name, msg in results if sev == "fail"]
         assert any(name == "file_structure" for name, _ in fails)
 
-    def test_custom_entry_point(self, tmp_path):
+    def test_custom_entry_point(self, tmp_path, make_image_ready):
         code = textwrap.dedent("""\
             from chipzen import Bot, GameState, Action
 
@@ -82,6 +84,7 @@ class TestFileStructure:
                     return Action.fold()
         """)
         (tmp_path / "custom.py").write_text(code)
+        make_image_ready(tmp_path, "custom.py")
         results = validate_bot(tmp_path, entry_point="custom.py")
         severities = [sev for sev, _, _ in results]
         assert "fail" not in severities
@@ -214,6 +217,7 @@ class TestZipValidation:
         zip_path = tmp_path / "bot.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.write(tmp_bot / "main.py", "main.py")
+            zf.write(tmp_bot / "Dockerfile", "Dockerfile")
         results = validate_bot(zip_path)
         severities = [sev for sev, _, _ in results]
         assert "fail" not in severities

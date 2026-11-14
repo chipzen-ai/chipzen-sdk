@@ -633,6 +633,18 @@ Here `timeout_ms` is 3250: the 250 ms response window plus an untouched 3000 ms 
 
 `params` admits no other keys: an extra key makes the answer malformed, and it is rejected (§3.7).
 
+**Answer limits.** These are part of an answer's shape. An answer outside them is malformed (§3.7), whatever its content.
+
+| What | Limit |
+|---|---|
+| A body id (`choose_body`) or a part id (a `fit` value) | A lowercase letter, then lowercase letters, digits and `_`. At most **32** characters. |
+| A slot index (a `fit` key) | A decimal string with no leading zero, at most **two** digits: `"0"` to `"99"`. |
+| The `fit` object | At most **8** entries. |
+
+Every legal answer is far inside them: no released rule set (`bigbadbots-1.0` to `bigbadbots-1.3`) has an id longer than 11 characters or a body with more than 6 slots. The SDK's `chipzen validate` fails an answer that breaks one.
+
+Today's server is looser than this table. It takes any string of up to 64 characters as a well-shaped id or slot key, accepts up to 64 `fit` entries, and reads a slot key such as `"01"` as slot 1. Such an answer is not rejected: the engine judges its content as usual, and corrects what is not legal (§3.7). Do not rely on the looser bounds: a bot inside the table is well-shaped on every server.
+
 **Example: choose a body.**
 
 ```json

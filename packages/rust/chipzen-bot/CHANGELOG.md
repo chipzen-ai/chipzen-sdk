@@ -8,6 +8,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-12
+
+Minor release (pre-1.0). `RunExternalOptions` gains a public field,
+`lobby_silence_timeout`, and `Error` gains a variant, `ProtocolClose`. A
+`RunExternalOptions` struct literal that names every field must add the new
+one or end with `..Default::default()`. `Error` is `#[non_exhaustive]`, so a
+`match` on it already has a `_` arm and keeps compiling.
+
+- **A remote bot comes back after the computer sleeps.** `run_external_bot()`
+  notices a lobby that went quiet during sleep and reconnects by itself, so
+  it no longer misses its matches.
+- **A lobby reconnect during a live match no longer forfeits that match.**
+- **A match the server ends for good stops at once.** A close code such as
+  `4013` (no shared protocol version) now ends the match with a clear error
+  instead of reconnecting in a loop.
+- **After a reconnect, the bot knows its own seat and the button again.**
+
+Upgrade with `chipzen-bot = "0.5"` in `Cargo.toml`. The details of each fix
+follow.
+
+### Fixed
+
+- **After a real reconnect, the bot reads its own seat and the button**
+  ([#199](https://github.com/chipzen-ai/chipzen-sdk/issues/199)). The match
+  server sends no `reconnected` frame: a reconnecting bot runs the handshake
+  again and the new session gets the next game frames, never `match_start`
+  or the current hand's `round_start`. So `GameState::your_seat` read 0 for the rest of the
+  match, and `dealer_seat` read 0 until the next hand. Until the session sees those
+  frames, the seat now comes from the Layer 1 `turn_request.seat` (always the
+  receiving bot's seat) and the button is worked out from the hand's blinds
+  (protocol sections 5.3 and 5.9). No platform change; a session that saw
+  `match_start` and `round_start` behaves exactly as before, and an OFC turn
+  state's own `your_seat` / `dealer_seat` still win.
+
+- **A match socket the server closes with `4013` (no mutually supported
+  protocol version) is no longer retried**
+  ([Chipzen #7008](https://github.com/chipzen-ai/Chipzen/issues/7008)). The SDK
+  read every close without a `match_end` as a drop and reconnected until the
+  retry budget ran out, so a version refusal just looped. The 4xxx codes in
+  `TERMINAL_CLOSE_CODES` (4003, 4005, 4006, 4010, 4012, 4013) now end the
+  match at once: one stderr line with the code and the server's reason, and
+  the new `Error::ProtocolClose { code, reason }` (`Error` is
+  `#[non_exhaustive]`, so this is additive). `run_bot()` returns it.
+  `run_external_bot()` records the match with `end: None` and counts it toward
+  `max_matches`. `MessageReader` gains a defaulted `close_reason()`. Other
+  closes are unchanged: 1000 / 1001 still end normally, and 4000 and every
+  other code are handled as before.
+
+- **A lobby reconnect during a live match no longer opens a second gateway**
+  ([#241](https://github.com/chipzen-ai/chipzen-sdk/issues/241)). The
+  platform re-sends `matched` for an in-flight match on every lobby connect.
+  `run_external_bot()` opened a new gateway for it, which the platform refused
+  with `duplicate_participant`, and counted that as a finished match. With
+  `max_matches` set, that could end the session and forfeit the healthy match.
+  It now ignores a `matched` for a match it is still playing. A restarted
+  process has nothing in play, so it still picks its match back up. The
+  Python and JavaScript SDKs got the same fix in #231.
+
+- **`run_external_bot()` now notices a dead lobby after the host sleeps and
+  reconnects** ([#136](https://github.com/chipzen-ai/chipzen-sdk/issues/136)).
+  When a laptop slept, the server timed the bot out and closed the lobby, but the
+  local socket could still look open for a long time after waking, so the SDK did
+  not reconnect and missed its matches. The server pings the lobby every 15
+  seconds, so the SDK now treats a lobby that has sent nothing at all for
+  `RunExternalOptions::lobby_silence_timeout` (default 45 seconds, three missed
+  pings) as dead: it drops the socket without a close handshake and reconnects
+  with the retry policy's backoff. The gap is measured on the wall clock as well
+  as the monotonic clock, so the first check after waking sees the whole sleep.
+  Matches in progress are not affected, since they play on their own sockets.
+  Nothing new is sent on the wire. The new field takes a `LobbySilenceTimeout`:
+  `Default` (45 seconds), `After(duration)`, or `Off` to turn the check off;
+  `After(Duration::ZERO)` is an error. `DEFAULT_LOBBY_SILENCE_TIMEOUT` is
+  exported. A `RunExternalOptions` struct literal that names every field must
+  add this one or end with `..Default::default()`. Same behaviour as the Python
+  SDK (#254) and the JavaScript SDK (#258).
+
+## [0.4.0] — 2026-11-06
+
+**This release breaks the public API (pre-1.0, so a minor bump).** Code that
+`match`es on `Action`, `ActionKind` or `Error` outside this crate needs a `_`
+arm; code that copied an `Action` implicitly must `.clone()` it; a `GameState`
+or options struct literal must name the new fields or end with
+`..Default::default()`. Each item is under "Changed" below. Bots that only
+construct actions and read `GameState` fields build unchanged. A `chipzen-bot
+= "0.3"` requirement does not pick this release up; change it to `"0.4"`.
+
 ### Added
 
 - **Pineapple OFC parity with the Python SDK**
@@ -106,6 +192,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release adds `Action::Place` / `ActionKind::Place` (and `Action::Draw` /
   `ActionKind::Draw`) anyway; from here on a new game's action is not a
   breaking change. Constructing an `Action` is unchanged.
+- **Breaking (pre-1.0): `Error` is `#[non_exhaustive]` and gains
+  `Error::SeatReplaced`** ([#242](https://github.com/chipzen-ai/chipzen-sdk/issues/242)).
+  A `match` on `Error` outside this crate needs a `_` arm (it needed a new arm
+  for `SeatReplaced` anyway); from here on a new failure kind is not a
+  breaking change. `MessageReader` gains `close_code()`, a provided method that
+  returns `None`, so existing readers compile unchanged.
 - **Breaking (pre-1.0): `Action` is no longer `Copy`**, because
   `Action::Draw` carries its discard list. `Action` is still `Clone`; code
   that copied an `Action` implicitly must `.clone()` it. `Action` and
@@ -126,6 +218,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A match seat taken over by another connection of the same bot is no longer
+  taken back** ([#242](https://github.com/chipzen-ai/chipzen-sdk/issues/242)).
+  When a second live copy of a bot connects to the same match, the platform hands
+  it the seat and closes the older match socket with `4000`, after an `error`
+  frame with code `replaced_by_new_connection`. `run_external_bot()` treated that
+  as a drop and reconnected, so two copies took the seat from each other
+  indefinitely. It now logs one line to stderr ("seat taken over by another
+  connection of this bot; not reconnecting") and ends that match's task: no
+  reconnect, no `MatchResult`, and not counted toward `max_matches`. A later
+  `matched` for that same match is ignored; other matches play as normal.
+  `run_bot()` returns `Ok(None)` on the same close instead of retrying. Any other
+  drop still reconnects as before.
+
+- **The poker starter's `table_position` no longer counts busted seats.** A busted seat
+  stays in `opponent_stacks` with a stack of 0, so the old offset from the button was wrong
+  once anyone had gone out. It now counts the seats still in, and treats two players
+  left at any table as heads-up. See `POKER-GAME-STATE-PROTOCOL.md` section 5.9.
+
 - **`GameState.your_seat` and `dealer_seat` are tracked through the
   session** (the Rust analog of
   [#194](https://github.com/chipzen-ai/chipzen-sdk/issues/194)). A hold'em
@@ -145,7 +255,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Rust 2-7 Triple Draw cells are flipped.
 - The "a Rust bot cannot play OFC yet" notes are gone from the same places
   (`packages/rust/README.md` now shows an OFC turn), and the Rust Pineapple
-  OFC cells are flipped (in `main`, not yet in a crates.io release).
+  OFC cells are flipped.
 
 ## [0.3.2] — 2026-10-18
 
@@ -405,6 +515,8 @@ and
 
 Apache-2.0.
 
+[0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.5.0
+[0.4.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.4.0
 [0.3.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.2
 [0.3.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.1
 [0.3.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/rust-v0.3.0

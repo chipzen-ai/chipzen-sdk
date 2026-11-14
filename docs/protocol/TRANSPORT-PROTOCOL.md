@@ -279,13 +279,36 @@ Sent after the server has received the bot's `authenticate` message. It is the f
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `supported_versions` | string[] | yes | Protocol versions supported by the server (major.minor format). Currently `["1.0"]`. |
-| `selected_version` | string | yes | The server's preferred version (the first entry of `supported_versions`). It is sent before the bot's `hello`, so it is not negotiated; the server checks for an overlap when the bot's `hello` arrives and closes with code 4013 if there is none (section 16.3). |
+| `selected_version` | string | yes | The version the server selected (section 16.3). If the bot's `authenticate` carried `supported_versions`, this is the highest version both sides support. Otherwise it is the server's preferred version (the first entry of `supported_versions`), because this `hello` is sent before the bot's `hello`. Either way the server checks for an overlap when the bot's `hello` arrives and closes with code 4013 if there is none. |
 | `server_name` | string | yes | Always `"chipzen"`. |
 | `game_type` | string | yes | The game this seat is playing. `"poker"` for NLHE. |
 | `capabilities` | string[] | yes | Server capabilities. The server sends `["reconnect"]` while reconnection is enabled, and `[]` when it has been switched off. |
-| `game` | object | no | Only at a non-poker table: the game's action vocabulary, phase sequence and state-shape marker (chipzen-ai/Chipzen#4245). Absent for poker, so an NLHE `hello` never carries it. |
+| `game` | object | no | Only at a non-poker table: the game's action vocabulary, phase sequence and state-shape marker (chipzen-ai/Chipzen#4245). Absent for poker, so an NLHE `hello` never carries it. See "The `game` descriptor" below. |
 
 There is no `server_id` field.
+
+**The `game` descriptor.** At a non-poker table the server `hello` carries a `game` object that describes the table (chipzen-ai/Chipzen#4245). At a poker table the key is left out entirely, so **absent means poker** and the NLHE `hello` is unchanged. The descriptor at a 2-7 Triple Draw table:
+
+```json
+{
+  "game_type": "draw27",
+  "variant": "27tripledraw",
+  "actions": ["call", "check", "draw", "fold", "raise"],
+  "phases": ["predraw", "draw1", "bet1", "draw2", "bet2", "draw3", "bet3", "showdown", "complete"],
+  "state_shape": "27tripledraw"
+}
+```
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `game_type` | string | The game, the same value as the `hello`'s own `game_type`. |
+| `variant` | string | The Layer 2 dialect, the same string `match_start.game_config.variant` announces. |
+| `actions` | string[] | Every action name a client must be able to send at this table, sorted alphabetically. |
+| `phases` | string[] | The table's phases, in the order they are played. |
+| `state_shape` | string | Names the shape of this table's state payloads. Today it equals `variant`, or `game_type` for a game with no variant. |
+| `unsupported_game_type` | boolean | Present, as `true`, only when the server has no rules for the seat's game and cannot describe it. `variant` is then `""`, `actions` and `phases` are empty, and `state_shape` is `"unknown"`. |
+
+A client MUST read `state_shape` before it parses any state payload, and MUST treat a value it does not know as "I cannot parse this table", never as "drop the keys I do not recognise". Each Layer 2 variant document gives the exact descriptor its tables send. To be seated at a non-poker table, a client must also declare the game in its own `hello` (`supported_games`, section 9.1).
 
 ### 8.2 `session_token`
 
@@ -388,9 +411,9 @@ Requests an action from the bot. The bot must respond with a `turn_action` befor
 |-------|------|----------|-------------|
 | `seat` | integer | yes | The seat index of the participant whose turn it is (always the receiving client's seat) |
 | `request_id` | string | yes | Unique identifier for this turn request (`req_` plus 12 hex characters). Must be echoed in the response. Used for correlation, idempotency, and deduplication. |
-| `timeout_ms` | integer | yes | Time allowed to submit an action, in milliseconds |
+| `timeout_ms` | integer | yes | Time allowed to submit an action, in milliseconds. This is the decision budget: plan every decision to arrive within it |
 | `turn_duration_ms` | integer | yes | The same window as `timeout_ms`, for a client to start a countdown of that length when the frame arrives (chipzen-ai/Chipzen#2581) |
-| `deadline_ts` | integer | yes | The server's enforcement deadline as Unix epoch milliseconds (chipzen-ai/Chipzen#2562). For a bot it is send time plus `timeout_ms`. |
+| `deadline_ts` | integer | yes | The server's enforcement deadline as Unix epoch milliseconds (chipzen-ai/Chipzen#2562): the moment the server stops waiting and auto-acts. For most bots it is send time plus `timeout_ms`. A remote (External API) bot seated in a tournament bracket also gets a 15 s relay grace, so its `deadline_ts` is send time plus `timeout_ms` plus 15000. The relay grace is network slack, not thinking time: it absorbs the relay hop and internet round-trip time between the server and the bot. Bots must not plan around it. Budget every decision within `timeout_ms`, and treat the gap between `timeout_ms` and `deadline_ts` as reserved for the network. A container seat in the same bracket, such as a house-fill opponent, has no relay hop and gets no relay grace (chipzen-ai/Chipzen#6782). |
 | `valid_actions` | string[] | yes | List of valid action type strings for this turn |
 | `state` | object | yes | Current game-specific state (opaque to Layer 1) |
 
@@ -637,6 +660,19 @@ Bot's response to the server `hello`. Must be sent within 5000ms of receiving th
 }
 ```
 
+A client that can also play 2-7 Triple Draw declares it with `supported_games`:
+
+```json
+{
+  "type": "hello",
+  "match_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "supported_versions": ["1.0"],
+  "client_name": "MyMultiGameBot",
+  "client_version": "1.4.0",
+  "supported_games": ["poker", "draw27"]
+}
+```
+
 **JSON Schema:**
 
 ```json
@@ -651,7 +687,11 @@ Bot's response to the server `hello`. Must be sent within 5000ms of receiving th
       "minItems": 1
     },
     "client_name": { "type": "string", "maxLength": 64 },
-    "client_version": { "type": "string", "maxLength": 32 }
+    "client_version": { "type": "string", "maxLength": 32 },
+    "supported_games": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
   },
   "required": ["type", "match_id", "supported_versions"],
   "additionalProperties": false
@@ -663,6 +703,14 @@ Bot's response to the server `hello`. Must be sent within 5000ms of receiving th
 | `supported_versions` | string[] | yes | Protocol versions the client supports (major.minor format). The server selects the highest mutually supported version. |
 | `client_name` | string | no | Client software name |
 | `client_version` | string | no | Client software version |
+| `supported_games` | string[] | no | The games this client can play, as `game_type` strings (chipzen-ai/Chipzen#4245). **Absent means "poker only"**, which is what a client that predates the field means. Declaring a `game_type` asserts that the client implements everything in that game's Layer 2 document. |
+
+**Declaring games (`supported_games`).** The match server reads `supported_games` from this `hello` only. At a poker table it is never checked. At a non-poker table (the server `hello` carried a `game` descriptor, section 8.1) the seat's `game_type` must be in the list, or the client is rejected **before it is seated**, rather than being seated and auto-played to zero. A missing list, an empty list and a value that is not a list all count as not declaring the game. The rejection is two frames:
+
+1. an `error` frame (section 8.10) with `code: "EXTAPI_CLIENT_GAME_UNSUPPORTED"`, a `message` naming the game and what the client declared, and the seat's `game_type`;
+2. a WebSocket close with code **`4002`** and reason `game_unsupported_by_client`.
+
+The `error` frame is the signal to act on. A relay in front of the match server may not pass the close through as-is: the External-API match gateway relays the `error` frame unchanged, then ends the bot's connection with a `match_end` frame and close `1000`.
 
 ### 9.2 `turn_action`
 
@@ -759,7 +807,12 @@ Or for bot endpoints:
     "type": { "const": "authenticate" },
     "match_id": { "type": "string", "format": "uuid" },
     "ticket": { "type": "string" },
-    "token": { "type": "string" }
+    "token": { "type": "string" },
+    "supported_versions": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+      "minItems": 1
+    }
   },
   "required": ["type", "match_id"],
   "additionalProperties": false,
@@ -774,6 +827,7 @@ Or for bot endpoints:
 |-------|------|----------|-------------|
 | `ticket` | string | conditional | One-time-use connection ticket, obtained from the matchmaking API. Required for competitive endpoints. |
 | `token` | string | conditional | Long-lived authentication token for internal bot endpoints. Required for bot endpoints. |
+| `supported_versions` | string[] | no | Protocol versions the bot supports (major.minor format), so the server can select one before it sends its `hello` (section 16.3). A bot that omits it gets the server's preferred version, as before. It does not replace `supported_versions` in the bot's `hello`, which stays required. |
 
 Exactly one of `ticket` or `token` must be provided. If neither or both are present, the server closes with code 4001.
 
@@ -796,8 +850,9 @@ Exactly one of `ticket` or `token` must be provided. If neither or both are pres
 
 1. Server sends `turn_request` with `timeout_ms`.
 2. Timer starts on the server when the message is sent (not when the bot receives it).
-3. If the bot sends an invalid action, the server sends `action_rejected` with `remaining_ms`. The bot may retry within the remaining time.
-4. If the timer expires before a valid action is received, the server applies the auto-action (check if legal, otherwise fold) and reports it in `turn_result` with `details.is_timeout: true`. No `action_timeout` frame is sent (section 8.12).
+3. If the bot sends an invalid action, the server sends `action_rejected` with `remaining_ms`. The bot may retry within the remaining time. `remaining_ms` counts against `timeout_ms` only; a relay grace (section 8.5, `deadline_ts`) is not added to the retry window.
+4. A seat with a relay grace (a remote bot in a tournament bracket, section 8.5) is held until `deadline_ts` rather than `timeout_ms`. That grace is network slack that bots must not plan around.
+5. If the timer expires before a valid action is received, the server applies the auto-action (check if legal, otherwise fold) and reports it in `turn_result` with `details.is_timeout: true`. No `action_timeout` frame is sent (section 8.12).
 
 ### 10.3 Action Delivery Jitter
 
@@ -948,10 +1003,15 @@ Bot messages use `additionalProperties: false`. The server rejects bot messages 
 
 ### 16.3 Version Negotiation
 
-The server and bot exchange `supported_versions` arrays in their `hello` messages. Each version string follows `major.minor` format. The server speaks first, so its `selected_version` is its own preferred version, not a negotiated one. When the bot's `hello` arrives the server checks for a mutually supported version and, if there is none, closes the connection with code 4013 (`protocol_mismatch`). The server currently supports only `1.0`.
+The server and bot exchange `supported_versions` arrays in their `hello` messages. Each version string follows `major.minor` format. The server speaks first, so it can take the bot's versions into account only if the bot also sent `supported_versions` in its `authenticate` message (section 9.4, chipzen-ai/Chipzen#5474):
+
+- **`authenticate` lists versions:** `selected_version` is the highest version both sides support, whatever order the bot listed them in. The server never selects a version the bot did not list. If there is no overlap, the server sends no `hello` and closes the connection with code 4013 (`protocol_mismatch`).
+- **`authenticate` lists no versions:** `selected_version` is the server's preferred version, the first entry of its `supported_versions`.
+
+In both cases, when the bot's `hello` arrives the server checks for a mutually supported version and, if there is none, closes the connection with code 4013. The server currently supports only `1.0`.
 
 - **Major version change:** Breaking changes. Server and bot must agree on the major version.
-- **Minor version change:** Backward-compatible additions (new message types, new fields). A bot supporting version 1.0 can connect to a server running 1.3 without issues, as the server will select 1.0.
+- **Minor version change:** Backward-compatible additions (new message types, new fields). A bot supporting version 1.0 can connect to a server running 1.3 without issues, as the server will select 1.0 (list your versions in `authenticate` so the server `hello` already says so).
 
 ### 16.4 Reserved Namespaces
 

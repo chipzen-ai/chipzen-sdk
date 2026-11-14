@@ -589,6 +589,9 @@ def test_poker_bots_are_validated_exactly_as_before(tmp_path):
         "bot_class",
         "decide_method",
         "requirements",
+        # The two image checks every poker bot gets since issue #260.
+        "dockerfile",
+        "entry_main",
         "smoke_test",
         "timeout",
     ]
@@ -756,6 +759,12 @@ def test_a_poker_bot_dockerfile_is_not_checked(tmp_path):
         class MyBot(Bot):
             def decide(self, state: GameState) -> Action:
                 return Action.fold()
+
+        def main():
+            pass
+
+        if __name__ == "__main__":
+            main()
         """,
     )
     (tmp_path / "Dockerfile").write_text(

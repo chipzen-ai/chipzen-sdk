@@ -7,6 +7,7 @@
 //! of the supported API.
 
 use crate::bot::Bot;
+use crate::close_codes::{protocol_close_log, terminal_close_of};
 use crate::error::Error;
 use crate::models::{parse_game_state, Action, GameState};
 use crate::retry::RetryPolicy;
@@ -22,6 +23,23 @@ use tokio_tungstenite::{
 
 /// Protocol versions this client claims to support in the handshake.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["1.0"];
+
+/// Close code the platform puts on a match socket whose seat another
+/// connection of the same bot took over (chipzen-sdk#242). The lobby uses the
+/// same code for the same reason.
+pub const CLOSE_REPLACED_BY_NEW_CONNECTION: u16 = 4000;
+
+/// The close reason, and the `code` of the `error` frame sent just before
+/// that close.
+pub const REPLACED_BY_NEW_CONNECTION: &str = "replaced_by_new_connection";
+
+/// The one line logged when a match socket is taken over.
+pub(crate) fn seat_replaced_log(match_id: &str) -> String {
+    format!(
+        "chipzen-sdk: match {match_id}: seat taken over by another connection of this bot; \
+         not reconnecting"
+    )
+}
 
 const DEFAULT_CLIENT_NAME: &str = "chipzen-sdk-rust";
 const DEFAULT_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -140,10 +158,13 @@ impl SessionContext {
 ///
 /// Returns the `match_end` payload on a clean finish, or `None` if the
 /// connection closed without a clean `match_end` after exhausting the
-/// retry budget. Returns [`Error::RetriesExhausted`] if the connection
+/// retry budget, or another connection of this bot took the seat over (a
+/// `4000` close; logged once, never retried). Returns [`Error::RetriesExhausted`] if the connection
 /// cannot be established after `retry_policy.max_reconnect_attempts`
 /// attempts, or [`Error::BotDecision`] if `decide()` panics under
-/// `safe_mode = false`.
+/// `safe_mode = false`. Returns [`Error::ProtocolClose`] at once, logged once
+/// and never retried, if the server closes with a terminal 4xxx code such as
+/// `4013` (see [`TERMINAL_CLOSE_CODES`](crate::TERMINAL_CLOSE_CODES)).
 pub async fn run_bot<B: Bot>(
     url: &str,
     mut bot: B,
@@ -185,6 +206,8 @@ pub async fn run_bot<B: Bot>(
             let (mut write_half, mut read_half) = ws_stream.split();
             let mut reader = WsReader {
                 inner: &mut read_half,
+                close_code: None,
+                close_reason: None,
             };
             let mut writer = WsWriter {
                 inner: &mut write_half,
@@ -195,10 +218,22 @@ pub async fn run_bot<B: Bot>(
 
         match result {
             Ok(end) => return Ok(end),
+            // Another connection of this bot holds the seat now; reconnecting
+            // would only take it back.
+            Err(Error::SeatReplaced) => {
+                eprintln!("{}", seat_replaced_log(&ctx.match_id));
+                return Ok(None);
+            }
             // A deterministic bot bug (safe_mode off) — terminal, not a
             // transient disconnect. Do not reconnect-retry; propagate so the
             // process exits non-zero.
             Err(e @ Error::BotDecision(_)) => return Err(e),
+            // A terminal 4xxx close (4013 protocol_mismatch, ...): the server
+            // will refuse a reconnect the same way. Surface it, no retries.
+            Err(e @ Error::ProtocolClose { .. }) => {
+                eprintln!("{}", protocol_close_log(&ctx.match_id, &e));
+                return Err(e);
+            }
             Err(err) => {
                 retries += 1;
                 if retries > max_attempts {
@@ -242,6 +277,21 @@ pub trait MessageReader: Send {
     /// surfaced through [`Error`] rather than this return type so the
     /// session loop can decide whether to retry.
     async fn next(&mut self) -> Result<Option<String>, Error>;
+
+    /// The close code the server sent, once [`next`](Self::next) has
+    /// returned `None`. `None` while open, or when the socket closed with no
+    /// close frame. A `4000` means another connection of this bot took the
+    /// seat over. Readers that cannot tell keep the default.
+    fn close_code(&self) -> Option<u16> {
+        None
+    }
+
+    /// The close reason the server sent, once [`next`](Self::next) has
+    /// returned `None`. `None` while open, or when there was no close frame.
+    /// Readers that cannot tell keep the default.
+    fn close_reason(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Push-based async sender for outbound messages.
@@ -257,6 +307,14 @@ pub trait MessageWriter: Send {
 impl MessageReader for Box<dyn MessageReader> {
     async fn next(&mut self) -> Result<Option<String>, Error> {
         (**self).next().await
+    }
+
+    fn close_code(&self) -> Option<u16> {
+        (**self).close_code()
+    }
+
+    fn close_reason(&self) -> Option<String> {
+        (**self).close_reason()
     }
 }
 
@@ -274,7 +332,12 @@ impl MessageWriter for Box<dyn MessageWriter> {
 /// Returns the `match_end` payload (the full envelope) on a clean
 /// finish, or `None` if the socket closed without a `match_end` (a drop
 /// the caller may reconnect through). Returns [`Error::BotDecision`] if
-/// `decide()` panics under `ctx.safe_mode = false`.
+/// `decide()` panics under `ctx.safe_mode = false`, and
+/// [`Error::SeatReplaced`] on a `4000` close or the
+/// `replaced_by_new_connection` error frame before it (another connection of
+/// this bot took the seat over; the caller must not reconnect). Returns
+/// [`Error::ProtocolClose`] on a terminal 4xxx close (`4013`, ...): the
+/// server would refuse a reconnect the same way.
 pub async fn _run_session<R, W, B>(
     reader: &mut R,
     writer: &mut W,
@@ -302,10 +365,24 @@ where
     }
     writer.send(auth.to_string()).await?;
 
-    let hello_raw = reader.next().await?.ok_or(Error::ConnectionClosed {
-        context: "server hello",
-    })?;
+    let Some(hello_raw) = reader.next().await? else {
+        if reader.close_code() == Some(CLOSE_REPLACED_BY_NEW_CONNECTION) {
+            return Err(Error::SeatReplaced);
+        }
+        if let Some(err) = terminal_close_of(reader) {
+            return Err(err);
+        }
+        return Err(Error::ConnectionClosed {
+            context: "server hello",
+        });
+    };
     let hello: Value = serde_json::from_str(&hello_raw)?;
+    if hello.get("type").and_then(|v| v.as_str()) == Some("error")
+        && hello.get("code").and_then(|v| v.as_str()) == Some(REPLACED_BY_NEW_CONNECTION)
+    {
+        // Taken over during the handshake; a 4000 close follows.
+        return Err(Error::SeatReplaced);
+    }
     if hello.get("type").and_then(|v| v.as_str()) != Some("hello") {
         return Err(Error::Protocol(format!(
             "expected server hello, got {:?}",
@@ -380,6 +457,7 @@ where
             "match_start" => {
                 if let Some(seat) = self_seat(&msg) {
                     seats.your_seat = seat;
+                    seats.seat_known = true;
                 }
                 call_hook("on_match_start", ctx.safe_mode, || bot.on_match_start(&msg))?
             }
@@ -390,6 +468,7 @@ where
                     .and_then(Value::as_i64)
                 {
                     seats.dealer_seat = dealer;
+                    seats.dealer_known = true;
                 }
                 call_hook("on_round_start", ctx.safe_mode, || bot.on_round_start(&msg))?
             }
@@ -452,6 +531,7 @@ where
                 // The button is kept from the last `round_start` seen.
                 if let Some(seat) = self_seat(&msg) {
                     seats.your_seat = seat;
+                    seats.seat_known = true;
                 }
                 call_hook("on_reconnected", ctx.safe_mode, || bot.on_reconnected(&msg))?;
                 // Replay the pending request as if it were a fresh
@@ -481,6 +561,12 @@ where
                 call_hook("on_match_end", ctx.safe_mode, || bot.on_match_end(&results))?;
                 return Ok(Some(msg));
             }
+            "error"
+                if msg.get("code").and_then(|v| v.as_str()) == Some(REPLACED_BY_NEW_CONNECTION) =>
+            {
+                // A 4000 close follows; end here rather than wait for it.
+                return Err(Error::SeatReplaced);
+            }
             "error" => {
                 // Non-fatal — production deployments log; the SDK stays
                 // quiet so user code controls the logging surface.
@@ -491,6 +577,12 @@ where
         }
     }
 
+    if reader.close_code() == Some(CLOSE_REPLACED_BY_NEW_CONNECTION) {
+        return Err(Error::SeatReplaced);
+    }
+    if let Some(err) = terminal_close_of(reader) {
+        return Err(err);
+    }
     // Stream closed without match_end. Caller decides whether to retry.
     Ok(None)
 }
@@ -518,12 +610,20 @@ fn state_shape_of(hello: &Value) -> Result<Option<&str>, String> {
 }
 
 /// Seat context the session loop carries into each turn.
+///
+/// `seat_known` / `dealer_known` record whether this session saw the frame
+/// that carries each one. A reconnect runs a fresh session that sees neither
+/// `match_start` nor this hand's `round_start`; until it does, the seat comes
+/// from `turn_request.seat` and the button from the hand's blinds
+/// (chipzen-ai/chipzen-sdk#199).
 #[derive(Debug, Default)]
 struct Seats {
     /// The bot's seat, from `match_start` / `reconnected`.
     your_seat: i64,
     /// The button, from the latest `round_start`.
     dealer_seat: i64,
+    seat_known: bool,
+    dealer_known: bool,
 }
 
 /// `seats[].seat` of the entry flagged `is_self` in a `match_start` or
@@ -540,6 +640,11 @@ fn self_seat(msg: &Value) -> Option<i64> {
 /// Parse a `turn_request` with the session's seat context filled in where
 /// the turn state does not carry it (a hold'em or 27TD state never does; an
 /// OFC state does, and its own values win).
+///
+/// When the session never saw the frame that carries a value (a reconnect,
+/// chipzen-ai/chipzen-sdk#199), the seat is the Layer 1 `turn_request.seat`,
+/// which is always the receiving client's seat (TRANSPORT-PROTOCOL section
+/// 8.5), and the button is derived from the hand's blinds.
 fn parse_turn(msg: &Value, seats: &Seats) -> GameState {
     let mut state = parse_game_state(msg);
     let raw_int = |key: &str| {
@@ -547,13 +652,71 @@ fn parse_turn(msg: &Value, seats: &Seats) -> GameState {
             .and_then(|s| s.get(key))
             .and_then(Value::as_i64)
     };
+    let your_seat = if seats.seat_known {
+        seats.your_seat
+    } else {
+        msg.get("seat")
+            .and_then(Value::as_i64)
+            .unwrap_or(seats.your_seat)
+    };
+    let dealer_seat = if seats.dealer_known {
+        seats.dealer_seat
+    } else {
+        msg.get("state")
+            .and_then(|s| derive_dealer_seat(s, your_seat))
+            .unwrap_or(seats.dealer_seat)
+    };
     if raw_int("your_seat").is_none() {
-        state.your_seat = seats.your_seat;
+        state.your_seat = your_seat;
     }
     if raw_int("dealer_seat").is_none() {
-        state.dealer_seat = seats.dealer_seat;
+        state.dealer_seat = dealer_seat;
     }
     state
+}
+
+/// The button, worked out from a hold'em or 27TD turn state's blinds.
+///
+/// POKER-GAME-STATE-PROTOCOL sections 5.3 and 5.9: with two live seats the
+/// button posts the small blind; with three or more it is the live seat just
+/// before the small blind. A live seat is your own, or one that has chips or
+/// appears in this hand's `action_history`. `None` when the state carries no
+/// `post_small_blind` entry (an OFC state, a malformed one) or the seats do
+/// not add up. Mirrors the Python SDK's `_derive_dealer_seat`.
+pub(crate) fn derive_dealer_seat(state: &Value, your_seat: i64) -> Option<i64> {
+    let stacks: Vec<i64> = state
+        .get("opponent_stacks")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().map(|v| v.as_i64().unwrap_or(0)).collect())
+        .unwrap_or_default();
+    let history: Vec<&Value> = state
+        .get("action_history")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter(|e| e.is_object()).collect())
+        .unwrap_or_default();
+    let table_size = stacks.len() as i64 + 1;
+    if !(0..table_size).contains(&your_seat) {
+        return None;
+    }
+    let seat_of = |e: &Value| e.get("seat").and_then(Value::as_i64);
+    let others = (0..table_size).filter(|s| *s != your_seat);
+    let mut live: Vec<i64> = others
+        .zip(stacks.iter())
+        .filter(|(seat, stack)| **stack > 0 || history.iter().any(|e| seat_of(e) == Some(*seat)))
+        .map(|(seat, _)| seat)
+        .collect();
+    live.push(your_seat);
+    live.sort_unstable();
+    let small_blind = history
+        .iter()
+        .find(|e| e.get("action").and_then(Value::as_str) == Some("post_small_blind"))
+        .and_then(|e| seat_of(e))?;
+    let index = live.iter().position(|s| *s == small_blind)?;
+    match live.len() {
+        0 | 1 => None,
+        2 => Some(small_blind),
+        n => Some(live[(index + n - 1) % n]),
+    }
 }
 
 /// The Layer 1 client `hello` frame.
@@ -893,6 +1056,8 @@ where
     S: StreamExt<Item = Result<Message, WsError>> + Unpin,
 {
     inner: &'a mut S,
+    close_code: Option<u16>,
+    close_reason: Option<String>,
 }
 
 #[async_trait]
@@ -911,11 +1076,24 @@ where
                     // can respond if needed.
                     continue;
                 }
-                Some(Ok(Message::Close(_))) | None => return Ok(None),
+                Some(Ok(Message::Close(frame))) => {
+                    self.close_code = frame.as_ref().map(|f| u16::from(f.code));
+                    self.close_reason = frame.map(|f| f.reason.to_string());
+                    return Ok(None);
+                }
+                None => return Ok(None),
                 Some(Ok(_)) => continue, // binary, pong, etc.
                 Some(Err(e)) => return Err(Error::from(e)),
             }
         }
+    }
+
+    fn close_code(&self) -> Option<u16> {
+        self.close_code
+    }
+
+    fn close_reason(&self) -> Option<String> {
+        self.close_reason.clone()
     }
 }
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chipzen-mcp"
-version = "0.3.1"
+version = "0.3.3"
 description = "Official Chipzen MCP server - let any MCP-capable agent play poker on chipzen.ai over the External-API remote-play track"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -44,6 +44,18 @@ dependencies = [
     # server.py) -- the old ">=1.5" floor could already resolve to a release
     # on which the server could not start.
     "mcp>=1.14,<2",
+    # Not used directly: ``mcp`` pulls it in via ``PyJWT[crypto]``. From 49.0
+    # cryptography publishes macOS wheels for arm64 only (48.0.1 was the last
+    # with universal2), so an x86_64 Python on macOS (Intel Macs, or an Intel
+    # Homebrew uv/pip under Rosetta) had to compile it from source and
+    # ``uvx chipzen-mcp`` died before the server ever ran (#217). Hold that
+    # one platform on the last universal2 release; every other platform keeps
+    # the latest. Drop this once cryptography ships x86_64 macOS wheels again.
+    # Known advisories fixed in 49+: GHSA-g6cj-pr64-35w5, GHSA-jwv3-5hgf-82ww,
+    # GHSA-m2h6-j472-rp4c (PKCS#7 decryption and X.509 certificate checking).
+    # chipzen-mcp reaches neither: PyJWT only verifies signatures, and the
+    # WebSocket TLS uses Python's own ``ssl``, not ``cryptography``.
+    'cryptography<49; sys_platform == "darwin" and platform_machine == "x86_64"',
 ]
 
 [project.optional-dependencies]

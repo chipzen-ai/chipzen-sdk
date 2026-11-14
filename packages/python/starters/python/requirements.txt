@@ -1,1 +1,1 @@
-chipzen-bot~=0.3
+chipzen-bot~=0.6

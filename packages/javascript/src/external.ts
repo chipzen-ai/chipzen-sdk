@@ -28,6 +28,11 @@
  * a single connection serve a whole tournament (the bot is "checked in"
  * via lobby presence and matched once per round).
  *
+ * The lobby also watches its own liveness (see `lobby_liveness.ts`): a lobby
+ * that hears nothing at all for `lobbySilenceTimeoutMs` is dropped and
+ * reconnected, which catches a half-open socket after the host sleeps
+ * (chipzen-ai/chipzen-sdk#136).
+ *
  * Mirrors the Python SDK's `chipzen.external`, including the reconnect
  * fix: a dropped gateway socket RECONNECTS and resumes; match-task
  * ownership is hoisted to the top level so a lobby reconnect doesn't kill
@@ -40,15 +45,23 @@ import type { Bot } from "./bot.js";
 import {
   _NodeWebSocketReader,
   _runSession,
+  _seatReplacedLog,
   type AsyncMessageReader,
   BotDecisionError,
+  SeatReplacedError,
 } from "./client.js";
+import { _protocolCloseLog, ProtocolCloseError } from "./close_codes.js";
 import {
   type ChipzenConfig,
   loadChipzenConfig,
   resolveToken,
 } from "./config.js";
 import { connectToChipzen, type EnvName } from "./connect.js";
+import {
+  _lobbySilenceLog,
+  LobbyLiveness,
+  resolveLobbySilenceTimeoutMs,
+} from "./lobby_liveness.js";
 import { DEFAULT_RETRY_POLICY, RetryPolicy } from "./retry.js";
 import { VERSION } from "./version.js";
 
@@ -192,6 +205,12 @@ export interface ExternalConnection {
   reader: AsyncMessageReader;
   /** Close the underlying socket. */
   close(): void;
+  /**
+   * Drop the TCP connection without a close handshake. Used on a lobby that
+   * has gone silent: a half-open socket never answers a close frame. Optional;
+   * a connection without it is closed with {@link close}.
+   */
+  abort?(): void;
 }
 
 /** Options handed to a {@link Transport} on connect. */
@@ -239,6 +258,7 @@ const defaultTransport: Transport = async (url, options) => {
         ws.close();
       }
     },
+    abort: () => ws.terminate(),
   };
 };
 
@@ -259,9 +279,17 @@ export function _resetSleep(): void {
   sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 }
 
-/** Read the next lobby frame, or `undefined` if the timeout elapsed first. */
+/**
+ * Wait up to `timeoutMs` for a pending lobby read; `undefined` if the timeout
+ * elapsed first.
+ *
+ * The caller passes the SAME pending `reader.next()` promise again after a
+ * timeout instead of calling `next()` anew. A `next()` that lost the race is
+ * still queued on the reader and takes the next frame; a fresh call would
+ * queue behind it, and that frame would go to a promise nobody awaits.
+ */
 async function recvWithTimeout(
-  reader: AsyncMessageReader,
+  read: Promise<string | null>,
   timeoutMs: number,
 ): Promise<string | null | undefined> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -269,7 +297,7 @@ async function recvWithTimeout(
     timer = setTimeout(() => resolve(undefined), timeoutMs);
   });
   try {
-    return await Promise.race([reader.next(), timeout]);
+    return await Promise.race([read, timeout]);
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -279,6 +307,13 @@ async function recvWithTimeout(
 export interface MatchResult {
   matchId: string | null;
   end: Record<string, unknown> | null;
+  /**
+   * Set when the server ended the match with a terminal 4xxx close
+   * (`close_codes.ts`, for example `4013`); `end` is then `null`.
+   */
+  closeCode?: number;
+  /** The server's close reason that went with {@link closeCode}. */
+  closeReason?: string;
 }
 
 /**
@@ -289,6 +324,8 @@ export interface MatchResult {
 interface MatchTask {
   promise: Promise<void>;
   done: boolean;
+  /** How a repeat `matched` finds this task. */
+  matchId: string;
 }
 
 interface PlayMatchParams {
@@ -324,6 +361,16 @@ interface PlayMatchParams {
  *
  * Throws {@link BotDecisionError} (safeMode=false) without retrying — a
  * deterministic bot bug is terminal.
+ *
+ * Throws {@link SeatReplacedError}, after logging one line, on a `4000`
+ * close (or the `replaced_by_new_connection` error frame before it): another
+ * connection of this bot took the seat over. That is not a drop.
+ * Reconnecting would take the seat back, and two live copies of one bot
+ * would trade it forever, so the match's task ends with no result.
+ *
+ * Throws {@link ProtocolCloseError}, after logging one line with the code and
+ * reason, on a terminal 4xxx close (`4013` no mutually supported protocol
+ * version, ...): the server would refuse a reconnect the same way.
  */
 async function playOneMatch(params: PlayMatchParams): Promise<Record<string, unknown> | null> {
   const { gatewayUrl, matchId, token, bot, policy, transport } = params;
@@ -361,6 +408,14 @@ async function playOneMatch(params: PlayMatchParams): Promise<Record<string, unk
       // (a drop). Try to resume.
       reason = "closed without match_end";
     } catch (err) {
+      if (err instanceof SeatReplacedError) {
+        console.warn(_seatReplacedLog(matchId));
+        throw err; // the seat is held elsewhere — never reconnect-retry
+      }
+      if (err instanceof ProtocolCloseError) {
+        console.error(_protocolCloseLog(matchId, err));
+        throw err; // a reconnect would be refused the same way
+      }
       if (err instanceof BotDecisionError) {
         throw err; // deterministic bot bug — terminal, never reconnect-retry
       }
@@ -385,6 +440,11 @@ interface LobbyOnceParams {
   results: MatchResult[];
   matchTasks: MatchTask[];
   completed: { value: number };
+  /**
+   * Ids of matches whose seat another connection of this bot took over.
+   * Caller-owned, so it outlives a lobby reconnect.
+   */
+  replaced: Set<string>;
   policy: RetryPolicy;
   clientName: string;
   clientVersion: string;
@@ -395,6 +455,8 @@ interface LobbyOnceParams {
   stop: { value: boolean };
   fatal: Error[];
   transport: Transport;
+  /** Silence that counts as a dead lobby, or `null` for no check. */
+  silenceTimeoutMs: number | null;
 }
 
 /**
@@ -404,17 +466,25 @@ interface LobbyOnceParams {
  *
  * - `"stopped"`  — the stop signal fired, or `maxMatches` was reached.
  * - `"evicted"`  — the lobby evicted us (a newer connection replaced this).
- * - `"closed"`   — the lobby connection closed unexpectedly (may reconnect).
+ * - `"closed"`   — the lobby connection closed unexpectedly, or no frame
+ *   arrived for `silenceTimeoutMs` (a half-open socket, for example after
+ *   the host slept). The caller may reconnect per the retry policy.
  *
  * Each `matched` is played in its own task, appended to `matchTasks`
  * (which the CALLER owns) so the lobby heartbeat is answered during
  * matches AND in-flight matches survive a lobby reconnect — a match runs
- * on its own gateway socket, independent of the lobby.
+ * on its own gateway socket, independent of the lobby. A `matched` for a
+ * match one of those tasks is still playing is ignored.
+ *
+ * A match whose seat another connection of this bot took over is neither a
+ * result nor a completed match, and a later `matched` for it is ignored:
+ * playing it would take the seat back from the connection that holds it.
  */
 async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" | "closed"> {
   const onMatchSettled = (
     end: Record<string, unknown> | null | undefined,
     err: unknown,
+    closed?: { matchId: string; closeCode: number; closeReason: string },
   ): void => {
     if (err !== undefined && err !== null) {
       if (err instanceof BotDecisionError) {
@@ -426,6 +496,9 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
       }
       // Record, never crash the lobby.
       p.results.push({ matchId: null, end: null });
+    } else if (closed) {
+      p.completed.value += 1;
+      p.results.push({ end: null, ...closed });
     } else {
       p.completed.value += 1;
       p.results.push({
@@ -441,16 +514,32 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
   const conn = await p.transport(p.lobbyUrl, { userAgent: p.userAgent });
   try {
     await conn.send(JSON.stringify({ type: "authenticate", token: p.token }));
+    const liveness = new LobbyLiveness(p.silenceTimeoutMs);
+    // One read stays pending across timeouts; see recvWithTimeout.
+    let read: Promise<string | null> | null = null;
     while (!p.stop.value) {
-      const raw = await recvWithTimeout(conn.reader, LOBBY_RECV_TIMEOUT_MS);
+      read ??= conn.reader.next();
+      const raw = await recvWithTimeout(read, LOBBY_RECV_TIMEOUT_MS);
       if (raw === undefined) {
-        continue; // periodic wake to re-check the stop signal
+        // Periodic wake to re-check the stop signal and the lobby's liveness.
+        // The server pings every 15s; total silence for `silenceTimeoutMs`
+        // means the socket is dead even if it still looks open (#136: host
+        // sleep, server already closed it).
+        if (liveness.expired()) {
+          console.warn(_lobbySilenceLog(liveness.silentForMs()));
+          // No close handshake: a half-open socket never answers one.
+          if (conn.abort) conn.abort();
+          return "closed";
+        }
+        continue;
       }
+      read = null;
       if (raw === null) {
         // Socket closed.
         return "closed";
       }
 
+      liveness.mark();
       const msg = loads(raw);
       const mtype = msg.type;
       if (mtype === "ping") {
@@ -467,7 +556,24 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
           continue;
         }
         const matchId = msg.match_id as string;
-        const task: MatchTask = { promise: Promise.resolve(), done: false };
+        // On every lobby connect the platform re-sends `matched` for each match
+        // this bot holds a seat in, so that a restarted process can pick its
+        // match back up. This process still has the match on its own gateway
+        // socket, and a second socket would only be refused with
+        // `duplicate_participant`. A task that has finished (or given up) no
+        // longer counts: that seat may need a fresh attempt.
+        if (p.matchTasks.some((t) => t.matchId === matchId && !t.done)) {
+          continue;
+        }
+        if (p.replaced.has(matchId)) {
+          // Held by another connection of this bot. Known narrow case: if that
+          // connection then dies, this lobby still gets the resume `matched`
+          // and ignores it, so the seat forfeits on the turn clock. Accepted:
+          // the server caps takeovers per seat at 3, so the trade is bounded,
+          // and a restarted process (empty `replaced`) picks the match back up.
+          continue;
+        }
+        const task: MatchTask = { promise: Promise.resolve(), done: false, matchId };
         task.promise = playOneMatch({
           gatewayUrl,
           matchId,
@@ -487,6 +593,21 @@ async function runLobbyOnce(p: LobbyOnceParams): Promise<"stopped" | "evicted" |
           },
           (err) => {
             task.done = true;
+            if (err instanceof SeatReplacedError) {
+              p.replaced.add(matchId); // already logged; the match goes on elsewhere
+              return;
+            }
+            if (err instanceof ProtocolCloseError) {
+              // Already logged. The match is over for this bot (as it was when
+              // the gateway masked the close as a match_end), so it counts
+              // toward maxMatches; the result carries the close.
+              onMatchSettled(null, undefined, {
+                matchId,
+                closeCode: err.code,
+                closeReason: err.reason,
+              });
+              return;
+            }
             onMatchSettled(undefined, err);
           },
         );
@@ -559,6 +680,16 @@ export interface RunExternalBotOptions {
   maxMatches?: number | null;
   /** Override the WS `User-Agent`. Defaults to `chipzen-sdk-js/<version>`. */
   userAgent?: string;
+  /**
+   * Milliseconds the lobby may go without receiving any frame before the SDK
+   * treats the socket as dead, drops it and reconnects with the `retryPolicy`
+   * backoff. The server pings every 15s, so the default (45000) is three
+   * missed heartbeats. This is what notices a lobby the server closed while
+   * the host was asleep (chipzen-ai/chipzen-sdk#136). In-flight matches are
+   * not affected: they play on their own sockets. `null` turns the check off.
+   * Sends nothing new on the wire.
+   */
+  lobbySilenceTimeoutMs?: number | null;
   /** Injectable transport (tests). Defaults to a real `ws.WebSocket`. */
   transport?: Transport;
 }
@@ -620,6 +751,7 @@ export async function runExternalBot(
         "Pass token=..., or set [external_api].token in chipzen.toml.",
     );
   }
+  const silenceTimeoutMs = resolveLobbySilenceTimeoutMs(options.lobbySilenceTimeoutMs);
 
   const userAgent = options.userAgent ?? `chipzen-sdk-js/${clientVersion}`;
   const factory = asFactory(bot);
@@ -630,6 +762,7 @@ export async function runExternalBot(
   // a lobby reconnect (a match plays on its own gateway socket).
   const matchTasks: MatchTask[] = [];
   const completed = { value: 0 };
+  const replaced = new Set<string>();
 
   // --- Lobby session loop with reconnect/backoff -------------------------
   let consecutiveFailures = 0;
@@ -654,6 +787,7 @@ export async function runExternalBot(
         results,
         matchTasks,
         completed,
+        replaced,
         policy,
         clientName,
         clientVersion,
@@ -664,6 +798,7 @@ export async function runExternalBot(
         stop,
         fatal,
         transport,
+        silenceTimeoutMs,
       });
       everConnected = true;
     } catch (err) {

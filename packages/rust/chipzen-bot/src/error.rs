@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::close_codes::{close_label, reason_or_default};
+
 /// Top-level error type for SDK operations. Variants describe the
 /// failure surface in terms users care about (connect failed, server
 /// dropped us mid-handshake, peer sent something unparseable) rather
@@ -8,7 +10,11 @@ use thiserror::Error;
 /// Large variants (`Transport`, `Json`) are boxed so `Result<T, Error>`
 /// stays small on the success path. The boxing is invisible to callers
 /// thanks to the `From` impls below.
+///
+/// `#[non_exhaustive]`: a later release can add a failure kind without a
+/// breaking change, so a `match` on it outside this crate needs a `_` arm.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("WebSocket transport error: {0}")]
     Transport(Box<tokio_tungstenite::tungstenite::Error>),
@@ -41,6 +47,29 @@ pub enum Error {
     /// never sent to a different host or in cleartext.
     #[error("untrusted gateway URL: {0}")]
     UntrustedGateway(String),
+
+    /// Another connection of this bot took the match seat over: the server
+    /// sent an `error` frame with code `replaced_by_new_connection`, or closed
+    /// the match socket with `4000` (chipzen-sdk#242).
+    ///
+    /// The match did not end; it goes on on the newer socket. Callers do NOT
+    /// reconnect, which would only take the seat back.
+    #[error("match seat taken over by another connection of this bot")]
+    SeatReplaced,
+
+    /// The server closed the match socket with a terminal 4xxx code (see
+    /// [`TERMINAL_CLOSE_CODES`](crate::TERMINAL_CLOSE_CODES)), for example
+    /// `4013` with reason "No mutually supported protocol version".
+    ///
+    /// The match is over for this bot: a reconnect would be refused the same
+    /// way, so callers do NOT reconnect. `reason` is the server's close
+    /// reason, empty when it sent none.
+    #[error(
+        "server closed the match socket with {}: {}",
+        close_label(*.code),
+        reason_or_default(.reason)
+    )]
+    ProtocolClose { code: u16, reason: String },
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for Error {

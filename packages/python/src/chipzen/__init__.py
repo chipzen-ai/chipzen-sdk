@@ -25,6 +25,7 @@ except PackageNotFoundError:  # pragma: no cover - running from an uninstalled s
 from chipzen.bigbadbots_bot import BigBadBotsBot
 from chipzen.bot import ChipzenBot
 from chipzen.client import BotDecisionError, run_bot
+from chipzen.close_codes import TERMINAL_CLOSE_CODES, ProtocolCloseError
 from chipzen.config import ChipzenConfig, ChipzenConfigError, load_chipzen_config
 from chipzen.connect import ConnectionConfig, connect_to_chipzen
 from chipzen.external import run_external_bot
@@ -66,6 +67,9 @@ __all__ = [
     # Containerized / direct-match path
     "run_bot",
     "BotDecisionError",
+    # A terminal 4xxx close on a match socket (both paths)
+    "ProtocolCloseError",
+    "TERMINAL_CLOSE_CODES",
     # External-API remote-play path
     "run_external_bot",
     "connect_to_chipzen",

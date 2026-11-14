@@ -152,6 +152,12 @@ jobs:
           # Console scripts resolve.
           /tmp/smoke/bin/chipzen-sdk --help
           /tmp/smoke/bin/chipzen run-external --help
+          # `init` reads the starter from the wheel's package data (issue
+          # #260): the project it writes must be the starter, byte for byte,
+          # and must pass validate.
+          cd /tmp && /tmp/smoke/bin/chipzen-sdk init wheel-bot
+          diff -r -x __pycache__ "$GITHUB_WORKSPACE/packages/python/starters/python" /tmp/wheel-bot
+          /tmp/smoke/bin/chipzen-sdk validate /tmp/wheel-bot --no-color
 
   javascript-sdk:
     # Renamed from `javascript-starter` (issue #17). The previous
@@ -181,6 +187,20 @@ jobs:
         run: pnpm build
       - name: Test
         run: pnpm test
+      - name: init from the packed package writes the starter
+        # `init` reads the starter folder the npm package ships (issue #239).
+        # Pack exactly what would publish, install it in a clean folder, and
+        # check the project init writes is the starter (only the name in
+        # package.json differs) and passes validate.
+        run: |
+          set -euo pipefail
+          pnpm pack --pack-destination /tmp/pack
+          mkdir -p /tmp/init-smoke && cd /tmp/init-smoke
+          echo '{"name":"init-smoke","private":true}' > package.json
+          npm install --no-audit --no-fund /tmp/pack/*.tgz
+          npx chipzen-sdk init smoke-bot
+          diff -r -x package.json "$GITHUB_WORKSPACE/packages/javascript/starters/javascript" smoke-bot
+          npx chipzen-sdk validate smoke-bot --no-color
 
   rust-sdk:
     # Renamed from `rust-starter` since the legacy starters/rust/ is
@@ -188,8 +208,8 @@ jobs:
     # workspace at packages/rust which contains chipzen-bot (the SDK
     # library) and chipzen-sdk (the CLI). The IP-protected starter at
     # packages/rust/starters/rust/ is intentionally NOT in the
-    # workspace (so users can copy it standalone) and gets covered by
-    # CI once chipzen-bot is published to crates.io.
+    # workspace (so users can copy it standalone); the rust-starter job
+    # below covers it, and rust-reference-bot covers the Rust example.
     name: Rust SDK (build + test)
     runs-on: ubuntu-latest
     defaults:
@@ -207,6 +227,62 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Cargo test
         run: cargo test --workspace --quiet
+
+  rust-starter:
+    # The starter and the Rust reference example sat broken against every
+    # published chipzen-bot release, because no job built either (issue
+    # #248): the starter's conformance test asserted one scenario while the
+    # SDK has run four since 0.3.0, and the example's `main` did not compile
+    # against run_bot's return type.
+    #
+    # Both depend on chipzen-bot from crates.io at the starter's pin, so this
+    # checks what a user actually gets, not the commit under test (the
+    # rust-sdk job covers that). The starter is copied out of the repo first,
+    # as a user would: inside packages/rust cargo sees the workspace root,
+    # which deliberately does not list it, and refuses to build.
+    name: Rust starter (build + test)
+    runs-on: ubuntu-latest
+    env:
+      STARTER_DIR: /tmp/rust-starter
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy the starter out of the repo
+        run: cp -r packages/rust/starters/rust "$STARTER_DIR"
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.STARTER_DIR }} -> target
+      - name: Cargo fmt check
+        working-directory: ${{ env.STARTER_DIR }}
+        run: cargo fmt --check
+      - name: Cargo clippy
+        working-directory: ${{ env.STARTER_DIR }}
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Cargo test (includes the conformance scenarios)
+        working-directory: ${{ env.STARTER_DIR }}
+        run: cargo test --quiet
+
+  rust-reference-bot:
+    # See rust-starter above (issue #248). The example has no tests, so
+    # clippy (which type-checks every target) is the build gate. It sits
+    # outside any workspace, so it builds in place.
+    name: Rust reference bot (build + lint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/reference-bot-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/reference-bot-rust -> target
+      - name: Cargo fmt check
+        run: cargo fmt --check
+      - name: Cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
 
   protocol-doc-mirror:
     # docs/EXTERNAL-API-BOT-PROTOCOL.md is the CANONICAL copy; the private
@@ -240,6 +316,22 @@ jobs:
           python-version: "3.12"
       - name: Check every log_cap.py copy against the pin
         run: python scripts/log_cap_hash.py --check
+
+  starter-pins:
+    # A starter installs the SDK from the registry at its pin, so a release can
+    # move past the pin with nothing here going red: the JavaScript starter sat
+    # on ^0.3.0, which only admits 0.3.x, through two minor releases (issue
+    # #218). This fails the PR that bumps a package's version without moving a
+    # starter's pin to admit it, and any PR that adds a starter with a stale pin.
+    name: Starter pin guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check every starter's pin admits the package version in this repo
+        run: python scripts/check_starter_pins.py
 
   python-starter-image:
     # `docker build -t my-bot .` is the canonical packaging step QUICKSTART.md

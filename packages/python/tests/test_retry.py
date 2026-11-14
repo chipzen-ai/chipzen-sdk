@@ -457,3 +457,59 @@ async def test_max_retries_overrides_explicit_policy(monkeypatch):
 
     assert stub.calls == 2  # 1 initial + 1 retry
     assert sleeps == [pytest.approx(0.05)]  # policy.initial_backoff_ms preserved
+
+
+class _SeatReplacedWS(_StubWS):
+    """Mock websocket whose server closes 4000 (another connection of the bot
+    took the seat over, chipzen-sdk#242) on the first read."""
+
+    async def recv(self) -> str:
+        from websockets.exceptions import ConnectionClosedError
+        from websockets.frames import Close
+
+        raise ConnectionClosedError(Close(4000, "replaced_by_new_connection"), None)
+
+
+class _SeatReplacedConnect:
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, _url, **_kwargs):
+        self.calls += 1
+        ws = _SeatReplacedWS()
+
+        class _CM:
+            async def __aenter__(self):
+                return ws
+
+            async def __aexit__(self, *args):
+                return False
+
+        return _CM()
+
+
+@pytest.mark.asyncio
+async def test_run_bot_does_not_retry_a_seat_takeover(monkeypatch, caplog):
+    """A 4000 close is not a drop: ``run_bot`` returns ``None`` at once and
+    logs one line, rather than reconnecting and taking the seat back."""
+    stub = _SeatReplacedConnect()
+    import websockets.asyncio.client as wsac
+
+    monkeypatch.setattr(wsac, "connect", stub)
+    sleeps: list[float] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", _record_sleep)
+    caplog.set_level("INFO")
+
+    end = await run_bot("ws://localhost/ws/match/abc/bot", _NoopBot(), token="t")
+
+    assert end is None
+    assert stub.calls == 1
+    assert sleeps == []
+    lines = [r.getMessage() for r in caplog.records if "seat taken over" in r.getMessage()]
+    assert lines == [
+        "match abc: seat taken over by another connection of this bot; not reconnecting"
+    ]

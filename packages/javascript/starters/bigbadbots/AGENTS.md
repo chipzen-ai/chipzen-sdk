@@ -34,7 +34,7 @@ strength is measured on the platform.
 Needs Node.js 20+ and npm, Git and Docker.
 
 ```bash
-# A starter to build on. Its package.json depends on @chipzen-ai/bot ^0.5.0
+# A starter to build on. Its package.json depends on @chipzen-ai/bot ^0.6.0
 # (Big Bad Bots support is in 0.4.0 and later; the Dockerfile check in
 # `chipzen-sdk validate` needs 0.5.0).
 git clone https://github.com/chipzen-ai/chipzen-sdk.git

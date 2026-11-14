@@ -144,7 +144,7 @@ reproducibility.
 ## Notes on the two-crate workspace
 
 `chipzen-sdk` (the CLI) **depends on** `chipzen-bot`
-(`chipzen-bot = { version = "0.3", path = "../chipzen-bot" }`), which
+(`chipzen-bot = { version = "0.5", path = "../chipzen-bot" }`), which
 fixes the publish order: `chipzen-bot` must reach the crates.io index
 first or `cargo publish -p chipzen-sdk` cannot resolve it. The workflow
 publishes them in that order for exactly this reason, and `cargo publish`
@@ -157,10 +157,24 @@ has not been published yet. `chipzen-sdk` is verified at publish time by
 `cargo publish` itself.
 
 `chipzen-bot` can be republished on its own; `chipzen-sdk` cannot be
-published ahead of a `chipzen-bot` version that satisfies its `"0.3"`
+published ahead of a `chipzen-bot` version that satisfies its `"0.5"`
 requirement.
 
 The IP-protected starter at [`starters/rust/`](starters/rust/) uses
-`chipzen-bot = "0.3"` from the registry and is intentionally NOT a
-workspace member, so it builds cleanly anywhere the user copies it
-once `chipzen-bot` is on crates.io.
+`chipzen-bot` from the registry and is intentionally NOT a workspace
+member, so it builds cleanly anywhere the user copies it once
+`chipzen-bot` is on crates.io. CI's "Starter pin guard" job fails a
+workspace version bump that the starter's pin does not admit, so a minor
+bump moves the pin in the same PR (issue #218). The "Rust starter" and
+"Rust reference bot" CI jobs build against crates.io at the pin, and the
+new version is not there until step 3, so a minor-bump PR widens the pin
+in [`starters/rust/Cargo.toml`](starters/rust/Cargo.toml) and
+[`examples/reference-bot-rust/Cargo.toml`](../../examples/reference-bot-rust/Cargo.toml)
+to admit both versions (`">=0.4, <0.6"`). Once the release is published,
+a follow-up narrows them to `"0.5"`.
+
+The `chipzen-sdk init` scaffold pin lives in
+[`chipzen-sdk/src/scaffold.rs`](chipzen-sdk/src/scaffold.rs). It is only
+read by projects scaffolded from a published CLI, which is always
+published after the matching `chipzen-bot`, so it moves straight to the
+new minor in the bump PR.

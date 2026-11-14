@@ -72,11 +72,13 @@ The in-image cap stays advisory: a builder controls every layer of the image.
 from __future__ import annotations
 
 import os
+import select
 import signal
 import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import IO
 
 __all__ = [
     "BIGBADBOTS_GAME_TYPE",
@@ -259,6 +261,9 @@ class LogCap:
 #: ``PR_SET_DUMPABLE`` from ``<linux/prctl.h>``.
 PR_SET_DUMPABLE = 4
 
+#: The longest the wrapper blocks at a time while it waits for the bot (#6599).
+_WAIT_SLICE_SECONDS = 0.2
+
 
 def make_non_dumpable() -> bool:
     """Clear this process's "dumpable" flag on Linux, so a same-uid child cannot reach it (#6046).
@@ -289,6 +294,31 @@ def make_non_dumpable() -> bool:
     return False
 
 
+def _read_output(stream: IO[bytes]) -> bytes:
+    """The bot's next chunk of output, ``b""`` at end of file.
+
+    A Python signal handler runs only when the interpreter has control. A signal
+    that lands just before a blocking call blocks does not interrupt it, so a
+    plain ``read`` could hold a SIGTERM until a quiet bot next wrote or exited
+    (#6599). Waiting in short slices gives the handler a chance to run. Windows
+    cannot ``select`` on a pipe and the wrapper only runs there in tests, so it
+    reads directly.
+    """
+    if os.name == "posix":
+        while not select.select([stream], [], [], _WAIT_SLICE_SECONDS)[0]:
+            pass
+    return stream.read(4096)
+
+
+def _wait_for_exit(child: subprocess.Popen[bytes]) -> int:
+    """The bot's exit code, waiting in short slices for the reason in :func:`_read_output`."""
+    while True:
+        try:
+            return child.wait(timeout=_WAIT_SLICE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the bot command with its stdout+stderr capped per the container env.
 
@@ -297,8 +327,10 @@ def main(argv: list[str] | None = None) -> int:
     Otherwise the bot runs as a child whose merged output is copied to our
     stdout through a :class:`LogCap`. Past the cap the child's output is still
     read, so the bot never blocks on a full pipe, and thrown away. SIGTERM and
-    SIGINT are forwarded to the child and its exit code is ours. Before the
-    child starts, this process is made non-dumpable (:func:`make_non_dumpable`).
+    SIGINT are forwarded to the child and its exit code is ours, and neither
+    wait blocks for long enough to hold a signal (:func:`_read_output`). Before
+    the child starts, this process is made non-dumpable
+    (:func:`make_non_dumpable`).
     """
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "--":
@@ -335,16 +367,16 @@ def main(argv: list[str] | None = None) -> int:
     cap = LogCap(limits)
     out = sys.stdout.buffer
     if child.stdout is None:  # pragma: no cover - stdout=PIPE above
-        return child.wait()
+        return _wait_for_exit(child)
     while True:
-        chunk = child.stdout.read(4096)
+        chunk = _read_output(child.stdout)
         if not chunk:
             break
         kept = cap.feed(chunk)
         if kept:
             out.write(kept)
             out.flush()
-    return child.wait()
+    return _wait_for_exit(child)
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised as a subprocess in tests

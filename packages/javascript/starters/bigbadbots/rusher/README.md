@@ -4,8 +4,8 @@
 the parts it wants, then walks straight in, jabs, throws anyone who blocks,
 and spends its special the first time it can.
 
-Rusher is one of the Chipzen platform bots you will meet on the platform,
-rewritten as a short, commented starter on the SDK's `BigBadBotsBot`. It is a
+Rusher is modelled on `no_brakes`, one of the Chipzen platform bots you will meet
+on the platform, rewritten as a short, commented starter on the SDK's `BigBadBotsBot`. It is a
 line-for-line port of the [Python Rusher](../../../../python/starters/bigbadbots/rusher/)
 and gives the same answer to every request. Copy this folder, change it,
 upload it.
@@ -53,7 +53,7 @@ keeps working when a new rule set changes the numbers.
 ## Install the SDK
 
 Big Bad Bots support (`BigBadBotsBot`) is in `@chipzen-ai/bot` 0.4.0 and
-later, and `package.json` already depends on it (`^0.5.0`, which also has the log-cap check in `chipzen-sdk validate`). Copy the folder
+later, and `package.json` already depends on it (`^0.6.0`, which also has the log-cap check in `chipzen-sdk validate`). Copy the folder
 and install:
 
 ```bash

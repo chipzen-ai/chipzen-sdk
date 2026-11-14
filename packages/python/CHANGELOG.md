@@ -8,6 +8,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-12
+
+Minor release. It adds two public names, `chipzen.ProtocolCloseError` and
+`chipzen.TERMINAL_CLOSE_CODES`, and one `run_external_bot()` option,
+`lobby_silence_timeout`. Bots written for 0.6 keep working without changes.
+
+- **`chipzen-sdk init` now creates a bot that runs.** It writes the current
+  starter (a `bot.py` with `main()` and the IP-protected Dockerfile), and
+  `validate` now fails a project that would upload fine and then never start.
+  Note that `validate` now fails a poker bot folder with no Dockerfile.
+- **A remote bot comes back after the computer sleeps.** `run_external_bot()`
+  notices a lobby that went quiet during sleep and reconnects by itself, so
+  it no longer misses its matches.
+- **A match the server ends for good stops at once.** A close code such as
+  `4013` (no shared protocol version) now ends the match with a clear error
+  instead of reconnecting in a loop.
+- **After a reconnect, the bot knows its own seat and the button again.**
+
+Upgrade with `pip install -U chipzen-bot`. The details of each fix follow.
+
+### Fixed
+
+- **After a real reconnect, the bot reads its own seat and the button**
+  ([#199](https://github.com/chipzen-ai/chipzen-sdk/issues/199)). The match
+  server sends no `reconnected` frame: a reconnecting bot runs the handshake
+  again and the new session gets the next game frames, never `match_start`
+  or the current hand's `round_start`. So `GameState.your_seat` read 0 for the rest of the
+  match, and `dealer_seat` read 0 until the next hand. Until the session sees those
+  frames, the seat now comes from the Layer 1 `turn_request.seat` (always the
+  receiving bot's seat) and the button is worked out from the hand's blinds
+  (protocol sections 5.3 and 5.9). No platform change; a session that saw
+  `match_start` and `round_start` behaves exactly as before, and an OFC turn
+  state's own `your_seat` / `dealer_seat` still win.
+
+- **A match socket the server closes with `4013` (no mutually supported
+  protocol version) is no longer retried**
+  ([Chipzen #7008](https://github.com/chipzen-ai/Chipzen/issues/7008)). The SDK
+  read every close without a `match_end` as a drop and reconnected until the
+  retry budget ran out, so a version refusal just looped. The 4xxx codes in
+  `chipzen.TERMINAL_CLOSE_CODES` (4003, 4005, 4006, 4010, 4012, 4013) now end
+  the match at once: one ERROR log line with the code and the server's reason,
+  and a `chipzen.ProtocolCloseError` (`.code`, `.reason`). `run_bot()` raises
+  it. `run_external_bot()` records the match with `end: None`, `close_code`
+  and `close_reason`, and counts it toward `max_matches`. Other closes are
+  unchanged: 1000 / 1001 still end normally, and 4000 and every other code
+  are handled as before.
+
+- **`chipzen-sdk init` writes the current Python starter, and `validate` fails
+  a bot the uploaded image could not start**
+  ([#260](https://github.com/chipzen-ai/chipzen-sdk/issues/260)). `init` used
+  its own old templates: a `main.py` with no `main()`, no Dockerfile, and a
+  README that told you to upload a zip. That project passed `validate` and then
+  never played after upload. `init` now copies `packages/python/starters/python`
+  byte for byte (`bot.py` with `main()`, the IP-protected `Dockerfile`,
+  `.dockerignore`, `requirements.txt`, `README.md`, `.gitignore`); the wheel
+  carries the starter as package data, so the two cannot drift. `validate` has
+  two new poker checks: `dockerfile` (a Dockerfile whose final stage sets an
+  ENTRYPOINT or CMD naming the entry point) and `entry_main` (the entry point
+  has the `main()` that ENTRYPOINT calls, or an `if __name__ == "__main__":`
+  block when the image runs the file as a script). A folder without a
+  Dockerfile now fails `validate`.
+
+- **`run_external_bot()` now notices a dead lobby after the host sleeps and
+  reconnects** ([#136](https://github.com/chipzen-ai/chipzen-sdk/issues/136)).
+  When a laptop slept, the server timed the bot out and closed the lobby, but the
+  local socket could still look open for a long time after waking, so the SDK did
+  not reconnect and missed its matches. The server pings the lobby every 15
+  seconds, so the SDK now treats a lobby that has sent nothing at all for
+  `lobby_silence_timeout` seconds (default 45, three missed pings) as dead: it
+  drops the socket and reconnects with the retry policy's backoff. The gap is
+  measured on the wall clock as well as the monotonic clock, so the first check
+  after waking sees the whole sleep. Matches in progress are not affected, since
+  they play on their own sockets. Nothing new is sent on the wire. Pass
+  `lobby_silence_timeout=None` to turn the check off.
+
+## [0.6.3] — 2026-11-06
+
+### Fixed
+
+- **`run_bot()` no longer reconnects forever to a server that accepts and then
+  closes** ([#244](https://github.com/chipzen-ai/chipzen-sdk/issues/244)). The
+  retry counter reset on every successful connect, so a server that took the
+  socket and closed it straight away (for example with `1011`, every time) was
+  retried indefinitely. The counter now resets only once a session made progress,
+  meaning the server `hello` and a game frame after it. Connects that end before
+  that count against `max_reconnect_attempts`. A session that got going and then
+  dropped still starts a fresh budget.
+
+- **A match seat taken over by another connection of the same bot is no longer
+  taken back.** When a second live copy of a bot connects to the same match, the
+  platform hands it the seat and closes the older match socket with `4000`, after an
+  `error` frame with code `replaced_by_new_connection`
+  ([#242](https://github.com/chipzen-ai/chipzen-sdk/issues/242)). `run_external_bot()`
+  treated that as a drop and reconnected, so two copies took the seat from each other
+  indefinitely. It now logs one line ("seat taken over by another connection of this
+  bot; not reconnecting") and ends that match's task: no reconnect, no result entry,
+  and not counted toward `max_matches`. A later `matched` for that same match is
+  ignored; other matches play as normal. `run_bot()` returns `None` on the same close
+  instead of retrying. Any other drop still reconnects as before.
+
+## [0.6.2] — 2026-11-05
+
+### Fixed
+
+- **The poker starter's `table_position` no longer counts busted seats.** A busted seat
+  stays in `opponent_stacks` with a stack of 0, so the old offset from the button was wrong
+  once anyone had gone out. It now counts the seats still in, and treats two players
+  left at any table as heads-up. See `POKER-GAME-STATE-PROTOCOL.md` section 5.9.
+
+- **An OFC turn's safe fallback is now a legal placement.** When `decide()` raises or returns
+  something that is not an `Action` on an OFC turn, or the answer gets `action_rejected`, the SDK
+  sends the protocol's default placement (most free capacity, ties toward the bottom), as the
+  JavaScript SDK does. It used to send a `fold` or a `place` with no placements, or end the session
+  on a non-`Action` return.
+
+- **A lobby reconnect during a live match no longer opens a second gateway.**
+  The platform re-sends `matched` for an in-flight match on every lobby connect.
+  `run_external_bot()` opened a new gateway for it, which the platform refused
+  with `duplicate_participant`, and counted that as a finished match. With
+  `max_matches` set, that could end the session and forfeit the healthy match.
+  It now ignores a `matched` for a match it is still playing. A restarted process
+  has nothing in play, so it still picks its match back up.
+
 ## [0.6.1] — 2026-11-03
 
 ### Added
@@ -514,6 +637,9 @@ debugging at the wire level:
 Apache-2.0 (changed from MIT in earlier internal builds — aligns with
 the chipzen-sdk repo's root LICENSE).
 
+[0.7.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.7.0
+[0.6.3]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.6.3
+[0.6.2]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.6.2
 [0.6.1]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.6.1
 [0.6.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.6.0
 [0.5.0]: https://github.com/chipzen-ai/chipzen-sdk/releases/tag/python-v0.5.0

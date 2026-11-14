@@ -102,6 +102,7 @@ export {
   SUPPORTED_PROTOCOL_VERSIONS,
   type RunBotOptions,
 } from "./client.js";
+export { ProtocolCloseError, TERMINAL_CLOSE_CODES } from "./close_codes.js";
 export {
   runExternalBot,
   botTokenSubprotocols,
@@ -111,6 +112,7 @@ export {
   type MatchResult,
   type BotFactory,
 } from "./external.js";
+export { DEFAULT_LOBBY_SILENCE_TIMEOUT_MS } from "./lobby_liveness.js";
 export {
   connectToChipzen,
   type ConnectionConfig,

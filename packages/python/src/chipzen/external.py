@@ -27,6 +27,12 @@ multi-minute match is in flight. This is what lets a single connection serve a
 whole tournament (the bot is "checked in" via lobby presence and matched once
 per round). This mirrors the battle-tested pattern in the platform's
 ``remote_tournament_harness.py``.
+
+The lobby also watches its own liveness: the server pings every 15 seconds, so
+a lobby that hears nothing at all for ``lobby_silence_timeout`` seconds is
+treated as dead and reconnected with the retry policy's backoff. This catches a
+half-open socket after the host sleeps, where the server has already closed the
+lobby but the local socket still looks open (chipzen-ai/chipzen-sdk#136).
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable
 from urllib.parse import urlsplit, urlunsplit
 
@@ -41,7 +48,8 @@ import websockets
 
 from chipzen import __version__ as _VERSION  # noqa: N812
 from chipzen.bot import ChipzenBot
-from chipzen.client import BotDecisionError, _run_session
+from chipzen.client import SEAT_REPLACED_LOG, BotDecisionError, SeatReplacedError, _run_session
+from chipzen.close_codes import PROTOCOL_CLOSE_LOG, ProtocolCloseError
 from chipzen.config import ChipzenConfig, load_chipzen_config, resolve_token
 from chipzen.connect import EnvName, connect_to_chipzen
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
@@ -67,6 +75,55 @@ _LOBBY_RECV_TIMEOUT_S = 2.0
 #: cancelling them, so nothing is left orphaned. Generous enough that a
 #: near-done match reports its result cleanly.
 _MATCH_DRAIN_GRACE_S = 5.0
+
+#: Default for ``run_external_bot(lobby_silence_timeout=...)``: how long the
+#: lobby may go without receiving ANY frame before the SDK treats the socket as
+#: dead and reconnects. The server pings every 15s, so 45s is three missed
+#: heartbeats in a row (chipzen-ai/chipzen-sdk#136).
+DEFAULT_LOBBY_SILENCE_TIMEOUT_S = 45.0
+
+
+class _LobbyLiveness:
+    """Tracks how long the lobby has gone without a frame from the server.
+
+    Measures the gap on both the monotonic clock and the wall clock and uses
+    the larger. The monotonic clock does not advance while macOS or Linux is
+    asleep, so after a long sleep it reports a gap of a few seconds; the wall
+    clock does advance, so the first check after waking sees the real gap. A
+    wall clock stepped backwards only shrinks its own reading, and the
+    monotonic reading still covers that case. A big forward step can cause one
+    early reconnect, which is harmless.
+    """
+
+    def __init__(self, timeout: float | None) -> None:
+        self.timeout = timeout
+        self.mark()
+
+    def mark(self) -> None:
+        """Record that a frame just arrived."""
+        self._mono = time.monotonic()
+        self._wall = time.time()
+
+    def silent_for(self) -> float:
+        """Seconds since the last frame (the larger of the two clocks)."""
+        return max(time.monotonic() - self._mono, time.time() - self._wall)
+
+    def expired(self) -> bool:
+        """True when a timeout is set and the silence has reached it."""
+        return self.timeout is not None and self.silent_for() >= self.timeout
+
+
+def _abort_socket(ws: object) -> None:
+    """Drop the lobby's TCP connection without a close handshake.
+
+    A half-open socket will never answer a close frame, so a normal close would
+    wait out ``close_timeout`` before the reconnect. Best effort: a transport
+    without ``abort`` is left to the normal close.
+    """
+    transport = getattr(ws, "transport", None)
+    abort = getattr(transport, "abort", None)
+    if callable(abort):
+        abort()
 
 
 def bot_token_subprotocols(token: str) -> list[str]:
@@ -195,6 +252,18 @@ async def _play_one_match(
 
     Returns the ``match_end`` payload, or ``None`` if the match could not be
     completed within the reconnect budget.
+
+    A ``4000`` close (or the ``replaced_by_new_connection`` error frame before
+    it) means another connection of this bot took the seat over. That is not a
+    drop: reconnecting would take the seat back, and two live copies of one bot
+    would trade it forever. It logs one line and raises
+    :class:`~chipzen.client.SeatReplacedError`, so the match's task ends with
+    no reconnect and no result.
+
+    A terminal 4xxx close (:mod:`chipzen.close_codes`, for example ``4013``,
+    no mutually supported protocol version) is not a drop either: the server
+    would refuse a reconnect the same way. It logs one ERROR line with the
+    code and reason and raises :class:`~chipzen.close_codes.ProtocolCloseError`.
     """
     attempt = 0
     while True:
@@ -226,6 +295,14 @@ async def _play_one_match(
             # _run_session returned None: the socket closed without a match_end
             # (a drop, or keepalive killed a stalled socket). Try to resume.
             reason = "closed without match_end"
+        except SeatReplacedError:
+            logger.warning(SEAT_REPLACED_LOG, match_id)
+            raise
+        except ProtocolCloseError as exc:
+            # A terminal 4xxx close (4013 protocol_mismatch, ...): a reconnect
+            # would be refused the same way. Surface it, never reconnect.
+            logger.error(PROTOCOL_CLOSE_LOG, match_id, exc)
+            raise
         except BotDecisionError:
             raise  # deterministic bot bug — terminal, never reconnect-retry
         except (OSError, websockets.WebSocketException) as exc:
@@ -268,6 +345,8 @@ async def _run_lobby_once(
     stop: asyncio.Event,
     fatal: list[BaseException],
     supported_games: list[str] | None = None,
+    replaced: set[str] | None = None,
+    silence_timeout: float | None = DEFAULT_LOBBY_SILENCE_TIMEOUT_S,
 ) -> str:
     """Hold ONE lobby connection and dispatch every ``matched`` it delivers.
 
@@ -277,21 +356,47 @@ async def _run_lobby_once(
       reached (do not reconnect).
     * ``"evicted"``   — the lobby evicted us (a newer connection for the same
       bot replaced this one; do not reconnect).
-    * ``"closed"``    — the lobby connection closed unexpectedly (the caller
-      may reconnect per the retry policy).
+    * ``"closed"``    — the lobby connection closed unexpectedly, or no frame
+      arrived for ``silence_timeout`` seconds (a half-open socket, for example
+      after the host slept). The caller may reconnect per the retry policy.
 
     Each ``matched`` is played in its own task, appended to ``match_tasks``
     (which the CALLER owns) so the lobby heartbeat is answered during matches
     AND in-flight matches survive a lobby reconnect — a match runs on its own
-    gateway socket, independent of the lobby. ``completed`` is a 1-element
+    gateway socket, independent of the lobby. A ``matched`` for a match one of
+    those tasks is still playing is ignored. ``completed`` is a 1-element
     mutable counter shared across lobby sessions.
+
+    ``replaced`` (also caller-owned) holds the ids of matches whose seat another
+    connection of this bot took over. Such a match is neither a result nor a
+    completed match, and a later ``matched`` for it is ignored: playing it
+    would take the seat back from the connection that now holds it.
     """
+    if replaced is None:
+        replaced = set()
 
     def _on_match_done(task: asyncio.Task) -> None:
         try:
             end = task.result()
         except asyncio.CancelledError:  # teardown — not a completed match
             return
+        except SeatReplacedError:
+            # Already logged by _play_one_match. The match goes on elsewhere.
+            replaced.add(task.get_name())
+            return
+        except ProtocolCloseError as exc:
+            # Already logged by _play_one_match. The match is over for this bot
+            # (as it was when the gateway masked the close as a match_end), so
+            # it counts toward max_matches; the result carries the close.
+            completed[0] += 1
+            results.append(
+                {
+                    "match_id": task.get_name(),
+                    "end": None,
+                    "close_code": exc.code,
+                    "close_reason": exc.reason,
+                }
+            )
         except BotDecisionError as exc:
             # safe_mode=False: a deterministic bot bug. Surface it (stop the
             # session and re-raise from run_external_bot) instead of quietly
@@ -315,15 +420,29 @@ async def _run_lobby_once(
         user_agent_header=user_agent,
     ) as ws:
         await ws.send(json.dumps({"type": "authenticate", "token": token}))
+        liveness = _LobbyLiveness(silence_timeout)
         while not stop.is_set():
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=_LOBBY_RECV_TIMEOUT_S)
             except asyncio.TimeoutError:
-                continue  # periodic wake to re-check the stop signal
+                # Periodic wake to re-check the stop signal and the lobby's
+                # liveness. The server pings every 15s; total silence for
+                # ``silence_timeout`` means the socket is dead even if it still
+                # looks open (#136: host sleep, server already closed it).
+                if liveness.expired():
+                    logger.warning(
+                        "lobby: nothing from the server for %.1fs (the host may have "
+                        "slept, or the connection is half-open); reconnecting",
+                        liveness.silent_for(),
+                    )
+                    _abort_socket(ws)
+                    return "closed"
+                continue
             except (websockets.ConnectionClosed, ConnectionError):
                 logger.info("lobby: connection closed")
                 return "closed"
 
+            liveness.mark()
             msg = _loads(raw)
             mtype = msg.get("type")
             if mtype == "ping":
@@ -339,6 +458,28 @@ async def _run_lobby_once(
                     logger.warning("lobby: ignoring matched with untrusted gateway URL: %s", exc)
                     continue
                 match_id = msg["match_id"]
+                # On every lobby connect the platform re-sends ``matched`` for
+                # each match this bot holds a seat in, so that a restarted
+                # process can pick its match back up. This process still has the
+                # match on its own gateway socket, and a second socket would only
+                # be refused with ``duplicate_participant``. A task that has
+                # finished (or given up) no longer counts: that seat may need a
+                # fresh attempt.
+                if any(t.get_name() == match_id and not t.done() for t in match_tasks):
+                    logger.info("lobby: already playing match %s; ignoring repeat", match_id)
+                    continue
+                if match_id in replaced:
+                    # Known narrow case: if the connection that took the seat
+                    # then dies, this lobby still gets the resume ``matched``
+                    # for it and ignores it, so the seat forfeits on the turn
+                    # clock. Accepted: the server caps takeovers per seat at 3,
+                    # so the trade is bounded, and a restarted process (empty
+                    # ``replaced``) picks the match back up.
+                    logger.info(
+                        "lobby: match %s is held by another connection of this bot; ignoring",
+                        match_id,
+                    )
+                    continue
                 logger.info(
                     "lobby: matched -> match %s (rated=%s); playing",
                     match_id,
@@ -356,7 +497,8 @@ async def _run_lobby_once(
                         safe_mode=safe_mode,
                         user_agent=user_agent,
                         supported_games=supported_games,
-                    )
+                    ),
+                    name=match_id,  # how a repeat ``matched`` finds this task
                 )
                 task.add_done_callback(_on_match_done)
                 match_tasks.append(task)
@@ -397,6 +539,7 @@ async def run_external_bot(
     max_matches: int | None = None,
     user_agent: str | None = None,
     supported_games: list[str] | None = None,
+    lobby_silence_timeout: float | None = DEFAULT_LOBBY_SILENCE_TIMEOUT_S,
 ) -> list[dict]:
     """Run a bot on the Chipzen external-API remote-play path.
 
@@ -443,10 +586,20 @@ async def run_external_bot(
             only" — so the default wire bytes are unchanged. See
             :func:`chipzen.client.run_bot` and
             ``docs/protocol/LAYER2-COMMON.md`` section 2.
+        lobby_silence_timeout: Seconds the lobby may go without receiving any
+            frame before the SDK treats the socket as dead, drops it and
+            reconnects with the ``retry_policy`` backoff. The server pings
+            every 15s, so the default (45s) is three missed heartbeats. This is
+            what notices a lobby the server closed while the host was asleep
+            (chipzen-ai/chipzen-sdk#136). In-flight matches are not affected:
+            they play on their own sockets. ``None`` turns the check off. Sends
+            nothing new on the wire.
 
     Returns:
         A list of per-match result dicts (``{"match_id", "end"}``), one per
-        match played this session.
+        match played this session. A match the server ended with a terminal
+        4xxx close (:mod:`chipzen.close_codes`) has ``end`` ``None`` plus
+        ``close_code`` and ``close_reason``.
 
     Raises:
         ValueError: If no token can be resolved, or neither ``url`` nor a
@@ -478,6 +631,10 @@ async def run_external_bot(
             "run_external_bot() requires an external-API token (cz_extbot_...). "
             "Pass token=..., or set [external_api].token in chipzen.toml."
         )
+    if lobby_silence_timeout is not None and lobby_silence_timeout <= 0:
+        raise ValueError(
+            f"lobby_silence_timeout must be > 0 seconds or None, got {lobby_silence_timeout}"
+        )
 
     ua = user_agent or f"chipzen-sdk-python/{client_version}"
     factory = _as_factory(bot)
@@ -489,6 +646,7 @@ async def run_external_bot(
     # is a 1-element mutable counter shared across lobby sessions.
     match_tasks: list[asyncio.Task] = []
     completed = [0]
+    replaced: set[str] = set()
 
     logger.info("external: connecting lobby %s", lobby_url)
 
@@ -514,6 +672,8 @@ async def run_external_bot(
                 stop=stop,
                 fatal=fatal,
                 supported_games=supported_games,
+                replaced=replaced,
+                silence_timeout=lobby_silence_timeout,
             )
             ever_connected = True
         except (OSError, websockets.WebSocketException) as exc:

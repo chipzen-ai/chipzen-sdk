@@ -16,7 +16,9 @@ import {
 } from "./bigbadbots.js";
 import { BigBadBotsBot, fallbackAction, isAnswerShaped } from "./bigbadbots_bot.js";
 import type { Bot } from "./bot.js";
+import { _protocolCloseFor, _protocolCloseLog, ProtocolCloseError } from "./close_codes.js";
 import {
+  _turnSeatContext,
   Action,
   type GameState,
   parseGameState,
@@ -45,6 +47,35 @@ export class BotDecisionError extends Error {
     super(message);
     this.name = "BotDecisionError";
   }
+}
+
+/**
+ * Close code the platform puts on a match socket whose seat another
+ * connection of the same bot took over (chipzen-sdk#242). The lobby uses the
+ * same code for the same reason.
+ */
+export const CLOSE_REPLACED_BY_NEW_CONNECTION = 4000;
+
+/** The close reason, and the `code` of the `error` frame sent just before that close. */
+export const REPLACED_BY_NEW_CONNECTION = "replaced_by_new_connection";
+
+/**
+ * Thrown by the session loop when another connection of this bot took the
+ * match seat over: an `error` frame with code `replaced_by_new_connection`,
+ * or a `4000` close. The match did not end; it goes on on the newer socket.
+ * Reconnecting would only take the seat back, so callers end the match's
+ * task instead.
+ */
+export class SeatReplacedError extends Error {
+  constructor(message: string = REPLACED_BY_NEW_CONNECTION) {
+    super(message);
+    this.name = "SeatReplacedError";
+  }
+}
+
+/** The one line logged when a match socket is taken over. */
+export function _seatReplacedLog(matchId: string): string {
+  return `chipzen-sdk: match ${matchId}: seat taken over by another connection of this bot; not reconnecting`;
 }
 
 /**
@@ -120,7 +151,12 @@ export const BIGBADBOTS_SEND_MARGIN_MS = 20;
  * Resolves on `match_end` (with the `match_end` payload, ignored by most
  * callers). Rejects if the connection cannot be established (after the
  * reconnect budget is exhausted) or if `safeMode` is `false` and
- * `bot.decide()` throws (a terminal {@link BotDecisionError}).
+ * `bot.decide()` throws (a terminal {@link BotDecisionError}). Resolves
+ * `null`, logging one line and without reconnecting, if another connection
+ * of this bot takes the seat over (a `4000` close). Rejects at once, without
+ * reconnecting, with a {@link ProtocolCloseError} (code and reason, logged
+ * once) if the server closes with a terminal 4xxx code such as `4013`; see
+ * `close_codes.ts`.
  */
 export async function runBot(
   url: string,
@@ -139,13 +175,17 @@ export async function runBot(
   // supplies the backoff progression.
   const maxAttempts = options.maxRetries ?? policy.maxReconnectAttempts;
 
+  // One counter, as on the external path, but reset only once a session made
+  // progress (the server hello plus a game frame). Resetting on every connect
+  // meant a server that accepts and then closes before its hello was retried
+  // forever (chipzen-sdk#244).
   let retries = 0;
   for (;;) {
     let ws: WebSocket | null = null;
+    let progressed = false;
     try {
       ws = new WebSocket(url, { headers: { "User-Agent": userAgent } });
       await _waitForOpen(ws);
-      retries = 0; // reset on successful connect
       return await _runSession(ws, bot, {
         matchId,
         token,
@@ -154,13 +194,29 @@ export async function runBot(
         clientVersion,
         safeMode,
         supportedGames: options.supportedGames ?? null,
+        onProgress: () => {
+          progressed = true;
+        },
       });
     } catch (err) {
+      if (err instanceof SeatReplacedError) {
+        // Another connection of this bot holds the seat now; reconnecting
+        // would only take it back.
+        console.warn(_seatReplacedLog(matchId));
+        return null;
+      }
+      if (err instanceof ProtocolCloseError) {
+        // A terminal 4xxx close (4013 protocol_mismatch, ...): the server
+        // will refuse a reconnect the same way. Surface it, no retries.
+        console.error(_protocolCloseLog(matchId, err));
+        throw err;
+      }
       if (err instanceof BotDecisionError) {
         // A deterministic bot bug (safeMode=false) — terminal, not a
         // transient disconnect. Do not reconnect-retry.
         throw err;
       }
+      if (progressed) retries = 0; // the session got going: a fresh budget for this drop
       retries++;
       if (retries > maxAttempts) {
         throw err;
@@ -203,6 +259,12 @@ interface SessionContext {
   safeMode?: boolean;
   /** See {@link RunBotOptions.supportedGames}. */
   supportedGames?: readonly string[] | null;
+  /**
+   * Called once, on the first frame after the server `hello` that is not a
+   * `ping`: the session made real progress. `runBot` uses it to decide
+   * whether a later drop gets a fresh retry budget.
+   */
+  onProgress?: () => void;
 }
 
 /**
@@ -292,8 +354,13 @@ function _callHook(hookName: string, invoke: () => void, safeMode: boolean): voi
  * Drive a single connected session: handshake + message loop until
  * `match_end`. Returns the `match_end` payload on a clean finish, or
  * `null` if the handshake failed / the socket closed without a
- * `match_end` (the caller decides whether to reconnect). Exported for
- * the conformance harness in `conformance.ts`.
+ * `match_end` (the caller decides whether to reconnect). Throws
+ * {@link SeatReplacedError} on a `4000` close or the
+ * `replaced_by_new_connection` error frame before it: another connection
+ * of this bot took the seat over, so the caller must not reconnect.
+ * Throws {@link ProtocolCloseError} on a terminal 4xxx close (`4013`, ...):
+ * the server would refuse a reconnect the same way.
+ * Exported for the conformance harness in `conformance.ts`.
  */
 export async function _runSession(
   ws: WebSocket | SessionWebSocket,
@@ -304,6 +371,12 @@ export async function _runSession(
 ): Promise<Record<string, unknown> | null> {
   const reader = readerOverride ?? new _NodeWebSocketReader(ws as WebSocket);
   const safeMode = ctx.safeMode ?? true;
+  let onProgress = ctx.onProgress;
+  // A 4000 close: another connection of this bot took the seat over.
+  const seatReplaced = (): boolean => reader.closeCode?.() === CLOSE_REPLACED_BY_NEW_CONNECTION;
+  // A terminal 4xxx close (4013, ...): the match is over for this bot.
+  const terminalClose = (): ProtocolCloseError | null =>
+    _protocolCloseFor(reader.closeCode?.(), reader.closeReason?.());
 
   // --- Layer 1 handshake ------------------------------------------------
   const auth: Record<string, unknown> = {
@@ -318,9 +391,16 @@ export async function _runSession(
 
   const helloRaw = await reader.next();
   if (!helloRaw) {
+    if (seatReplaced()) throw new SeatReplacedError();
+    const terminal = terminalClose();
+    if (terminal) throw terminal;
     throw new Error("connection closed before server hello");
   }
   const hello = parseJson(helloRaw);
+  if (hello.type === "error" && hello.code === REPLACED_BY_NEW_CONNECTION) {
+    // Taken over during the handshake; a 4000 close follows.
+    throw new SeatReplacedError();
+  }
   if (hello.type !== "hello") {
     throw new Error(`expected server hello, got ${hello.type ?? "<no type>"}`);
   }
@@ -378,11 +458,18 @@ export async function _runSession(
   // turn state carries neither `your_seat` nor `dealer_seat`, so the seat is
   // taken from `match_start` (or `reconnected`) and the button from each
   // `round_start`. An OFC turn state carries both, and its own values win
-  // (parseGameState).
-  const seats: { yourSeat: number; dealerSeat: number } = { yourSeat: 0, dealerSeat: 0 };
+  // (parseGameState). `seatKnown` / `dealerKnown` record whether this
+  // session saw the frame that carries each one: a reconnect runs a fresh
+  // session that sees neither `match_start` nor this hand's `round_start`,
+  // and until it does the seat comes from `turn_request.seat` and the button
+  // from the hand's blinds (chipzen-ai/chipzen-sdk#199).
+  const seats = { yourSeat: 0, dealerSeat: 0, seatKnown: false, dealerKnown: false };
   for (;;) {
     const raw = await reader.next();
     if (raw === null) {
+      if (seatReplaced()) throw new SeatReplacedError();
+      const terminal = terminalClose();
+      if (terminal) throw terminal;
       // Connection closed (peer or transport) without a match_end. Caller
       // decides whether to retry — we just exit the loop here.
       return null;
@@ -404,6 +491,10 @@ export async function _runSession(
     if (typeof msg.seq === "number") lastSeq = msg.seq;
 
     const type = msg.type as string | undefined;
+    if (onProgress && type !== "ping") {
+      onProgress();
+      onProgress = undefined;
+    }
     switch (type) {
       case "ping":
         await sendJson(ws, { type: "pong", match_id: ctx.matchId });
@@ -411,7 +502,10 @@ export async function _runSession(
 
       case "match_start": {
         const selfSeat = _selfSeat(msg);
-        if (selfSeat !== null) seats.yourSeat = selfSeat;
+        if (selfSeat !== null) {
+          seats.yourSeat = selfSeat;
+          seats.seatKnown = true;
+        }
         _callHook("onMatchStart", () => bot.onMatchStart(msg), safeMode);
         break;
       }
@@ -419,7 +513,10 @@ export async function _runSession(
       case "round_start": {
         const roundState = msg.state as Record<string, unknown> | undefined;
         const dealer = roundState && typeof roundState === "object" ? roundState.dealer_seat : undefined;
-        if (typeof dealer === "number" && Number.isFinite(dealer)) seats.dealerSeat = dealer;
+        if (typeof dealer === "number" && Number.isFinite(dealer)) {
+          seats.dealerSeat = dealer;
+          seats.dealerKnown = true;
+        }
         _callHook("onRoundStart", () => bot.onRoundStart(msg), safeMode);
         break;
       }
@@ -443,7 +540,7 @@ export async function _runSession(
           break;
         }
         const requestId = (msg.request_id as string | undefined) ?? "";
-        const state = parseGameState(msg, seats);
+        const state = parseGameState(msg, _turnSeatContext(msg, seats));
         lastTurn = { requestId, state };
         // _decide handles timing + safeMode; under safeMode=false it
         // throws BotDecisionError, which propagates out of _runSession.
@@ -493,7 +590,10 @@ export async function _runSession(
         // (chipzen-ai/chipzen-sdk#121, the JS analog of #119).
         // The button is kept from the last `round_start` this session saw.
         const relearnedSeat = _selfSeat(msg);
-        if (relearnedSeat !== null) seats.yourSeat = relearnedSeat;
+        if (relearnedSeat !== null) {
+          seats.yourSeat = relearnedSeat;
+          seats.seatKnown = true;
+        }
         _callHook("onReconnected", () => bot.onReconnected(msg), safeMode);
         // If a pending_request is included, dispatch it as if it were a
         // fresh turn_request.
@@ -506,7 +606,7 @@ export async function _runSession(
           // or 27TD state does not carry `your_seat`; an OFC state does, and
           // the state's own value wins (as in the Python SDK).
           const requestId = (pending.request_id as string | undefined) ?? "";
-          const state = parseGameState(pending, seats);
+          const state = parseGameState(pending, _turnSeatContext(pending, seats));
           lastTurn = { requestId, state };
           const { action, latencyMs } = _decide(
             bot,
@@ -534,6 +634,10 @@ export async function _runSession(
         return msg; // clean exit — hand the match_end payload to the caller
 
       case "error":
+        if (msg.code === REPLACED_BY_NEW_CONNECTION) {
+          // A 4000 close follows; end here rather than wait for it.
+          throw new SeatReplacedError();
+        }
         // Non-fatal — log + continue (the real logging plumbing belongs
         // in the bot author's code; the SDK stays quiet).
         break;
@@ -745,6 +849,17 @@ export interface AsyncMessageReader {
    * already waited behind earlier work; readers without it count as no wait.
    */
   receivedAt?(): number | undefined;
+  /**
+   * Optional: the close code once `next()` has resolved `null` (`undefined`
+   * while open, or when the socket closed with no close frame). A `4000`
+   * means another connection of this bot took the seat over.
+   */
+  closeCode?(): number | undefined;
+  /**
+   * Optional: the close reason the server sent, once `next()` has resolved
+   * `null` (`undefined` while open or when there was no close frame).
+   */
+  closeReason?(): string | undefined;
 }
 
 /**
@@ -760,6 +875,8 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
   private readonly waiters: Array<(msg: string | null) => void> = [];
   private closed = false;
   private lastAt: number | undefined;
+  private code: number | undefined;
+  private reason: string | undefined;
 
   constructor(ws: WebSocket) {
     ws.on("message", (data) => {
@@ -773,7 +890,11 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
         this.queue.push({ msg, at });
       }
     });
-    ws.on("close", () => this._close());
+    ws.on("close", (code: number, reason: Buffer) => {
+      this.code = code;
+      this.reason = reason?.toString();
+      this._close();
+    });
     ws.on("error", () => this._close());
   }
 
@@ -789,6 +910,14 @@ export class _NodeWebSocketReader implements AsyncMessageReader {
 
   receivedAt(): number | undefined {
     return this.lastAt;
+  }
+
+  closeCode(): number | undefined {
+    return this.code;
+  }
+
+  closeReason(): string | undefined {
+    return this.reason;
   }
 
   private _close(): void {

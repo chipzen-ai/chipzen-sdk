@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from chipzen import __version__ as _VERSION  # noqa: N812
@@ -32,11 +33,13 @@ from chipzen.bigbadbots import STATE_SHAPE as BIGBADBOTS_STATE_SHAPE
 from chipzen.bigbadbots import StateParseError, parse_bigbadbots_turn_request
 from chipzen.bigbadbots_bot import BigBadBotsBot, fallback_action, is_answer_shaped
 from chipzen.bot import ChipzenBot
+from chipzen.close_codes import PROTOCOL_CLOSE_LOG, ProtocolCloseError, protocol_close_from
 from chipzen.models import (
     POKER_STATE_SHAPES,
     Action,
     GameState,
     UnsupportedStateShapeError,
+    _turn_seat_context,
     state_shape_of,
 )
 from chipzen.retry import DEFAULT_RETRY_POLICY, RetryPolicy
@@ -62,20 +65,58 @@ def _extract_match_id(url: str) -> str:
     return "unknown"
 
 
-def _safe_fallback_action(valid_actions: list[str]) -> Action:
+def _safe_fallback_action(valid_actions: list[str], state: GameState | None = None) -> Action:
     """Return a safe fallback for an ``action_rejected`` retry.
 
     Prefers ``check`` when legal, otherwise ``fold``. Mirrors the server's
-    auto-action policy (see TRANSPORT-PROTOCOL section 8.12).
+    auto-action policy (see TRANSPORT-PROTOCOL section 8.12). An OFC turn offers
+    exactly ``["place"]``, so it gets the protocol's default placement, built
+    from ``state`` (see :func:`_ofc_default_placement`).
     """
     if "check" in valid_actions:
         return Action.check()
     if "fold" in valid_actions:
         return Action.fold()
+    if "place" in valid_actions:
+        return _ofc_default_placement(state)
     # Last resort: echo the first valid action the server offered.
     if valid_actions:
         return Action(action=valid_actions[0])
     return Action.fold()
+
+
+def _ofc_default_placement(state: GameState | None = None) -> Action:
+    """Pineapple OFC: the protocol's default placement.
+
+    OFC-GAME-STATE-PROTOCOL section 5.9, which is also what the server
+    substitutes for a seat that times out: each card goes to the row with the
+    most remaining capacity, ties toward the back (``bottom``, then ``middle``,
+    then ``top``). The first ``state.place`` of ``state.cards_to_place`` are
+    placed and the next ``state.must_discard`` are discarded, so the result is
+    legal for any state the server sends.
+
+    Without a state (an ``action_rejected`` for a turn this session never saw)
+    it is an empty placement, which the server rejects and then applies its own
+    default for, as it would for no answer at all.
+    """
+    if state is None:
+        return Action.place([])
+
+    capacity = dict(state.row_capacity)
+    # Back to front, then any row name this release has not heard of.
+    order: list[str] = [name for name in ("bottom", "middle", "top") if name in capacity]
+    order += [name for name in capacity if name not in order]
+
+    cards = list(state.cards_to_place)
+    placements: list[tuple[str, str]] = []
+    for card in cards[: state.place]:
+        # max() keeps the first of equals, so a tie stays nearer the back.
+        best = max(order, key=capacity.__getitem__, default=None)
+        if best is None or capacity[best] <= 0:
+            break
+        placements.append((card, best))
+        capacity[best] -= 1
+    return Action.place(placements, cards[state.place : state.place + state.must_discard])
 
 
 async def _send_json(ws: Any, message: dict) -> None:
@@ -91,6 +132,35 @@ class BotDecisionError(Exception):
     reconnect-retry it. See chipzen-ai/chipzen-sdk#52 (decide) and #80
     (lifecycle hooks).
     """
+
+
+#: Close code the platform puts on a match socket whose seat another
+#: connection of the same bot took over (chipzen-sdk#242). The lobby uses the
+#: same code for the same reason.
+CLOSE_REPLACED_BY_NEW_CONNECTION = 4000
+
+#: The close reason, and the ``code`` of the ``error`` frame sent just before
+#: that close.
+REPLACED_BY_NEW_CONNECTION = "replaced_by_new_connection"
+
+#: The one line logged when a match socket is taken over.
+SEAT_REPLACED_LOG = "match %s: seat taken over by another connection of this bot; not reconnecting"
+
+
+class SeatReplacedError(Exception):
+    """Raised by the session loop when another connection of this bot took the
+    match seat over: an ``error`` frame with code ``replaced_by_new_connection``,
+    or a ``4000`` close.
+
+    The match did not end; it goes on on the newer socket. Reconnecting would
+    only take the seat back, so callers end the match's task instead.
+    """
+
+
+def _is_seat_replaced_close(exc: BaseException) -> bool:
+    """True if ``exc`` is a websockets close whose received code is 4000."""
+    rcvd = getattr(exc, "rcvd", None)
+    return getattr(rcvd, "code", None) == CLOSE_REPLACED_BY_NEW_CONNECTION
 
 
 async def run_bot(
@@ -131,8 +201,10 @@ async def run_bot(
             handshake. Defaults to the installed SDK version
             (chipzen-ai/chipzen-sdk#41).
         safe_mode: When ``True`` (default), an exception raised by
-            ``bot.decide()`` is logged and folded. Set ``False`` for dev/eval
-            so the first exception propagates (chipzen-ai/chipzen-sdk#52).
+            ``bot.decide()`` is logged and folded (on an OFC turn, which has
+            no fold, the protocol's default placement is sent). Set ``False``
+            for dev/eval so the first exception propagates
+            (chipzen-ai/chipzen-sdk#52).
         user_agent: Override the WS ``User-Agent`` header. Defaults to
             ``chipzen-sdk-python/<version>`` (chipzen-ai/chipzen-sdk#46).
         supported_games: The games this client can actually play, declared in
@@ -151,7 +223,14 @@ async def run_bot(
 
     Returns:
         The ``match_end`` payload, or ``None`` if the connection closed without
-        a clean ``match_end`` after exhausting retries.
+        a clean ``match_end`` after exhausting retries, or another connection
+        of this bot took the seat over (a ``4000`` close; not retried).
+
+    Raises:
+        ProtocolCloseError: the server closed the match socket with a terminal
+            4xxx code such as ``4013`` (no mutually supported protocol
+            version). Logged once with the code and reason; not retried. See
+            :mod:`chipzen.close_codes`.
     """
     try:
         from websockets.asyncio.client import connect
@@ -172,11 +251,20 @@ async def run_bot(
     # the backoff progression.
     max_attempts = max_retries if max_retries is not None else policy.max_reconnect_attempts
 
+    # One counter, as on the external path, but reset only once a session made
+    # progress (the server hello plus a game frame). Resetting on every connect
+    # meant a server that accepts and then closes was retried forever
+    # (chipzen-sdk#244).
     retries = 0
+    progressed = [False]
+
+    def _on_progress() -> None:
+        progressed[0] = True
+
     while retries <= max_attempts:
+        progressed[0] = False
         try:
             async with connect(url, user_agent_header=ua) as ws:
-                retries = 0  # reset on successful connect
                 return await _run_session(
                     ws,
                     bot,
@@ -187,9 +275,20 @@ async def run_bot(
                     client_version=client_version,
                     safe_mode=safe_mode,
                     supported_games=supported_games,
+                    on_progress=_on_progress,
                 )
 
         except asyncio.CancelledError:
+            raise
+        except SeatReplacedError:
+            # Another connection of this bot holds the seat now; reconnecting
+            # would only take it back.
+            logger.warning(SEAT_REPLACED_LOG, match_id)
+            return None
+        except ProtocolCloseError as exc:
+            # A terminal 4xxx close (4013 protocol_mismatch, ...): the server
+            # will refuse a reconnect the same way. Surface it, no retries.
+            logger.error(PROTOCOL_CLOSE_LOG, match_id, exc)
             raise
         except BotDecisionError:
             # A deterministic bot bug (safe_mode=False) — terminal, not a
@@ -197,6 +296,8 @@ async def run_bot(
             # process exits non-zero.
             raise
         except Exception:
+            if progressed[0]:
+                retries = 0  # the session got going: a fresh budget for this drop
             retries += 1
             if retries > max_attempts:
                 logger.exception("Max reconnection attempts reached, giving up")
@@ -223,12 +324,63 @@ async def _run_session(
     client_version: str,
     safe_mode: bool = True,
     supported_games: list[str] | None = None,
+    on_progress: Callable[[], None] | None = None,
 ) -> dict | None:
     """Execute a single connected session: handshake + message loop.
 
+    ``on_progress``, if given, is called once, on the first frame after the
+    server ``hello`` that is not a ``ping``: the session made real progress.
+    ``run_bot`` uses it to decide whether a later drop gets a fresh retry
+    budget.
+
     Returns the ``match_end`` payload on a clean finish, or ``None`` if the
     handshake failed / the socket closed without a ``match_end``.
+
+    Raises:
+        SeatReplacedError: another connection of this bot took the seat over
+            (a ``4000`` close, or the ``replaced_by_new_connection`` error
+            frame that comes just before it).
+        ProtocolCloseError: the server closed with a terminal 4xxx code (see
+            :mod:`chipzen.close_codes`), for example ``4013``.
     """
+    try:
+        return await _session_loop(
+            ws,
+            bot,
+            match_id=match_id,
+            token=token,
+            ticket=ticket,
+            client_name=client_name,
+            client_version=client_version,
+            safe_mode=safe_mode,
+            supported_games=supported_games,
+            on_progress=on_progress,
+        )
+    except Exception as exc:
+        if _is_seat_replaced_close(exc):
+            raise SeatReplacedError(
+                f"match socket closed {CLOSE_REPLACED_BY_NEW_CONNECTION}"
+            ) from exc
+        terminal = protocol_close_from(exc)
+        if terminal is not None:
+            raise terminal from exc
+        raise
+
+
+async def _session_loop(
+    ws: Any,
+    bot: ChipzenBot,
+    *,
+    match_id: str,
+    token: str | None,
+    ticket: str | None,
+    client_name: str,
+    client_version: str,
+    safe_mode: bool = True,
+    supported_games: list[str] | None = None,
+    on_progress: Callable[[], None] | None = None,
+) -> dict | None:
+    """The body of :func:`_run_session`: handshake + message loop."""
 
     async def _decide(state: GameState) -> tuple[Action, float]:
         """Run ``bot.decide`` OFF the session loop, with timing + safe_mode.
@@ -250,15 +402,28 @@ async def _run_session(
         Returns ``(action, decision_ms)``. Under ``safe_mode`` a raised
         exception is logged and folded; otherwise it is re-raised as a
         :class:`BotDecisionError` so the caller treats it as terminal.
+
+        An OFC turn has no fold, so there the raise, and a return that is not
+        an :class:`Action`, get the protocol's default placement instead
+        (or the same :class:`BotDecisionError` without ``safe_mode``).
         """
         start = time.monotonic()
+        is_ofc_turn = "place" in state.valid_actions
         try:
             action = await asyncio.to_thread(bot.decide, state)
         except Exception as exc:
             logger.exception("Bot.decide() raised an exception")
             if not safe_mode:
                 raise BotDecisionError(str(exc)) from exc
-            action = Action.fold()
+            action = (
+                _safe_fallback_action(state.valid_actions, state) if is_ofc_turn else Action.fold()
+            )
+        if is_ofc_turn and not isinstance(action, Action):
+            message = f"decide() returned {action!r}, not an Action"
+            if not safe_mode:
+                raise BotDecisionError(message)
+            logger.error("%s; sending the protocol's default placement", message)
+            action = _safe_fallback_action(state.valid_actions, state)
         return action, (time.monotonic() - start) * 1000.0
 
     def _call_hook(hook: Any, *args: Any) -> None:
@@ -412,6 +577,11 @@ async def _run_session(
 
     raw_hello = await ws.recv()
     server_hello = json.loads(raw_hello)
+    if server_hello.get("type") == "error" and server_hello.get("code") == (
+        REPLACED_BY_NEW_CONNECTION
+    ):
+        # Taken over during the handshake; a 4000 close follows.
+        raise SeatReplacedError(REPLACED_BY_NEW_CONNECTION)
     if server_hello.get("type") != "hello":
         logger.error(
             "Expected 'hello' from server, got %r",
@@ -486,8 +656,18 @@ async def _run_session(
     # --- Session state tracked across messages ------------------------
     your_seat: int = 0
     dealer_seat: int = 0
+    # Whether this session saw the frame that carries each one. A reconnect
+    # runs a fresh session that sees neither ``match_start`` nor this hand's
+    # ``round_start``; until it does, the seat comes from ``turn_request.seat``
+    # and the button from the hand's blinds (chipzen-ai/chipzen-sdk#199).
+    seat_known = False
+    dealer_known = False
     current_round_id: str = ""
     last_seq: int | None = None
+    # The last turn we answered, kept so an ``action_rejected`` for it can be
+    # retried with a fallback built from that turn's state (an OFC default
+    # placement needs the cards and the row capacity).
+    last_turn: GameState | None = None
 
     # --- Main message loop --------------------------------------------
     async for raw in ws:
@@ -498,6 +678,9 @@ async def _run_session(
             continue
 
         msg_type = payload.get("type")
+        if on_progress is not None and msg_type != "ping":
+            on_progress()
+            on_progress = None
         seq = payload.get("seq")
         if isinstance(seq, int):
             if last_seq is not None and seq != last_seq + 1:
@@ -521,12 +704,15 @@ async def _run_session(
             for seat_info in payload.get("seats", []) or []:
                 if seat_info.get("is_self"):
                     your_seat = int(seat_info.get("seat", 0))
+                    seat_known = True
                     break
             _call_hook(bot.on_match_start, payload)
 
         elif msg_type == "round_start":
             state = payload.get("state", {}) or {}
-            dealer_seat = int(state.get("dealer_seat", dealer_seat))
+            if "dealer_seat" in state:
+                dealer_seat = int(state["dealer_seat"])
+                dealer_known = True
             current_round_id = str(payload.get("round_id", current_round_id))
             _call_hook(bot.on_round_start, payload)
 
@@ -539,11 +725,19 @@ async def _run_session(
             if is_bigbadbots:
                 await _answer_bigbadbots(payload)
                 continue
-            state = GameState.from_turn_request(
+            turn_seat, turn_dealer = _turn_seat_context(
                 payload,
                 your_seat=your_seat,
                 dealer_seat=dealer_seat,
+                seat_known=seat_known,
+                dealer_known=dealer_known,
             )
+            state = GameState.from_turn_request(
+                payload,
+                your_seat=turn_seat,
+                dealer_seat=turn_dealer,
+            )
+            last_turn = state
             action, decision_ms = await _decide(state)
             await _send_json(
                 ws,
@@ -605,7 +799,11 @@ async def _run_session(
                 remaining,
                 valid,
             )
-            safe = _safe_fallback_action(valid)
+            rejected_id = str(payload.get("request_id", ""))
+            rejected_turn = (
+                last_turn if last_turn is not None and last_turn.request_id == rejected_id else None
+            )
+            safe = _safe_fallback_action(valid, rejected_turn)
             await _send_json(
                 ws,
                 {
@@ -645,6 +843,9 @@ async def _run_session(
             )
 
         elif msg_type == "error":
+            if payload.get("code") == REPLACED_BY_NEW_CONNECTION:
+                # A 4000 close follows; end here rather than wait for it.
+                raise SeatReplacedError(REPLACED_BY_NEW_CONNECTION)
             logger.error(
                 "Server error [%s]: %s",
                 payload.get("code"),
@@ -662,6 +863,7 @@ async def _run_session(
             for seat_info in payload.get("seats", []) or []:
                 if seat_info.get("is_self"):
                     your_seat = int(seat_info.get("seat", 0))
+                    seat_known = True
                     break
             _call_hook(bot.on_reconnected, payload)
             pending = payload.get("pending_request")
@@ -669,11 +871,19 @@ async def _run_session(
                 await _answer_bigbadbots(pending)
             elif pending:
                 # Treat the pending request exactly like a ``turn_request``.
-                state = GameState.from_turn_request(
+                turn_seat, turn_dealer = _turn_seat_context(
                     pending,
                     your_seat=your_seat,
                     dealer_seat=dealer_seat,
+                    seat_known=seat_known,
+                    dealer_known=dealer_known,
                 )
+                state = GameState.from_turn_request(
+                    pending,
+                    your_seat=turn_seat,
+                    dealer_seat=turn_dealer,
+                )
+                last_turn = state
                 action, decision_ms = await _decide(state)
                 await _send_json(
                     ws,

@@ -59,12 +59,12 @@ More detail:
 ## 2. Install the SDK
 
 Big Bad Bots support is in the JavaScript SDK (`@chipzen-ai/bot`) from 0.4.0.
-The starter's `package.json` already depends on it (`"@chipzen-ai/bot": "^0.5.0"`),
+The starter's `package.json` already depends on it (`"@chipzen-ai/bot": "^0.6.0"`),
 so `npm install` in step 3 installs it. To add it to a bot folder of your own
 instead:
 
 ```bash
-npm install @chipzen-ai/bot@^0.5.0
+npm install @chipzen-ai/bot@^0.6.0
 ```
 
 ## 3. Copy the starter
@@ -79,8 +79,8 @@ ls -A    # .dockerignore  Dockerfile  README.md  bot.js  log_cap.py  node_module
 ```
 
 Rusher fights with fast bodies and fast hands: it walks in, jabs, throws
-blockers and spends its special early. It is one of the platform bots you will
-fight on the platform, rewritten as a short, commented starter, and it plays
+blockers and spends its special early. It is modelled on `no_brakes`, one of the
+platform bots you will fight, rewritten as a short, commented starter, and it plays
 exactly like the [Python Rusher](../packages/python/starters/bigbadbots/rusher/).
 The Python starters also include Zoner (spacing) and Turtle (blocking); their
 `bot.py` files read the same way and port to JavaScript the same way.
@@ -231,12 +231,11 @@ An uploaded bot is started by the platform, which hands it its match URL
 
 Once the bot is `active`, go to **Competitions**, then **Challenges**, then
 **New challenge**. Set **Game** to **Big Bad Bots (Beta)**, which is what makes your
-bot appear, pick it, and pick a platform bot from the practice list (their names
-start `b3-house-`). A challenge against a platform bot starts straight away. Games against platform
+bot appear, pick it, and pick a platform bot from the practice list. A challenge against a platform bot starts straight away. Games against platform
 bots, or between two of your own bots, are practice and are not rated; a game
 against another builder's bot is rated, and in the beta a bot's rating is simply
 the share of its rated games it wins. A good first baseline: your edited
-Rusher against the platform rusher.
+Rusher against `no_brakes`.
 
 Then loop: watch the replay, read your bot's per-match log (its stdout and
 `console` output; log a line per round, not per tick), change one thing, run

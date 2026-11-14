@@ -43,19 +43,22 @@
 
 mod bot;
 mod client;
+mod close_codes;
 mod config;
 mod conformance;
 mod connect;
 mod error;
 mod external;
+mod lobby_liveness;
 mod models;
 mod retry;
 
 pub use bot::Bot;
 pub use client::{
     default_user_agent, run_bot, MessageReader, MessageWriter, RunBotOptions, SessionContext,
-    SUPPORTED_PROTOCOL_VERSIONS,
+    CLOSE_REPLACED_BY_NEW_CONNECTION, REPLACED_BY_NEW_CONNECTION, SUPPORTED_PROTOCOL_VERSIONS,
 };
+pub use close_codes::{is_terminal_close, TERMINAL_CLOSE_CODES};
 pub use config::{
     discover_config_path, load_chipzen_config, resolve_token, resolve_url, ChipzenConfig,
     CONFIG_FILENAME, SECTION_NAME,
@@ -70,6 +73,7 @@ pub use external::{
     bot_token_subprotocols, resolve_gateway_url, run_external_bot, run_external_cli, MatchResult,
     RunExternalArgs, RunExternalOptions, BOT_TOKEN_SUBPROTOCOL,
 };
+pub use lobby_liveness::{LobbySilenceTimeout, DEFAULT_LOBBY_SILENCE_TIMEOUT};
 pub use models::{
     parse_card, parse_game_state, Action, ActionHistoryEntry, ActionKind, Card, DiscardItem,
     GameState, Placement,

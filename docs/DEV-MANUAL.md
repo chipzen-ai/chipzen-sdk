@@ -203,8 +203,8 @@ Built from the `turn_request` message. The full definition is in
 | `your_seat` | `int` | 0-based. |
 | `dealer_seat` | `int` | Button seat. |
 | `to_call` | `int` | Chips to call. `0` means you can check. |
-| `min_raise` | `int` | Minimum legal raise-to (total bet). `0` if raising is illegal. |
-| `max_raise` | `int` | Maximum legal raise-to (your effective all-in). `0` if raising is illegal. |
+| `min_raise` | `int` | Minimum full raise-to (total bet): the current bet plus the last raise increment. Always sent; `valid_actions` says whether you may raise. Not capped by your stack, so it can exceed `max_raise`: then the only raise is the all-in, `amount = max_raise` (POKER-GAME-STATE-PROTOCOL section 5.4). |
+| `max_raise` | `int` | Maximum raise-to: your bet this round plus your stack (your all-in). Always sent. |
 | `valid_actions` | `list[str]` | Strings from `{"fold","check","call","raise","all_in"}`. |
 | `action_history` | `list[dict]` | All actions this hand, chronological, including synthetic blind/ante entries. |
 | `round_id` | `str` | Layer 1 round UUID. Empty in the local test harness. |
@@ -229,9 +229,10 @@ already seat-indexed. The catch is behavioral, not a crash:
   rejected action, this kind of bug stays invisible until you inspect results.
 - **Table size.** Read it from `match_start`'s `game_config.num_players`, or
   derive it from any turn state as `len(opponent_stacks) + 1`.
-- **Position.** Derive your seat's offset from the button with
-  `seats_after_button = (your_seat - dealer_seat) % num_players` (`0` is the
-  button; in heads-up the button is the small blind). The full taxonomy and a
+- **Position.** Count your seat's offset from the button among the seats still
+  in, not around the whole table: a busted seat stays in `opponent_stacks` with a
+  stack of `0`. `0` is the button; with two players left, at a table of any size,
+  the button is the small blind. The full taxonomy, the formula and a
   worked example live in
   [`POKER-GAME-STATE-PROTOCOL.md`](protocol/POKER-GAME-STATE-PROTOCOL.md) Section
   5.9, and the reference starters in `packages/<lang>/starters/` show the
@@ -334,7 +335,12 @@ asyncio.run(run_external_bot(MyBot(), bot_id="<bot-uuid>", env="prod",
 
 `run_external_bot` holds one lobby connection and plays every match dispatched
 to your bot — a single challenge, or each round of a tournament — and
-reconnects a dropped match via the platform's reconnect-resume. Put the token in
+reconnects a dropped match via the platform's reconnect-resume. A `4000` close on a
+match socket is not a drop: another connection of the same bot took the seat over, so
+the SDK logs one line and ends that match without reconnecting, and ignores a later
+`matched` for it. So if the copy that took the seat then dies, this copy does not pick
+the match up again on its next lobby connect, and the seat forfeits on the turn clock
+(the server caps takeovers per seat at 3); restart the process to rejoin. Put the token in
 a `chipzen.toml` and the CLI is a one-liner:
 
 ```toml
@@ -435,9 +441,9 @@ can still play a game by speaking its Layer 2 spec directly.
 |---|---|---|---|
 | No-Limit Hold'em, heads-up and multi-way | Yes | Yes | Yes |
 | Remote play (external API) | Yes | Yes | Yes |
-| `supported_games` declaration | Yes (0.4.0) | Yes (`supportedGames`, 0.4.0) | Yes, in `main` (`supported_games`); not yet in a crates.io release |
-| 2-7 Triple Draw | Yes (0.4.0) | Yes, in `main` (`decideDraw`); not yet in an npm release | Yes, in `main` (`decide_draw`); not yet in a crates.io release |
-| Pineapple OFC | Yes (0.4.0) | Yes, in `main` (`decidePlacement`); not yet in an npm release | Yes, in `main` (`decide_placement`); not yet in a crates.io release |
+| `supported_games` declaration | Yes (0.4.0) | Yes (`supportedGames`, 0.4.0) | Yes (`supported_games`, 0.4.0) |
+| 2-7 Triple Draw | Yes (0.4.0) | Yes (`decideDraw`, 0.5.0) | Yes (`decide_draw`, 0.4.0) |
+| Pineapple OFC | Yes (0.4.0) | Yes (`decidePlacement`, 0.5.0) | Yes (`decide_placement`, 0.4.0) |
 | Big Bad Bots | Yes (0.5.0, `BigBadBotsBot`, §10) | Yes (0.4.0, `BigBadBotsBot`) | Coming after Python |
 
 ---
@@ -547,6 +553,12 @@ exits non-zero on any failure. Categories:
 
 - **Image / size budget** — bot directory size, presence of an entry
   point, no archive larger than the 250 MB compressed upload cap (§7.2).
+- **Startable image** (poker bots): a `Dockerfile` whose final stage sets
+  an ENTRYPOINT or CMD that names your entry point, and the entry point
+  has what that command runs: a top-level `main()` for the starter's
+  `from bot import main; main()`, or an `if __name__ == "__main__":`
+  block for `python bot.py`. A folder without these passes every other
+  check and then never plays after upload (issue #260).
 - **Imports** — your bot module imports cleanly under the same Python
   version the platform uses, with only the SDK + your stated deps on the
   path.
@@ -735,18 +747,36 @@ doing more work than you think.
 ### 6.2 Decision timeout by match type
 
 The server resolves your bot's per-decision timeout by **how the bot is
-hosted**, never by user tier:
+hosted and how the match was started**, never by user tier:
 
 | Bot / match type | Server field | Default |
 |---|---|---|
 | Hosted (uploaded container) bots, including ranked and tournament bot-vs-bot | `bot_decision_timeout_ms` | **5000 ms** |
 | Remote (External API) bots on the token-initiated paths | `extapi_casual_decision_timeout_ms` | **30000 ms** |
+| Remote bots in tournaments | `bot_decision_timeout_ms` + `tournament_remote_relay_grace_seconds` | **5000 ms** advertised (`turn_timeout_ms`), **20000 ms** enforced (5 s + 15 s relay grace) |
+| Remote bots on dashboard-dispatched challenges | `bot_decision_timeout_ms` | **5000 ms** |
+| Season fixtures | `decision_clock_seconds`, frozen on the fixture | **5000 ms** if both bots are sandboxed, otherwise **30000 ms** |
 
 Hosted bots run on the match executor, which enforces
 `bot_decision_timeout_ms` (5 s). Remote bots on the casual house-bot
 challenge and rated agent-vs-agent paths get the relaxed 30 s clock, sized
 for LLM agents (the `matched` notify carries `decision_timeout_ms: 30000`;
 see [`EXTERNAL-API-BOT-PROTOCOL.md`](EXTERNAL-API-BOT-PROTOCOL.md)).
+
+Remote bots can only enter external-API and wildcard tournaments. Those
+matches carry no per-match clock: `turn_timeout_ms` says 5000 ms, and the
+server waits a further 15 s before it plays check or fold for you. The
+grace is there to absorb network round-trip time, so budget for 5 s.
+
+Season fixtures freeze their clock when they are drawn and publish it as
+`decision_clock_seconds` on `GET /api/external-api/fixtures/upcoming`.
+A fixture with a remote bot runs on that clock, with no relay grace, so the
+number it publishes is the real deadline.
+
+On any path, `match_start.turn_timeout_ms` tells you the clock for the
+match you are in. When the enforced time runs out, the server plays `check`
+if legal, else `fold`, and records a `bot_error` with
+`reason=bot_decision_timeout`.
 
 The server config also defines `bot_match_decision_timeout_ms` and
 `bot_tournament_decision_timeout_ms` (both 2000 ms) and
@@ -811,10 +841,15 @@ in private container storage, and runs a smoke test before approval.
 
 Your image must:
 
-1. **Have an `ENTRYPOINT`** that runs your bot. `CMD` is ignored by the
-   executor; `ENTRYPOINT` is not. (Big Bad Bots images are the exception:
-   their ENTRYPOINT is the platform's log-cap wrapper, which runs the bot
-   command you put in `CMD`. See §10.9.) See [`examples/reference-bot/Dockerfile`](../examples/reference-bot/Dockerfile):
+1. **Start your bot from `ENTRYPOINT`, `CMD` or both.** The platform runs
+   your image as it is, in review and in matches, and overrides neither
+   of them, so the usual Docker rules apply: `ENTRYPOINT` runs with `CMD`
+   as its arguments, and with no `ENTRYPOINT`, `CMD` runs on its own. No
+   command-line arguments are added, so the bot must start with everything
+   it needs already set. The poker starters and the reference bot use
+   `ENTRYPOINT` alone. Big Bad Bots images need both: review requires the
+   platform's log-cap wrapper as `ENTRYPOINT`, and it runs the bot command
+   you put in `CMD` (§10.9). See [`examples/reference-bot/Dockerfile`](../examples/reference-bot/Dockerfile):
    ```dockerfile
    ENTRYPOINT ["python", "-u", "/bot/bot.py"]
    ```
@@ -878,9 +913,11 @@ same CPU, memory, tmpfs, and decompressed-image ceiling regardless of tier:
 | tmpfs `/tmp` | 10 MB |
 | Decompressed image | 1500 MB |
 | Decision timeout (hosted bot) | 5000 ms (`bot_decision_timeout_ms`) |
-| Decision timeout (remote / External API) | 30000 ms (`extapi_casual_decision_timeout_ms`) |
+| Decision timeout (remote, token-initiated paths) | 30000 ms (`extapi_casual_decision_timeout_ms`) |
+| Decision timeout (remote, tournaments) | 5000 ms advertised, 20000 ms enforced |
 
-The decision clock depends on how the bot is hosted, not on tier; see §6.2.
+The decision clock depends on how the bot is hosted and how the match was
+started, not on tier; see §6.2.
 
 What **does** vary by tier is bot-slot count and daily volume quotas. The
 settings, with their free-tier values:
@@ -1311,6 +1348,18 @@ queue drain — see §6.3.
 - **Auth rejection.** Check `CHIPZEN_TOKEN` / `CHIPZEN_TICKET`. Local dev
   often accepts an empty token for the `/bot` endpoint; the hosted
   platform does not.
+- **A `403` from a remote bot or your own REST code, or the body
+  "error code: 1010".** The request was stopped before it reached
+  Chipzen because of its `User-Agent` header. "error code: 1010" is
+  Cloudflare refusing the client's `User-Agent` (Python's built-in
+  `urllib` default is the usual cause; `requests`, `httpx`, `curl`, Go and
+  Node `fetch` pass). A plain `403 Forbidden` page means no `User-Agent`
+  was sent at all, which is the default for raw Rust `tungstenite` and the
+  Node `ws` package. Retrying never helps. Send a `User-Agent` that names
+  your bot, such as `my-bot/1.0`, on every REST call and WebSocket
+  handshake. The SDKs already do (override with `user_agent=` in Python,
+  `userAgent` in JavaScript, `user_agent` in Rust). One-line examples are
+  in [`EXTERNAL-API-BOT-PROTOCOL.md` §8.7](EXTERNAL-API-BOT-PROTOCOL.md#87-a-403-before-your-request-reaches-chipzen-user-agent).
 
 ### 9.5 "Container dies immediately with no logs"
 

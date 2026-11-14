@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chipzen-bot"
-version = "0.6.1"
+version = "0.7.0"
 description = "Build, test, and deploy poker bots for the Chipzen AI competition platform"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -64,6 +64,18 @@ chipzen = "chipzen.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chipzen"]
+
+# `chipzen-sdk init` writes a copy of the Python starter (issue #260). The
+# wheel carries the starter's files as package data instead of a second copy
+# in src/, so the two cannot drift. Keep this list equal to
+# chipzen.scaffold.STARTER_FILES; tests/test_scaffold.py checks it.
+[tool.hatch.build.targets.wheel.force-include]
+"starters/python/bot.py" = "chipzen/_starters/python/bot.py"
+"starters/python/requirements.txt" = "chipzen/_starters/python/requirements.txt"
+"starters/python/Dockerfile" = "chipzen/_starters/python/Dockerfile"
+"starters/python/.dockerignore" = "chipzen/_starters/python/.dockerignore"
+"starters/python/README.md" = "chipzen/_starters/python/README.md"
+"starters/python/.gitignore" = "chipzen/_starters/python/.gitignore"
 
 [tool.ruff]
 target-version = "py310"

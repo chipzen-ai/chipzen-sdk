@@ -32,17 +32,26 @@
 //! session so a lobby reconnect doesn't kill in-flight matches, and a
 //! dropped gateway socket reconnects and resumes via the server's
 //! `reconnected` / `pending_request` frame.
+//!
+//! The lobby also watches its own liveness (see [`LobbySilenceTimeout`]): a
+//! lobby that hears nothing at all for the timeout is dropped and
+//! reconnected, which catches a half-open socket after the host sleeps
+//! (chipzen-ai/chipzen-sdk#136).
 
 use crate::bot::Bot;
 use crate::client::{
-    _run_session, default_user_agent, MessageReader, MessageWriter, SessionContext,
+    _run_session, default_user_agent, seat_replaced_log, MessageReader, MessageWriter,
+    SessionContext,
 };
+use crate::close_codes::protocol_close_log;
 use crate::config::{load_chipzen_config, resolve_token, ChipzenConfig};
 use crate::connect::{connect_to_chipzen, EnvName};
 use crate::error::Error;
+use crate::lobby_liveness::{lobby_silence_log, LobbyLiveness, LobbySilenceTimeout};
 use crate::retry::RetryPolicy;
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -157,7 +166,9 @@ pub struct MatchResult {
     /// The match id, when known (from the `match_end` payload).
     pub match_id: Option<String>,
     /// The full `match_end` payload on a clean finish, or `None` if the
-    /// match was abandoned after exhausting the reconnect budget.
+    /// match was abandoned after exhausting the reconnect budget, or the
+    /// server ended it with a terminal 4xxx close (logged to stderr with the
+    /// code and reason).
     pub end: Option<Value>,
 }
 
@@ -201,6 +212,15 @@ pub struct RunExternalOptions {
     /// unchanged; an empty list is sent as is. See
     /// [`crate::RunBotOptions::supported_games`].
     pub supported_games: Option<Vec<String>>,
+    /// How long the lobby may go without receiving any frame before the SDK
+    /// treats the socket as dead, drops it and reconnects with the
+    /// `retry_policy` backoff. The default (45 seconds) is three missed
+    /// server pings. This is what notices a lobby the server closed while the
+    /// host was asleep (chipzen-ai/chipzen-sdk#136). In-flight matches are not
+    /// affected: they play on their own sockets.
+    /// [`LobbySilenceTimeout::Off`] turns the check off. Sends nothing new on
+    /// the wire.
+    pub lobby_silence_timeout: LobbySilenceTimeout,
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +324,10 @@ where
 /// A connection is returned as a boxed [`MessageReader`] + [`MessageWriter`]
 /// pair. Implementors must be `Send + Sync + 'static` (a single transport is
 /// shared across the lobby loop and every spawned match task).
+///
+/// Dropping both halves should drop the connection without a close
+/// handshake: that is how the lobby abandons a socket that has gone silent,
+/// since a half-open socket never answers a close frame.
 #[async_trait]
 pub trait LobbyTransport: Send + Sync + 'static {
     /// Open the lobby WS at `url`, sending `user_agent` on the handshake.
@@ -365,8 +389,9 @@ impl LobbyTransport for WsTransport {
 ///
 /// # Errors
 ///
-/// * [`Error::Protocol`] if no token can be resolved, or neither `url` nor a
-///   `bot_id` is available to build the lobby URL.
+/// * [`Error::Protocol`] if no token can be resolved, neither `url` nor a
+///   `bot_id` is available to build the lobby URL, or `lobby_silence_timeout`
+///   is `After(Duration::ZERO)`.
 /// * [`Error::BotDecision`] if `decide()` panics under `safe_mode = false`.
 pub async fn run_external_bot<B, F>(
     factory: F,
@@ -432,6 +457,7 @@ where
                 .to_string(),
         ));
     };
+    let silence_timeout = options.lobby_silence_timeout.resolve()?;
 
     let client_version = options
         .client_version
@@ -456,6 +482,7 @@ where
         policy,
         max_matches: options.max_matches,
         supported_games: options.supported_games,
+        silence_timeout,
     });
 
     // Shared mutable session state — owned HERE, not by a single lobby
@@ -464,6 +491,11 @@ where
     let completed = Arc::new(AtomicU64::new(0));
     let stop = Arc::new(AtomicBool::new(false));
     let fatal: Arc<Mutex<Option<Error>>> = Arc::new(Mutex::new(None));
+    // Ids of matches whose seat another connection of this bot took over.
+    let replaced: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    // Ids of matches a task in `match_tasks` is still playing. Owned here for
+    // the same reason as `match_tasks`: it must outlive a lobby reconnect.
+    let live: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let mut match_tasks: JoinSet<()> = JoinSet::new();
 
     // --- Lobby session loop with reconnect/backoff -------------------------
@@ -481,6 +513,8 @@ where
             &completed,
             &stop,
             &fatal,
+            &replaced,
+            &live,
             &mut match_tasks,
         )
         .await;
@@ -544,6 +578,8 @@ struct SessionParams {
     policy: RetryPolicy,
     max_matches: Option<u64>,
     supported_games: Option<Vec<String>>,
+    /// Silence that counts as a dead lobby, or `None` for no check.
+    silence_timeout: Option<Duration>,
 }
 
 /// Why a single lobby connection ended.
@@ -552,7 +588,9 @@ enum LobbyStatus {
     Stopped,
     /// The lobby evicted us (a newer connection replaced this one).
     Evicted,
-    /// The lobby connection closed unexpectedly — the caller may reconnect.
+    /// The lobby connection closed unexpectedly, or no frame arrived for the
+    /// silence timeout (a half-open socket, for example after the host
+    /// slept) — the caller may reconnect.
     Closed,
 }
 
@@ -560,7 +598,13 @@ enum LobbyStatus {
 ///
 /// Each `matched` is spawned into `match_tasks` (owned by the caller) so the
 /// lobby heartbeat is answered during matches AND in-flight matches survive
-/// a lobby reconnect — a match runs on its own gateway socket.
+/// a lobby reconnect — a match runs on its own gateway socket. A `matched`
+/// for a match one of those tasks is still playing (its id is in `live`) is
+/// ignored.
+///
+/// A `matched` for a match in `replaced` (its seat was taken over by another
+/// connection of this bot) is ignored: playing it would take the seat back
+/// from the connection that holds it.
 #[allow(clippy::too_many_arguments)]
 async fn run_lobby_once<B, F, T>(
     transport: &Arc<T>,
@@ -571,6 +615,8 @@ async fn run_lobby_once<B, F, T>(
     completed: &Arc<AtomicU64>,
     stop: &Arc<AtomicBool>,
     fatal: &Arc<Mutex<Option<Error>>>,
+    replaced: &Arc<Mutex<HashSet<String>>>,
+    live: &Arc<Mutex<HashSet<String>>>,
     match_tasks: &mut JoinSet<()>,
 ) -> Result<LobbyStatus, Error>
 where
@@ -587,11 +633,23 @@ where
         .send(json!({ "type": "authenticate", "token": session.token }).to_string())
         .await?;
 
+    let mut liveness = LobbyLiveness::new(session.silence_timeout);
     while !stop.load(Ordering::SeqCst) {
         let recv = tokio::time::timeout(lobby_recv_timeout(), reader.next()).await;
         let raw = match recv {
-            // Periodic wake to re-check the stop signal.
-            Err(_elapsed) => continue,
+            // Periodic wake to re-check the stop signal and the lobby's
+            // liveness. The server pings every 15s; total silence for the
+            // timeout means the socket is dead even if it still looks open
+            // (#136: host sleep, server already closed it). Returning drops
+            // the reader and writer, which drops the socket without a close
+            // handshake the dead peer would never answer.
+            Err(_elapsed) => {
+                if liveness.expired() {
+                    eprintln!("{}", lobby_silence_log(liveness.silent_for()));
+                    return Ok(LobbyStatus::Closed);
+                }
+                continue;
+            }
             Ok(Ok(Some(raw))) => raw,
             // Clean close.
             Ok(Ok(None)) => return Ok(LobbyStatus::Closed),
@@ -599,6 +657,7 @@ where
             Ok(Err(_)) => return Ok(LobbyStatus::Closed),
         };
 
+        liveness.mark();
         let msg = loads(&raw);
         match msg.get("type").and_then(|v| v.as_str()) {
             Some("ping") => {
@@ -623,7 +682,30 @@ where
                     Ok(url) => url,
                     Err(_) => continue,
                 };
+                // On every lobby connect the platform re-sends `matched` for
+                // each match this bot holds a seat in, so that a restarted
+                // process can pick its match back up. This process still has
+                // the match on its own gateway socket, and a second socket
+                // would only be refused with `duplicate_participant`. A task
+                // that has finished (or given up) no longer counts: that seat
+                // may need a fresh attempt.
+                if live.lock().unwrap().contains(&match_id) {
+                    continue;
+                }
+                if replaced.lock().unwrap().contains(&match_id) {
+                    // Held by another connection of this bot. Known narrow
+                    // case: if that connection then dies, this lobby still
+                    // gets the resume `matched` and ignores it, so the seat
+                    // forfeits on the turn clock. Accepted: the server caps
+                    // takeovers per seat at 3, so the trade is bounded, and a
+                    // restarted process (empty `replaced`) picks the match
+                    // back up.
+                    continue;
+                }
 
+                // Marked live before the task starts, so a repeat on this same
+                // socket is ignored too.
+                let live_match = LiveMatch::new(live, &match_id);
                 let bot = factory();
                 let transport = Arc::clone(transport);
                 let session = Arc::clone(session);
@@ -631,12 +713,17 @@ where
                 let completed = Arc::clone(completed);
                 let stop = Arc::clone(stop);
                 let fatal = Arc::clone(fatal);
+                let replaced = Arc::clone(replaced);
 
                 match_tasks.spawn(async move {
+                    // Dropped when the task ends however it ends (finished,
+                    // gave up, panicked or aborted), which un-marks the match.
+                    let _live_match = live_match;
                     let outcome =
                         play_one_match(&*transport, &gateway_url, &match_id, bot, &session).await;
                     record_match_outcome(
                         outcome, &match_id, &session, &results, &completed, &stop, &fatal,
+                        &replaced,
                     );
                 });
             }
@@ -654,8 +741,40 @@ where
     }
 }
 
+/// Marks a match id as being played by a running task. The id is in the set
+/// from [`LiveMatch::new`] until the guard is dropped, i.e. until the task
+/// that owns it ends.
+struct LiveMatch {
+    live: Arc<Mutex<HashSet<String>>>,
+    match_id: String,
+}
+
+impl LiveMatch {
+    fn new(live: &Arc<Mutex<HashSet<String>>>, match_id: &str) -> Self {
+        live.lock().unwrap().insert(match_id.to_string());
+        Self {
+            live: Arc::clone(live),
+            match_id: match_id.to_string(),
+        }
+    }
+}
+
+impl Drop for LiveMatch {
+    fn drop(&mut self) {
+        // Never panic in drop (it may run during an unwind); a poisoned lock
+        // still holds a usable set.
+        let mut live = match self.live.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        live.remove(&self.match_id);
+    }
+}
+
 /// Fold a finished match into the shared results + completed counter, and
 /// flip the stop signal on a terminal `BotDecision` error or `max_matches`.
+/// A match whose seat was taken over is neither: it goes into `replaced`.
+#[allow(clippy::too_many_arguments)]
 fn record_match_outcome(
     outcome: Result<Option<Value>, Error>,
     match_id: &str,
@@ -664,8 +783,15 @@ fn record_match_outcome(
     completed: &AtomicU64,
     stop: &AtomicBool,
     fatal: &Mutex<Option<Error>>,
+    replaced: &Mutex<HashSet<String>>,
 ) {
     match outcome {
+        // Another connection of this bot holds the seat (already logged by
+        // play_one_match). Not a completed match, and no result entry.
+        Err(Error::SeatReplaced) => {
+            replaced.lock().unwrap().insert(match_id.to_string());
+            return;
+        }
         // safe_mode=false: a deterministic bot bug. Surface it (stop the
         // session + re-raise from run_external_bot) — the whole point of
         // safe_mode=false is a loud failure.
@@ -676,6 +802,17 @@ fn record_match_outcome(
             }
             stop.store(true, Ordering::SeqCst);
             return;
+        }
+        // A terminal 4xxx close (already logged by play_one_match, with the
+        // code and reason). The match is over for this bot, as it was when the
+        // gateway masked the close as a match_end, so it counts toward
+        // `max_matches`.
+        Err(Error::ProtocolClose { .. }) => {
+            completed.fetch_add(1, Ordering::SeqCst);
+            results.lock().unwrap().push(MatchResult {
+                match_id: Some(match_id.to_string()),
+                end: None,
+            });
         }
         Err(_other) => {
             // Record, never crash the lobby. (Connect/transport errors that
@@ -718,6 +855,17 @@ fn record_match_outcome(
 /// Returns the `match_end` payload, or `Ok(None)` if the match could not be
 /// completed within the reconnect budget. A [`Error::BotDecision`] is
 /// terminal and propagates immediately (never reconnect-retried).
+///
+/// A `4000` close (or the `replaced_by_new_connection` error frame before
+/// it) means another connection of this bot took the seat over. That is not
+/// a drop: reconnecting would take the seat back, and two live copies of one
+/// bot would trade it forever. It logs one line and returns
+/// [`Error::SeatReplaced`], so the match's task ends with no result.
+///
+/// A terminal 4xxx close ([`TERMINAL_CLOSE_CODES`](crate::TERMINAL_CLOSE_CODES),
+/// for example `4013`, no mutually supported protocol version) is not a drop
+/// either: it logs one line with the code and reason and returns
+/// [`Error::ProtocolClose`], never reconnecting.
 async fn play_one_match<B, T>(
     transport: &T,
     gateway_url: &str,
@@ -757,6 +905,17 @@ where
                     Ok(None) => {}
                     // Deterministic bot bug — terminal, never reconnect-retry.
                     Err(e @ Error::BotDecision(_)) => return Err(e),
+                    // The seat is held by another connection — never reconnect.
+                    Err(e @ Error::SeatReplaced) => {
+                        eprintln!("{}", seat_replaced_log(match_id));
+                        return Err(e);
+                    }
+                    // A terminal 4xxx close (4013, ...): a reconnect would be
+                    // refused the same way. Surface it, never reconnect.
+                    Err(e @ Error::ProtocolClose { .. }) => {
+                        eprintln!("{}", protocol_close_log(match_id, &e));
+                        return Err(e);
+                    }
                     // Transport/protocol error mid-session — try to resume.
                     Err(_) => {}
                 }
@@ -853,13 +1012,19 @@ mod ws_transport {
 
         let (ws_stream, _) = connect_async(request).await?;
         let (write_half, read_half) = ws_stream.split();
-        let reader: Box<dyn MessageReader> = Box::new(OwnedWsReader { inner: read_half });
+        let reader: Box<dyn MessageReader> = Box::new(OwnedWsReader {
+            inner: read_half,
+            close_code: None,
+            close_reason: None,
+        });
         let writer: Box<dyn MessageWriter> = Box::new(OwnedWsWriter { inner: write_half });
         Ok((reader, writer))
     }
 
     struct OwnedWsReader {
         inner: SplitStream<WsStream>,
+        close_code: Option<u16>,
+        close_reason: Option<String>,
     }
 
     #[async_trait]
@@ -869,11 +1034,24 @@ mod ws_transport {
                 match self.inner.next().await {
                     Some(Ok(Message::Text(t))) => return Ok(Some(t.to_string())),
                     Some(Ok(Message::Ping(_))) => continue,
-                    Some(Ok(Message::Close(_))) | None => return Ok(None),
+                    Some(Ok(Message::Close(frame))) => {
+                        self.close_code = frame.as_ref().map(|f| u16::from(f.code));
+                        self.close_reason = frame.map(|f| f.reason.to_string());
+                        return Ok(None);
+                    }
+                    None => return Ok(None),
                     Some(Ok(_)) => continue,
                     Some(Err(e)) => return Err(Error::from(e)),
                 }
             }
+        }
+
+        fn close_code(&self) -> Option<u16> {
+            self.close_code
+        }
+
+        fn close_reason(&self) -> Option<String> {
+            self.close_reason.clone()
         }
     }
 

@@ -18,7 +18,7 @@ class TestInitCli:
     def test_scaffold_creates_runnable_bot(self, tmp_path):
         """Scaffolded bot can be imported and called."""
         bot_dir = scaffold_bot("cli_test_bot", parent_dir=tmp_path)
-        main_py = bot_dir / "main.py"
+        main_py = bot_dir / "bot.py"
         assert main_py.exists()
 
         # Dynamically import and instantiate
@@ -70,7 +70,7 @@ class TestValidateCli:
         severities = [sev for sev, _, _ in results]
         assert "fail" in severities
 
-    def test_validate_custom_entry_point(self, tmp_path):
+    def test_validate_custom_entry_point(self, tmp_path, make_image_ready):
         code = (
             "from chipzen import Bot, GameState, Action\n\n"
             "class CustomBot(Bot):\n"
@@ -78,6 +78,7 @@ class TestValidateCli:
             "        return Action.fold()\n"
         )
         (tmp_path / "custom_entry.py").write_text(code)
+        make_image_ready(tmp_path, "custom_entry.py")
         results = validate_bot(tmp_path, entry_point="custom_entry.py")
         severities = [sev for sev, _, _ in results]
         assert "fail" not in severities
@@ -91,10 +92,16 @@ class TestValidateCli:
             "class ZipBot(Bot):\n"
             "    def decide(self, state: GameState) -> Action:\n"
             "        return Action.check()\n"
+            "\n\ndef main():\n    pass\n"
         )
         zip_path = tmp_path / "nested.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.writestr("my_bot/main.py", code)
+            zf.writestr(
+                "my_bot/Dockerfile",
+                "FROM python:3.12-slim\n"
+                'ENTRYPOINT ["python", "-c", "from main import main; main()"]\n',
+            )
         results = validate_bot(zip_path)
         severities = [sev for sev, _, _ in results]
         assert "fail" not in severities

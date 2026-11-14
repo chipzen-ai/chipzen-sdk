@@ -1,0 +1,9 @@
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*
+coverage/
+dist/
+# The upload tarball (docker save | gzip).
+*.tar.gz

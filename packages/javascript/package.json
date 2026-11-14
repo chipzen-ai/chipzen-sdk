@@ -1,6 +1,6 @@
 {
   "name": "@chipzen-ai/bot",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Build, test, and deploy poker bots for the Chipzen AI competition platform",
   "license": "Apache-2.0",
   "author": {
@@ -42,7 +42,12 @@
   "files": [
     "dist",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "starters/javascript/bot.js",
+    "starters/javascript/package.json",
+    "starters/javascript/Dockerfile",
+    "starters/javascript/.dockerignore",
+    "starters/javascript/README.md"
   ],
   "publishConfig": {
     "access": "public",
