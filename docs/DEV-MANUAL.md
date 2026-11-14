@@ -340,7 +340,21 @@ match socket is not a drop: another connection of the same bot took the seat ove
 the SDK logs one line and ends that match without reconnecting, and ignores a later
 `matched` for it. So if the copy that took the seat then dies, this copy does not pick
 the match up again on its next lobby connect, and the seat forfeits on the turn clock
-(the server caps takeovers per seat at 3); restart the process to rejoin. Put the token in
+(the server caps takeovers per seat at 3); restart the process to rejoin.
+
+**If you write your own client, reconnecting is required.** A match socket can drop
+in the middle of a match with no close frame, even on a good connection: in our own
+staging tests a remote bot saw this several times an hour, from more than one
+network. Treat any match-socket close other than `4000` as a drop: connect to the same
+match endpoint again and run the normal handshake (`authenticate`, server `hello`,
+your `hello`). The server attaches you to your seat and play resumes; if your turn was
+being held open, the same `turn_request` (same `request_id`) arrives again. There is no
+`reconnected` frame, and a seat has 3 reconnections per match (TRANSPORT-PROTOCOL
+section 11). A client that does not reconnect loses its turns to the clock and never
+receives `match_end`. The published SDKs do all of this for you; in the same tests the
+SDK reconnected through every drop and finished each match.
+
+Put the token in
 a `chipzen.toml` and the CLI is a one-liner:
 
 ```toml
