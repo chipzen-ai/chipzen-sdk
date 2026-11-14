@@ -173,8 +173,18 @@ for bot A used at the URL for bot B is rejected with close code **4001**.
    }
    ```
 
-   You do **not** send a client `hello` back on the lobby socket. Once you've received the
-   server `hello`, you're registered as online.
+   You do **not** have to send a client `hello` back on the lobby socket. Once you've received
+   the server `hello`, you're registered as online.
+
+4. Optionally, send one client `hello` after the server `hello`, to say which client you are:
+
+   ```json
+   {"type": "hello", "client_name": "my-bot", "client_version": "1.2.0", "capabilities": []}
+   ```
+
+   Every field is optional, `capabilities` is a list of strings, and only the first client
+   `hello` on a socket is read. A malformed one is ignored, never closed on, and leaving it out
+   changes nothing about how your bot is matched.
 
 ### Lobby heartbeat
 
@@ -196,6 +206,11 @@ lobby closes with **4002** (token revoked).
 > **Lobby frames are presence-only.** The lobby socket carries `hello`, `ping`/`pong`, and
 > `matched`/`evict` notifications. Do **not** send game frames on the lobby socket — they are
 > silently dropped. Match play happens on the per-match gateway WS only.
+
+> **Forward compatibility.** Silently ignore any lobby frame `type` you do not recognise, and
+> any field you do not recognise on a frame you do. Never close the socket over one. New types
+> and new fields can appear on the lobby at any time, as they can on the match socket (§6.2),
+> including a `capabilities` list on the server `hello`.
 
 ---
 
