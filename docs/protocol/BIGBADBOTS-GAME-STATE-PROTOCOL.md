@@ -143,10 +143,10 @@ Every fight `turn_request` carries its time limit in the existing Layer 1 field 
 
 ### 3.5 Missed ticks and the default action (provisional)
 
-A seat **misses** a tick when no acceptable answer arrives within `timeout_ms`, or when it is disconnected (§3.9).
+A seat **misses** a tick when no acceptable answer arrives within `timeout_ms`. A disconnected seat sends nothing, so its ticks are misses too (§3.9).
 
 - **The late answer is dropped.** It is never applied to a later tick. A `turn_action` carrying the `request_id` of a tick that has already resolved is dropped silently, as any unsolicited action is (Layer 1 §12.2).
-- **The bank is spent**, except on a disconnect: no time was waited.
+- **The bank is spent**, on a disconnect too: the server waits out the full `timeout_ms` either way.
 - **The tick plays the default action (provisional, D-01):** the seat's previous tick's action if that was `block`, `move_in` or `move_out`, otherwise `idle`. So a seat that was holding a block keeps blocking, and a seat that was walking keeps walking, rather than dropping its guard for one tick of network jitter.
 - The server sends `action_timeout` with `auto_action` set to the action it applied, and the seat's `turn_result` for the tick carries `is_timeout: true`.
 - A miss is not a rules violation. It does count toward the disconnect forfeit (§3.9).
@@ -185,12 +185,12 @@ The next `turn_request.state` is authoritative. `turn_result` is a convenience f
 
 ### 3.9 Disconnects and forfeits (provisional)
 
-- **The tick clock does not stop for a disconnected seat.** Its ticks are misses (§3.5): each plays the default action, and none spends its bank.
+- **A disconnect is silence.** The tick clock does not stop for a disconnected seat. Each of its ticks is held for the seat's full `timeout_ms` (the window plus the bank left), then counts as a miss (§3.5): it plays the default action and spends the bank, exactly as if the seat were connected and said nothing. The opponent's next tick waits for that hold, so a match with a disconnect runs about as long as one with a silent bot.
 - **Disconnect grace: 5 s (provisional, D-03).** A seat that misses **every tick for 5 s** of match time forfeits the round, and the opponent takes it. The grace is counted in ticks, `rule_set.forfeit.grace_seconds × rule_set.rounds.ticks_per_second` (50 ticks at 10 per second), so the same match replays the same way. It is match time, not wall-clock time: the platform does not pace ticks (§3.3).
 - **Any answer resets the count**, including one that is rejected or corrected. The check runs after each tick and only while both fighters are standing, so a KO on the same tick takes precedence.
 - **Match forfeit: 2 forfeited rounds (provisional, D-03).** A seat that has forfeited that many rounds forfeits the match, and the opponent wins it however many rounds either had won.
 - If both seats run out of grace on the same tick, the round has no winner and both are charged a forfeit. If both forfeit the match at once, the match is a **no-contest**: it has no winner and no coin flip. How `match_end` encodes a no-contest is open (§4.8).
-- **Reconnecting** follows Layer 1 §11 unchanged: the seat reconnects, receives `reconnected`, and if a tick is in flight, `reconnected.pending_request` is that tick's `turn_request` with the time remaining. Play resumes on the next tick. Gear-up calls have no grace rule; a disconnected seat's gear-up calls take their defaults.
+- **Reconnecting** follows Layer 1 §11 unchanged: the seat reconnects, receives `reconnected`, and if a tick is in flight, `reconnected.pending_request` is that tick's `turn_request` with the time remaining. Play resumes on the next tick. Gear-up calls have no grace rule; a disconnected seat's gear-up calls are held to their timeout, then take their defaults.
 
 ### 3.10 `session_control` pause and resume
 
@@ -845,7 +845,7 @@ Big Bad Bots changes no Layer 1 message, field, sequencing rule or error code, a
 |---|---|---|
 | §8.12: the auto-action is `check` if legal, otherwise `fold` | Big Bad Bots' default action (§3.5). Same shape of delta as OFC's legal auto-placement. | Delta, with precedent |
 | §10.3 / §14.4: 100–500 ms of random jitter before each `turn_result` | A 100–500 ms delay cannot fit a 100 ms tick (provisional). The jitter exists so that result timing never reveals an opponent's thinking time. Big Bad Bots meets that purpose by releasing both requests of a step together and fight results on the fixed tick boundary, which carry no timing information. | Review |
-| §11.2 / §12.4: the disconnected seat's turn timer pauses on its first disconnect | Pausing one seat's timer would stall the opponent's fight. Big Bad Bots keeps the tick clock running; the disconnected seat's ticks take the default action and spend none of its bank (§3.9). | Review |
+| §11.2 / §12.4: the disconnected seat's turn timer pauses on its first disconnect | Pausing one seat's timer would stall the opponent's fight. Big Bad Bots keeps the tick clock running and treats a disconnected seat as silent: each of its ticks is held for its full `timeout_ms`, takes the default action and spends its bank (§3.9). | Review |
 | §13.1: at most 10 messages per second per participant, and 5 invalid actions per round | At 10 ticks per second, a bot that answers every tick already sends 10 messages a second, before any `pong` or retry, and would be rate-limited in normal play. A fight round is up to `rounds.round_ticks` decisions, against a limit of 5 invalid actions. The server-side limits for `bigbadbots` tables must be set for the tick rate. | **Review, blocks the runner** |
 
 ---
