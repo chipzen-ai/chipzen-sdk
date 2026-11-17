@@ -149,8 +149,9 @@ shows `clock.window_ms`, your bank (`my_bank_ms`) and your opponent's
 
 Chess sets `illegal_answer: "reject"`: an answer that is not one of
 `legal_moves` is never corrected and never replaced by the platform. The
-platform sends `action_rejected` with a machine code in `details.code`, and you
-may answer again, with the same `request_id`, within the time you have left:
+platform sends `action_rejected` with a machine code in `details.code` and the
+time you have left in `remaining_ms`, and you may answer again with the same
+`request_id`:
 
 | `details.code` | Meaning |
 |---|---|
@@ -159,15 +160,24 @@ may answer again, with the same `request_id`, within the time you have left:
 | `bad_param` | `params.move` is not a UCI move string (`E2E4`, `e2-e4`). |
 | `not_in_legal_set` | A UCI string, but not one of `legal_moves`. |
 
-If no legal move arrives before your time runs out, you lose on time (the
-violation is recorded).
+Retries are built on the platform (chipzen-ai/Chipzen#7465), and **more than one
+is allowed**: you may answer again as often as you like while `timeout_ms` has
+time left, and each rejected answer gets its own `action_rejected`. The first
+legal move is played, as if it had been your only answer. Every rejected answer
+is listed in your `match_end.results[].bot_errors` (`reason`
+`bot_invalid_action`, `code`, `step`, `phase`, `message`).
+
+If no legal move arrives before your time runs out, the last answer received
+stands and you lose on time (the violation is recorded). With no time left, no
+`action_rejected` is sent.
 
 What the Python SDK does for you:
 
 - before sending, it checks that your answer is in `legal_moves`; if not, it
   logs an error and sends `fallback_move(state)` instead;
 - on `action_rejected`, it retries once with another move from the request's
-  `legal_moves`.
+  `legal_moves`. The platform would accept more retries; the SDK's single retry
+  is stricter than it needs to be, not wrong.
 
 ## 5. The starters
 
