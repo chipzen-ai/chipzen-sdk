@@ -566,7 +566,7 @@ def test_f0_07_a_bot_that_exits_at_import_fails_validate(tmp_path):
 
 
 def test_an_unknown_game_fails(tmp_path):
-    assert validate_bot(tmp_path, game="chess")[0][:2] == ("fail", "game")
+    assert validate_bot(tmp_path, game="go")[0][:2] == ("fail", "game")
 
 
 def test_poker_bots_are_validated_exactly_as_before(tmp_path):

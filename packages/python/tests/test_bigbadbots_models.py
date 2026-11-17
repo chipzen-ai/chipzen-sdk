@@ -429,7 +429,7 @@ def test_the_poker_variant_shapes_route_to_the_poker_parser(shape):
     assert isinstance(parse_turn_request(NLHE_REQUEST, state_shape=shape), GameState)
 
 
-@pytest.mark.parametrize("shape", ["fighter", "chess", "nlhe-v2", "", "BIGBADBOTS"])
+@pytest.mark.parametrize("shape", ["fighter", "go", "nlhe-v2", "", "BIGBADBOTS"])
 def test_an_unknown_state_shape_fails_loudly_with_no_fallback(shape):
     """LAYER2-COMMON section 2: an unfamiliar state_shape is "I cannot parse
     this table", never "drop the keys I do not recognise". The payload here is

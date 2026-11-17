@@ -690,12 +690,12 @@ async def test_rejected_body_choice_retries_the_first_body_on_the_offer():
 
 @pytest.mark.asyncio
 async def test_unknown_state_shape_ends_the_session_before_hello(caplog):
-    game = {**_descriptor(), "game_type": "chess", "state_shape": "chess"}
+    game = {**_descriptor(), "game_type": "backgammon", "state_shape": "backgammon"}
     with caplog.at_level(logging.ERROR, logger="chipzen"):
         ws, end = await _play(DocBot(), [_server_hello(game), _match_start(), _match_end()])
     assert end is None
     assert ws.of_type("hello") == []
-    assert "chess" in caplog.text
+    assert "backgammon" in caplog.text
 
 
 @pytest.mark.asyncio
