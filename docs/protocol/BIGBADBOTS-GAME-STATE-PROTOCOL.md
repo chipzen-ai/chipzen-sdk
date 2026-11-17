@@ -148,7 +148,7 @@ A seat **misses** a tick when no acceptable answer arrives within `timeout_ms`. 
 - **The late answer is dropped.** It is never applied to a later tick. A `turn_action` carrying the `request_id` of a tick that has already resolved is dropped silently, as any unsolicited action is (Layer 1 §12.2).
 - **The bank is spent**, on a disconnect too: the server waits out the full `timeout_ms` either way.
 - **The tick plays the default action (provisional, D-01):** the seat's previous tick's action if that was `block`, `move_in` or `move_out`, otherwise `idle`. So a seat that was holding a block keeps blocking, and a seat that was walking keeps walking, rather than dropping its guard for one tick of network jitter.
-- The server sends `action_timeout` with `auto_action` set to the action it applied, and the seat's `turn_result` for the tick carries `is_timeout: true`.
+- The server sends `action_timeout` with `auto_action` set to the action it applied, and the seat's `turn_result` for the tick carries `details.is_timeout: true` (§4.5).
 - A miss is not a rules violation. It does count toward the disconnect forfeit (§3.9).
 
 Gear-up calls default too, when no acceptable answer arrives in time: the **first body on the offer**, a **bid of 0**, and an **empty fitting**.
@@ -179,7 +179,7 @@ Each correction is logged as a violation against the seat in the match record.
 
 ### 3.8 `turn_result`: once per step, to each seat
 
-When a step resolves, the server sends **one `turn_result` to each seat**. Its `seat` is the receiving seat, `is_timeout` says whether that seat's own action was a default (§3.5), and `details` carries that seat's action as applied **and the opponent's action as that seat is allowed to see it** (§4.5). So each seat learns both actions of the step, masked exactly as the next `turn_request.state` masks them.
+When a step resolves, the server sends **one `turn_result` to each seat**. Its `seat` is the receiving seat, never the opponent's. `details` carries that seat's action as applied, how it came about (`details.source`, and `details.is_timeout`, which is `true` when it was a default, §3.5), **and the opponent's action as that seat is allowed to see it** (§4.5). So each seat learns both actions of the step, masked exactly as the next `turn_request.state` masks them. There is no top-level `is_timeout` (Layer 1 §8.6).
 
 The next `turn_request.state` is authoritative. `turn_result` is a convenience for logging and statistics, and a bot can ignore it.
 
@@ -694,13 +694,15 @@ Today's server is looser than this table. It takes any string of up to 64 charac
 
 ### 4.5 Turn result details (`turn_result.details`)
 
-**Not yet pinned by the wire schemas.** One `turn_result` per seat per step (§3.8). `details` always carries:
+**Not yet pinned by the wire schemas, and not sent yet:** the platform sends per-step results for no game today. One `turn_result` per seat per step (§3.8). The envelope's `seat` is the receiving seat. `details` always carries:
 
 | Field | Type | Description |
 |---|---|---|
 | `phase` | string | The step's phase. |
-| `action` | string | This seat's action as applied: its answer, or the default (§3.5). |
-| `params` | object | This seat's params as applied, after any correction (§3.7). `{}` in the fight. |
+| `action` | string | In the fight, this seat's action as applied: its answer, `idle` for a malformed one (§3.7), or the default on a miss (§3.5). In gear-up, the call: `choose_body`, `bid` or `fit`. |
+| `params` | object | This seat's params as applied, after any correction (§3.7). `{}` in the fight. In the fitting, the fitting as answered (`{"fit": {}}` if none was taken); entries the engine drops are not reported. |
+| `source` | string | How this seat's action came about: `bot` (its answer, applied as sent), `corrected` (it answered, and the applied value differs, §3.7), `default` (no answer arrived, §3.5) or `late` (an answer after its `timeout_ms`, which is a miss too). |
+| `is_timeout` | boolean | `true` when this seat's action was a default: `source` is `default` or `late` (§3.5). |
 
 and, by phase, what the step revealed about the opponent:
 
@@ -709,7 +711,9 @@ and, by phase, what the step revealed about the opponent:
 | `body_shop` | `opponent_body`: the opponent's chosen body. |
 | `auction` | `lot_index`, and `sold`: the SoldLot entry for this lot, with both bids. |
 | `fitting` | None. The opponent's fitting is never shown. |
-| `fight` | `round`, `tick`, and `opponent_action`: the opponent's `action` exactly as the next `act` request will show it, so `"attack"` while it winds up. |
+| `fight` | `round`, `tick`, and `opponent_action`: the opponent's `action` exactly as the next `act` request will show it, so `"attack"` while it winds up. After the match's last tick there is no next request, and `opponent_action` is left out. |
+
+No other key appears in `details`.
 
 **Example: a fight tick** (illustrative values):
 
@@ -720,15 +724,14 @@ and, by phase, what the step revealed about the opponent:
   "seq": 34,
   "server_ts": "2026-09-29T12:00:00.100Z",
   "seat": 1,
-  "is_timeout": false,
-  "details": {"phase": "fight", "action": "kick_low", "params": {}, "round": 1, "tick": 21, "opponent_action": "attack"}
+  "details": {"phase": "fight", "action": "kick_low", "params": {}, "source": "bot", "is_timeout": false, "round": 1, "tick": 21, "opponent_action": "attack"}
 }
 ```
 
 **Example: an auction lot** (`details` only):
 
 ```json
-{"phase": "auction", "action": "bid", "params": {"amount": 0}, "lot_index": 0, "sold": {"part": "spring", "my_bid": 0, "opp_bid": 92, "winner": "opp"}}
+{"phase": "auction", "action": "bid", "params": {"amount": 0}, "source": "bot", "is_timeout": false, "lot_index": 0, "sold": {"part": "spring", "my_bid": 0, "opp_bid": 92, "winner": "opp"}}
 ```
 
 ### 4.6 Phase change (`phase_change.state`)
