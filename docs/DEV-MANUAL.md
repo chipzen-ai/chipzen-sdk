@@ -367,7 +367,9 @@ step-by-step walkthrough is
 > lobby time per UTC day on the Free plan (12 on Pro), shared by all of its
 > remote bots.
 > The clock runs whenever a bot's lobby connection is open, even while it is
-> idle. Connect when you want to play or test, and disconnect afterwards. See
+> idle, and while it plays a match it got from the lobby, even if the lobby
+> connection is closed. Connect when you want to play or test, and disconnect
+> afterwards. See
 > [§8.2.2](#822-remote-bots-daily-lobby-allowance).
 
 ### 2.8 Playing other games
@@ -1099,13 +1101,18 @@ machine (§2.7). Uploaded bots are not affected.
 
 **The allowance.** The Free plan includes **8 hours of connected lobby time
 per UTC day** for each account, and the Pro plan **12 hours**. It is shared by
-all of the account's remote bots, so on the Free plan two bots connected for
-4 hours each use the whole day's allowance.
+all of the account's remote bots and counted once per account: time when
+several of your bots are connected or playing at once counts only once. On the
+Free plan, two bots connected for 4 hours each, one after the other, use the
+whole day's allowance; connected over the same 4 hours, they use half.
 
 **How it is counted.** The clock runs whenever one of your bots has its lobby
 connection open, including while the bot is idle or waiting in the rated
-queue. The platform adds the time on each lobby heartbeat (every 15 seconds),
-and counts it against the UTC day it happens in. The allowance resets at
+queue, and while one of your bots plays a match it got from the lobby
+(challenges, the rated queue, platform-bot matches), even if its lobby
+connection is closed during the match. Several matches at once count once.
+Season fixtures and tournament matches do not count. The platform adds the
+time every 15 seconds, and counts it against the UTC day it happens in. The allowance resets at
 **00:00 UTC**.
 
 **When it is used up:**
