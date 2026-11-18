@@ -497,7 +497,7 @@ The server retains all dealt information (e.g., all player cards) even if not ex
 
 ### 8.9 `match_end`
 
-Signals the end of a match. When the match is played out, every seat receives the frame below.
+Signals the end of a match. When the match is played out, every seat receives the frame below. The frame shown is the one seat 1 (`MyBot`) receives: its own entry carries `bot_errors` and `decision_latency_samples_ms`, and every other seat's entry has neither key (see "Own-seat fields" below).
 
 ```json
 {
@@ -512,9 +512,7 @@ Signals the end of a match. When the match is played out, every seat receives th
       "name": "AlphaBot",
       "net_chips": -10000,
       "hands_won": 21,
-      "final_stack": 0,
-      "bot_errors": [],
-      "decision_latency_samples_ms": [12.4, 9.8, 15.1]
+      "final_stack": 0
     },
     {
       "seat": 1,
@@ -545,8 +543,8 @@ Signals the end of a match. When the match is played out, every seat receives th
 | `results[].net_chips` | integer | yes | Chips won (positive) or lost (negative) over the match |
 | `results[].hands_won` | integer | yes | Hands this seat won |
 | `results[].final_stack` | integer | yes | Chips at the end of the match |
-| `results[].bot_errors` | object[] | yes | Errors recorded against this seat (chipzen-ai/Chipzen#1082). Empty when the seat played cleanly. |
-| `results[].decision_latency_samples_ms` | number[] | yes | The seat's decision round-trip times in milliseconds (chipzen-ai/Chipzen#2218). Empty if it made no decision. |
+| `results[].bot_errors` | object[] | own seat only | Errors recorded against this seat (chipzen-ai/Chipzen#1082). Empty when the seat played cleanly. Absent on every other seat's entry. |
+| `results[].decision_latency_samples_ms` | number[] | own seat only | The seat's decision round-trip times in milliseconds (chipzen-ai/Chipzen#2218). Empty if it made no decision. Absent on every other seat's entry. |
 | `total_hands_played` | integer | yes | Hands played in the match |
 | `mode` | string | yes | Always `"elimination"` (chipzen-ai/Chipzen#1588) |
 | `finishing_order` | object[] | yes | `{"place", "seat", "name"}` per seat; place 1 is the last seat standing |
@@ -561,6 +559,8 @@ These keys appear only when they apply:
 | `all_disconnected`, `error_message` (and `simultaneous_disconnect` when both seats dropped together) | Every seat was disconnected for too long. |
 | `abandoned`, `abandoned_seat` | A human seat walked away (chipzen-ai/Chipzen#2561). |
 | `safety_limit_reached` | The match hit the internal hand-count safety cap instead of ending by elimination. |
+
+**Own-seat fields (chipzen-ai/Chipzen#7659).** `bot_errors` and `decision_latency_samples_ms` are a seat's own diagnostics. Each seat's `match_end` carries them on its own `results[]` entry only; on every other seat's entry both keys are **absent**. Absent means "not sent to you", never "no errors" or "no decisions": an empty list on your own entry still means a clean seat or no decisions. Spectators are not a seat, so no entry they receive carries either key. Before #7659 every seat and every spectator received every seat's lists; the per-decision samples line up with each round's `action_history`, so they gave away the opponent's think time on every action. Read the keys with a default (`entry.get("bot_errors", [])`), or look only at your own seat's entry. The owner can still read a bot's samples and errors after the match through the owner-only latency-stats and match-log endpoints.
 
 **`bot_errors` in games where every seat answers each step together.** These games (such as Big Bad Bots and chess) send `results[].bot_errors` only when their Layer 2 spec rejects illegal answers (section 8.11), as chess does. Each entry is one rejected answer, in the order they arrived: `{"reason": "bot_invalid_action", "code", "step", "phase", "message"}`, where `code` is the rejection code sent in `action_rejected.details.code` and `step` counts the match's steps from 1. A game that rejects nothing, such as Big Bad Bots, sends no `bot_errors` key. Each Layer 2 spec lists the other `results[]` fields its game sends.
 
@@ -1130,8 +1130,7 @@ S→B  {"type":"match_end","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","se
       "results":[
         {"seat":0,"name":"ExampleBot","net_chips":10000,"hands_won":14,"final_stack":20000,
          "bot_errors":[],"decision_latency_samples_ms":[3.2,4.0,2.9]},
-        {"seat":1,"name":"OpponentBot","net_chips":-10000,"hands_won":11,"final_stack":0,
-         "bot_errors":[],"decision_latency_samples_ms":[12.4,9.8,15.1]}
+        {"seat":1,"name":"OpponentBot","net_chips":-10000,"hands_won":11,"final_stack":0}
       ],
       "total_hands_played":25,"mode":"elimination",
       "finishing_order":[
@@ -1340,7 +1339,7 @@ All server schemas include the common envelope and specify `"additionalPropertie
 
 #### match_end
 
-The schema of the `match_end` a seat receives when the match is played out. See section 8.9 for the conditional keys and for the shorter frame sent when a match cannot be played out.
+The schema of the `match_end` a seat receives when the match is played out. See section 8.9 for the conditional keys and for the shorter frame sent when a match cannot be played out. `bot_errors` and `decision_latency_samples_ms` are not in `required`: they appear only on the receiving seat's own entry (section 8.9, chipzen-ai/Chipzen#7659).
 
 ```json
 {
@@ -1364,7 +1363,7 @@ The schema of the `match_end` a seat receives when the match is played out. See 
           "bot_errors": { "type": "array", "items": { "type": "object" } },
           "decision_latency_samples_ms": { "type": "array", "items": { "type": "number" } }
         },
-        "required": ["seat", "name", "net_chips", "hands_won", "final_stack", "bot_errors", "decision_latency_samples_ms"],
+        "required": ["seat", "name", "net_chips", "hands_won", "final_stack"],
         "additionalProperties": true
       }
     },
