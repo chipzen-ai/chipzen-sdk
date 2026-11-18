@@ -394,8 +394,8 @@ async def test_safe_mode_true_folds_bot_error(monkeypatch):
 
 
 def _server_hello_lobby() -> dict:
-    """The lobby's server hello (endpoint=lobby); the client does NOT reply
-    with a client hello on the lobby leg."""
+    """The lobby's server hello (endpoint=lobby). The client answers it with
+    one client hello (see ``test_external_lobby_hello.py``)."""
     return {"type": "hello", "endpoint": "lobby"}
 
 

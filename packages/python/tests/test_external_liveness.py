@@ -146,6 +146,7 @@ async def test_pinging_lobby_is_not_reconnected(caplog, fast_lobby_poll):
         connects[0] += 1
         await ws.recv()  # authenticate
         await ws.send(json.dumps({"type": "hello", "endpoint": "lobby"}))
+        assert json.loads(await ws.recv())["type"] == "hello"  # the client hello (#279)
         for _ in range(8):  # 8 x 0.1s = 4x the 0.2s silence timeout
             await asyncio.sleep(0.1)
             await ws.send(json.dumps({"type": "ping"}))
