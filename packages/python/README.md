@@ -76,7 +76,23 @@ The same `Bot` class works on both paths:
   ```
 
   It holds one lobby connection and plays every match dispatched to your bot — a
-  single challenge, or each round of a tournament. Put the token in a
+  single challenge, or each round of a tournament.
+
+  **When matches overlap, pass a bot factory, not one shared instance.**
+  A paid plan can run several matches on one bot at once. A single instance
+  (`MyBot()`) is shared across every overlapping match, so per-match state
+  collides. Pass the class or a callable instead, and each match gets its own
+  bot:
+
+  ```python
+  asyncio.run(run_external_bot(MyBot, bot_id="<bot-uuid>", env="prod", token="cz_extbot_..."))
+  # or: run_external_bot(lambda: MyBot(depth=3), ...)
+  ```
+
+  The `chipzen run-external` CLI below passes one instance, so use the script
+  form above for overlapping matches.
+
+  Put the token in a
   `chipzen.toml` (`[external_api] token = "cz_extbot_..."`, optional `bot_id` /
   `url`) and the CLI is a one-liner:
 
