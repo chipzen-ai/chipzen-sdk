@@ -22,7 +22,9 @@ The wrapper:
    (single subclass auto-selected; multiple subclasses require
    ``--bot-class <name>``).
 5. Hands off to :func:`chipzen.external.run_external_bot` with the
-   resolved url + token + retry policy.
+   resolved url + token + retry policy, and a factory that builds a
+   fresh bot for every match (chipzen-ai/chipzen-sdk#290), so
+   overlapping matches never share per-match state.
 
 Precedence rules (highest priority first), for each setting:
 
@@ -56,6 +58,7 @@ import importlib.util
 import inspect
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Iterable
 
@@ -219,6 +222,32 @@ def _select_bot_class(
         )
 
     return cand_list[0]
+
+
+def _per_match_factory(bot_cls: type[ChipzenBot], first: ChipzenBot) -> Callable[[], ChipzenBot]:
+    """Build the factory the CLI hands to :func:`run_external_bot`.
+
+    Every match gets its own bot (chipzen-ai/chipzen-sdk#290): a bot can
+    play overlapping matches, and one shared instance would mix their
+    per-match state (hand history, opponent model, stacks).
+
+    ``first`` is the instance the CLI already built up front to check that
+    ``bot_cls()`` works (so a broken ``__init__`` still exits 2 before
+    connecting). The first match gets it; every later match gets a new
+    ``bot_cls()``. A single-match run therefore builds exactly one bot, as
+    before.
+    """
+    pending: list[ChipzenBot] = [first]
+
+    def factory() -> ChipzenBot:
+        if pending:
+            return pending.pop()
+        try:
+            return bot_cls()
+        except Exception as exc:
+            raise RuntimeError(f"Failed to instantiate {bot_cls.__name__}: {exc}") from exc
+
+    return factory
 
 
 # ---------------------------------------------------------------------------
@@ -487,8 +516,10 @@ def run_external_cli(args: list[str] | None = None) -> None:
         logger.error("%s", exc)
         sys.exit(2)
 
-    # Instantiate. We wrap the construction itself so an error in the
-    # user's ``__init__`` doesn't surface as a bare stack trace.
+    # Instantiate once up front, so an error in the user's ``__init__``
+    # exits cleanly before connecting instead of surfacing as a bare stack
+    # trace mid-run. That instance plays the first match; each later match
+    # gets a fresh one (see ``_per_match_factory``).
     try:
         bot_instance = bot_cls()
     except Exception as exc:
@@ -505,7 +536,7 @@ def run_external_cli(args: list[str] | None = None) -> None:
     try:
         asyncio.run(
             run_external_bot(
-                bot_instance,
+                _per_match_factory(bot_cls, bot_instance),
                 url=url,
                 token=token,
                 retry_policy=policy,

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`chipzen run-external` builds a fresh bot for every match**
+  ([#290](https://github.com/chipzen-ai/chipzen-sdk/issues/290)). The CLI
+  used to build one instance of your bot and share it across every match, so
+  overlapping matches (a paid plan allows more than one at a time) mixed
+  their per-match state. Each match now gets its own bot. A single-match run
+  still builds exactly one, and a broken `__init__` still exits 2 before
+  connecting. No new flag; `run_external_bot()` is unchanged.
 - **`run_external_bot()` tells the lobby which client is connected**
   ([#279](https://github.com/chipzen-ai/chipzen-sdk/issues/279)). After the
   server's lobby `hello`, the SDK sends one client `hello` with

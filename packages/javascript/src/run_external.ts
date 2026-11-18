@@ -15,7 +15,10 @@
  * 3. Dynamically imports the user's bot module from a filesystem path.
  * 4. Discovers the `Bot` subclass exported by that file (single subclass
  *    auto-selected; multiple require `--bot-class <name>`).
- * 5. Hands off to `runExternalBot` with the resolved url + token + policy.
+ * 5. Hands off to `runExternalBot` with the resolved url + token + policy,
+ *    and a factory that builds a fresh bot for every match
+ *    (chipzen-ai/chipzen-sdk#290), so overlapping matches never share
+ *    per-match state.
  *
  * Precedence (highest first):
  *
@@ -38,7 +41,7 @@ import {
 } from "./config.js";
 import { connectToChipzen, type EnvName, ENV_NAMES } from "./connect.js";
 import { DEFAULT_RETRY_POLICY, type RetryPolicy } from "./retry.js";
-import { runExternalBot } from "./external.js";
+import { runExternalBot, type BotFactory } from "./external.js";
 
 /** Parsed `run-external` arguments. */
 export interface RunExternalArgs {
@@ -260,6 +263,35 @@ export function resolveConnection(opts: {
   return { url: conn.url, token, retryPolicy: conn.retryPolicy, config: conn.config };
 }
 
+/**
+ * Build the factory the CLI hands to `runExternalBot`.
+ *
+ * Every match gets its own bot (chipzen-ai/chipzen-sdk#290): a bot can play
+ * overlapping matches, and one shared instance would mix their per-match
+ * state (hand history, opponent model, stacks).
+ *
+ * `first` is the instance the CLI already built up front to check that
+ * `new BotClass()` works (so a throwing constructor still exits 2 before
+ * connecting). The first match gets it; every later match gets a new
+ * `new BotClass()`. A single-match run therefore builds exactly one bot, as
+ * before.
+ */
+export function perMatchFactory(BotClass: BotConstructor, first: Bot): BotFactory {
+  let pending: Bot | null = first;
+  return () => {
+    if (pending !== null) {
+      const bot = pending;
+      pending = null;
+      return bot;
+    }
+    try {
+      return new BotClass();
+    } catch (err) {
+      throw new Error(`failed to instantiate ${BotClass.name}: ${(err as Error).message}`);
+    }
+  };
+}
+
 /** Print `run-external` help text. */
 export function printRunExternalHelp(): void {
   console.log("Usage: chipzen-sdk run-external <bot-file> [options]");
@@ -347,6 +379,9 @@ export async function runExternalCli(args: string[]): Promise<void> {
     process.exit(2);
   }
 
+  // Instantiate once up front, so a throwing constructor exits cleanly
+  // before connecting. That instance plays the first match; each later match
+  // gets a fresh one (see `perMatchFactory`).
   let botInstance: Bot;
   try {
     botInstance = new BotClass();
@@ -358,7 +393,7 @@ export async function runExternalCli(args: string[]): Promise<void> {
   console.error(`Connecting ${BotClass.name} -> ${resolved.url}`);
 
   try {
-    await runExternalBot(botInstance, {
+    await runExternalBot(perMatchFactory(BotClass, botInstance), {
       url: resolved.url,
       token: resolved.token,
       retryPolicy: resolved.retryPolicy,

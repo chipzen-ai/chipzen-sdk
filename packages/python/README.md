@@ -89,8 +89,10 @@ The same `Bot` class works on both paths:
   # or: run_external_bot(lambda: MyBot(depth=3), ...)
   ```
 
-  The `chipzen run-external` CLI below passes one instance, so use the script
-  form above for overlapping matches.
+  The `chipzen run-external` CLI below already builds a fresh bot for every
+  match, so it needs no script of its own for overlapping matches. (Up to
+  0.7.0 it passed one shared instance; on those versions, use the script form
+  above.)
 
   Put the token in a
   `chipzen.toml` (`[external_api] token = "cz_extbot_..."`, optional `bot_id` /
