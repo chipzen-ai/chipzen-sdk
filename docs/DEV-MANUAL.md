@@ -356,9 +356,11 @@ Pass something that builds a fresh bot per match:
 | JavaScript | `runExternalBot(new MyBot(), {...})` | `runExternalBot(() => new MyBot(), {...})` |
 | Rust | (always a factory) | `run_external_bot(\|\| MyBot::new(), options)`; return a fresh bot, not a clone of one shared `Arc` |
 
-The Python and JavaScript `run-external` CLIs below build one instance and pass
-it, so a bot that keeps per-match state and plays overlapping matches should
-call `run_external_bot` / `runExternalBot` from its own script with a factory.
+The Python and JavaScript `run-external` CLIs below already do this: they build a
+fresh bot for every match, so a CLI user needs no script of their own for
+overlapping matches. (Releases up to Python 0.7.0 and JavaScript 0.6.0 passed one
+shared instance; on those, call `run_external_bot` / `runExternalBot` from your
+own script with a factory.)
 
 Put the token in a `chipzen.toml` and the CLI is a one-liner:
 

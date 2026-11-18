@@ -63,6 +63,10 @@ import { runExternalBot } from "@chipzen-ai/bot";
 await runExternalBot(() => new MyBot(), { botId: "<bot-uuid>", env: "prod", token: "cz_extbot_..." });
 ```
 
+The `chipzen-sdk run-external` CLI already builds a fresh bot for every match,
+so it needs no script of its own for overlapping matches. (Up to 0.6.0 it
+passed one shared instance; on those versions, use the script form above.)
+
 **Other games.** A bot plays No-Limit Hold'em unless it declares otherwise.
 To declare the games it can play, pass `supportedGames` to `runBot` or
 `runExternalBot`, a list of `game_type` strings; it goes on the client
