@@ -160,8 +160,9 @@ Default: no-op.
 
 Called after every participant's action is broadcast — yours and every
 opponent's. The Layer 2 payload is `message["details"]` with `seat`,
-`action`, `amount`, plus `is_timeout: bool` at the top level. Use for
-opponent modeling, timing analysis, or stack tracking.
+`action`, `amount` and `is_timeout: bool` (older frames carry
+`is_timeout` at the top level instead). Use for opponent modeling, timing
+analysis, or stack tracking.
 
 Default: no-op. Note: this hook runs *before* the next `turn_request` is
 dispatched, and it runs serially — see §6 for why slow `on_turn_result`

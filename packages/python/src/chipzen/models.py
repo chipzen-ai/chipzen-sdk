@@ -793,7 +793,10 @@ class TurnResult:
         seat: Seat number of the participant who acted.
         action: Action string (e.g., ``fold``, ``call``, ``raise``).
         amount: Chips committed by the action (``0`` for fold/check).
-        is_timeout: True if the server auto-applied the action due to timeout.
+        is_timeout: True if the server substituted the action (timeout,
+            disconnect or unparseable reply). Read from ``details.is_timeout``
+            per the protocol docs; frames that still carry it at the top
+            level are read from there.
     """
 
     seat: int
@@ -808,5 +811,5 @@ class TurnResult:
             seat=int(details.get("seat", message.get("seat", 0))),
             action=str(details.get("action", "")),
             amount=int(details.get("amount", 0)),
-            is_timeout=bool(message.get("is_timeout", False)),
+            is_timeout=bool(details.get("is_timeout", message.get("is_timeout", False))),
         )
