@@ -10,6 +10,8 @@ matches and dispatches them exactly like any other competitor.
 The flow (documented in ``docs/EXTERNAL-API-BOT-PROTOCOL.md``)::
 
     lobby WS  /ws/external/bot/{bot_id}      (token in authenticate frame)
+        -> server "hello"; the SDK answers with one optional client "hello"
+           (client_name, client_version, capabilities)
         -> "matched" notify (carries match_id + gateway_ws_url)
         -> per-match gateway WS  /ws/external/match/{mid}/{pid}
                                   (token in Sec-WebSocket-Protocol header)
@@ -42,6 +44,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import websockets
@@ -81,6 +84,51 @@ _MATCH_DRAIN_GRACE_S = 5.0
 #: dead and reconnects. The server pings every 15s, so 45s is three missed
 #: heartbeats in a row (chipzen-ai/chipzen-sdk#136).
 DEFAULT_LOBBY_SILENCE_TIMEOUT_S = 45.0
+
+#: Lobby capabilities this SDK declares in its client ``hello``. Empty until the
+#: SDK can handle an inbound challenge push (``inbound_challenges``, the
+#: ``on_challenge`` follow-up, chipzen-ai/chipzen-sdk#280). Declaring a
+#: capability tells the server it may send frames that depend on it.
+_LOBBY_CAPABILITIES: tuple[str, ...] = ()
+
+
+def _lobby_client_hello(client_name: str, client_version: str) -> dict:
+    """Build the optional client ``hello`` sent on the lobby socket.
+
+    Sent once per lobby connection, after the server ``hello``
+    (``docs/EXTERNAL-API-BOT-PROTOCOL.md`` section 3, step 4). It tells the
+    platform which client and version is connected and which lobby
+    capabilities it supports. Every field is optional on the wire and a server
+    that predates it drops the frame, so it never changes how the bot is
+    matched.
+
+    It is deliberately NOT part of the ``authenticate`` frame: that frame's
+    strict field check closes the socket with 4001 on a server that does not
+    know a field.
+    """
+    return {
+        "type": "hello",
+        "client_name": client_name,
+        "client_version": client_version,
+        "capabilities": list(_LOBBY_CAPABILITIES),
+    }
+
+
+async def _send_lobby_client_hello(ws: Any, client_name: str, client_version: str) -> None:
+    """Send the lobby client ``hello``, best effort.
+
+    The server may already have closed the socket right after its own
+    ``hello`` (an ``evict`` and a close, for example). Sending into that close
+    must not change how the session ends, so a closed socket is ignored here:
+    the next ``recv`` still delivers the frames that arrived before the close
+    (the ``evict``), or reports the close the same way it did before this
+    frame existed.
+    """
+    frame = json.dumps(_lobby_client_hello(client_name, client_version))
+    try:
+        await ws.send(frame)
+    except (websockets.ConnectionClosed, ConnectionError):
+        logger.debug("lobby: socket closed before the client hello could be sent")
 
 
 class _LobbyLiveness:
@@ -419,8 +467,11 @@ async def _run_lobby_once(
         max_size=_MAX_WS_SIZE,
         user_agent_header=user_agent,
     ) as ws:
+        # ``authenticate`` stays exactly ``{type, token}``: the server checks its
+        # fields strictly, so identity goes in the client hello below instead.
         await ws.send(json.dumps({"type": "authenticate", "token": token}))
         liveness = _LobbyLiveness(silence_timeout)
+        hello_sent = False  # one client hello per lobby connection
         while not stop.is_set():
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=_LOBBY_RECV_TIMEOUT_S)
@@ -449,6 +500,11 @@ async def _run_lobby_once(
                 await ws.send(json.dumps({"type": "pong"}))
             elif mtype == "hello":
                 logger.info("lobby: connected (endpoint=%s)", msg.get("endpoint", "lobby"))
+                if not hello_sent:
+                    # Optional and additive: a server that predates it drops
+                    # the frame and the session carries on unchanged.
+                    hello_sent = True
+                    await _send_lobby_client_hello(ws, client_name, client_version)
             elif mtype == "matched":
                 try:
                     gateway_url = resolve_gateway_url(lobby_url, msg["gateway_ws_url"])
@@ -568,7 +624,10 @@ async def run_external_bot(
             server's reconnect-resume). Defaults to
             :data:`chipzen.retry.DEFAULT_RETRY_POLICY`.
         client_name / client_version: Sent in the per-match ``hello``
-            handshake. ``client_version`` defaults to the installed SDK version.
+            handshake, and in the client ``hello`` sent once per lobby
+            connection after the server's lobby ``hello`` (with an empty
+            ``capabilities`` list). ``client_version`` defaults to the
+            installed SDK version.
         safe_mode: When ``True`` (default), an exception in ``bot.decide()`` is
             logged and folded — a transient bug won't forfeit a competitive
             match. Set ``False`` for dev/eval so the first exception propagates

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`run_external_bot()` tells the lobby which client is connected**
+  ([#279](https://github.com/chipzen-ai/chipzen-sdk/issues/279)). After the
+  server's lobby `hello`, the SDK sends one client `hello` with
+  `client_name`, `client_version` and an empty `capabilities` list, once per
+  lobby connection and again after a reconnect. `authenticate` is unchanged.
+  A server that predates the frame ignores it, so nothing changes about how
+  the bot connects or is matched.
 - **`TurnResult.is_timeout` reads `details.is_timeout`.** The protocol docs put
   the flag inside `details`, next to `source`, so per-step results in step
   games always parsed as `False`. Frames that still carry it at the top level
