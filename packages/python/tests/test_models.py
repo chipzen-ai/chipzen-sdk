@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 
-from chipzen.models import Action, Card, GameState, Player
+from chipzen.models import Action, Card, GameState, Player, TurnResult
 
 
 class TestCard:
@@ -137,3 +137,56 @@ class TestGameState:
         assert state.board == []
         assert state.hole_cards == []
         assert state.pot == 0
+
+
+class TestTurnResult:
+    """``is_timeout`` lives in ``details`` (Chipzen #7586).
+
+    Frames sent before that change carry it at the top level.
+    """
+
+    @staticmethod
+    def _frame(details: dict, **top: object) -> dict:
+        return {"type": "turn_result", "match_id": "m", "seq": 5, "details": details, **top}
+
+    def test_is_timeout_read_from_details(self):
+        result = TurnResult.from_message(
+            self._frame(
+                {"seat": 1, "action": "fold", "amount": 0, "source": "default", "is_timeout": True}
+            )
+        )
+        assert result.is_timeout is True
+        assert result.seat == 1 and result.action == "fold"
+
+    def test_details_false_wins_over_top_level(self):
+        result = TurnResult.from_message(
+            self._frame({"action": "call", "amount": 5, "is_timeout": False}, is_timeout=True)
+        )
+        assert result.is_timeout is False
+
+    def test_details_true_wins_over_top_level(self):
+        result = TurnResult.from_message(
+            self._frame({"action": "fold", "is_timeout": True}, is_timeout=False)
+        )
+        assert result.is_timeout is True
+
+    def test_falls_back_to_top_level_when_details_lacks_it(self):
+        result = TurnResult.from_message(
+            self._frame({"seat": 0, "action": "fold", "amount": 0}, is_timeout=True)
+        )
+        assert result.is_timeout is True
+
+    def test_defaults_to_false_when_absent(self):
+        result = TurnResult.from_message(self._frame({"seat": 0, "action": "check", "amount": 0}))
+        assert result.is_timeout is False
+
+    def test_missing_or_null_details_uses_top_level(self):
+        assert (
+            TurnResult.from_message({"type": "turn_result", "is_timeout": True}).is_timeout is True
+        )
+        assert (
+            TurnResult.from_message(
+                {"type": "turn_result", "details": None, "is_timeout": True}
+            ).is_timeout
+            is True
+        )

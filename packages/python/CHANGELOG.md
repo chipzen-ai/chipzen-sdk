@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`TurnResult.is_timeout` reads `details.is_timeout`.** The protocol docs put
+  the flag inside `details`, next to `source`, so per-step results in step
+  games always parsed as `False`. Frames that still carry it at the top level
+  are read from there.
+
 ## [0.7.0] — 2026-11-12
 
 Minor release. It adds two public names, `chipzen.ProtocolCloseError` and
