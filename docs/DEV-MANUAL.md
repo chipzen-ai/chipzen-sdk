@@ -341,8 +341,26 @@ match socket is not a drop: another connection of the same bot took the seat ove
 the SDK logs one line and ends that match without reconnecting, and ignores a later
 `matched` for it. So if the copy that took the seat then dies, this copy does not pick
 the match up again on its next lobby connect, and the seat forfeits on the turn clock
-(the server caps takeovers per seat at 3); restart the process to rejoin. Put the token in
-a `chipzen.toml` and the CLI is a one-liner:
+(the server caps takeovers per seat at 3); restart the process to rejoin.
+
+**When matches overlap, pass a bot factory, not one shared instance.** Each
+`matched` plays in its own task on its own match socket, so one process on one
+token can play several matches at once (a paid plan allows more than one remote
+match at a time). A single instance is shared across all of them, and any
+per-match state it keeps (opponent model, hand history, counters) collides.
+Pass something that builds a fresh bot per match:
+
+| Language | One shared instance (sequential matches only) | Factory (overlapping matches) |
+|---|---|---|
+| Python | `run_external_bot(MyBot(), ...)` | `run_external_bot(MyBot, ...)` or `run_external_bot(lambda: MyBot(depth=3), ...)` |
+| JavaScript | `runExternalBot(new MyBot(), {...})` | `runExternalBot(() => new MyBot(), {...})` |
+| Rust | (always a factory) | `run_external_bot(\|\| MyBot::new(), options)`; return a fresh bot, not a clone of one shared `Arc` |
+
+The Python and JavaScript `run-external` CLIs below build one instance and pass
+it, so a bot that keeps per-match state and plays overlapping matches should
+call `run_external_bot` / `runExternalBot` from its own script with a factory.
+
+Put the token in a `chipzen.toml` and the CLI is a one-liner:
 
 ```toml
 # chipzen.toml  (discovered from cwd, then ~/.chipzen/, then /etc/chipzen/)
