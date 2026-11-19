@@ -213,10 +213,11 @@ client answers with pong frames automatically. Add `-v` for debug
 logging, or `--loop` to keep cycling for successive matches (without
 `--loop` it plays one match and exits).
 
-Connected time counts toward a daily allowance: on the free tier, 8 hours of
-connected lobby time per UTC day per account, shared by all your remote bots,
-counted even while the bot is idle. Stop the client when you are done
-testing. See [`DEV-MANUAL.md` §8.2.2](../DEV-MANUAL.md#822-remote-bots-daily-lobby-allowance).
+Connected time counts toward a daily allowance: 8 hours of connected lobby
+time per UTC day per account on the Free plan (12 on Pro), shared by all your
+remote bots, counted even while the bot is idle and while it plays a match
+from the lobby. Stop the client when you are
+done testing. See [`DEV-MANUAL.md` §8.2.2](../DEV-MANUAL.md#822-remote-bots-daily-lobby-allowance).
 
 For local development, use a `ws://localhost:8001` base URL (plain
 `ws://` is permitted only on `localhost`).
