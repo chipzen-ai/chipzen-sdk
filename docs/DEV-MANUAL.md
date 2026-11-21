@@ -903,6 +903,18 @@ Your image must:
    reference bot already do this. Bots that were already active before
    this rule are not re-reviewed. The platform still layers `--read-only`,
    `--cap-drop=ALL` and seccomp on top (§7.4).
+
+   Also clear the setuid and setgid bits. Debian and `python:*-slim`
+   bases ship about a dozen such programs (`su`, `passwd`, `mount` and
+   more); your bot needs none of them, and a setuid file is a way back to
+   uid 0 from a non-root `USER`. Do it in the final stage, after anything
+   that installs packages and before `USER`, as every starter does:
+   ```dockerfile
+   RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} +
+   USER 10001
+   ```
+   Check: `docker run --rm --user 0 --entrypoint find <image> / -xdev -perm /6000 -type f`
+   must print nothing.
 5. **Treat `/tmp` as your only writable path.** The bot-match container
    runtime runs with a read-only root filesystem. `/tmp` is mounted on a
    small ephemeral tmpfs scratch volume — it's the only place your bot
