@@ -95,10 +95,15 @@ COPY log_cap.py /opt/chipzen/log_cap.py
 
 # Run as non-root (defense in depth: the platform also applies seccomp
 # and cap-drop on top of this).
+# The same step clears the setuid and setgid bits the base image ships
+# (su, passwd, mount and a few more). The bot needs none of them, and a
+# setuid file is a way back to uid 0 from a non-root USER. Keep this step
+# after anything that installs packages, just before USER.
 RUN groupadd --system --gid 10001 bot && \
     useradd --system --uid 10001 --gid bot --home-dir /bot --shell /usr/sbin/nologin bot && \
     chown -R bot:bot /bot && \
-    chmod 0444 /opt/chipzen/log_cap.py
+    chmod 0444 /opt/chipzen/log_cap.py && \
+    find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 USER 10001
 
 # Every Big Bad Bots bot runs under the log cap: the ENTRYPOINT is the

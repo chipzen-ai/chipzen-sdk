@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The starter image ships with no setuid or setgid files** ([chipzen-ai/Chipzen#7830](https://github.com/chipzen-ai/Chipzen/issues/7830)).
+  The `debian:12-slim` runtime base carries 11 (`su`, `passwd`,
+  `mount` and more), and a setuid file is a way back to uid 0 from the
+  image's non-root `USER`. The Dockerfile `chipzen-sdk init` writes (and the
+  starter in `packages/rust/starters/rust`) now runs
+  `find / -xdev -perm /6000 -type f -exec chmod a-s {} +` before `USER`. If
+  you built from an older starter, add that line to your own Dockerfile.
+
 ## [0.5.0] — 2026-11-12
 
 Released in lockstep with `chipzen-bot` 0.5.0, which it now requires

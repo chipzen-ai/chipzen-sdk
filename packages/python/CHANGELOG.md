@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Starter images ship with no setuid or setgid files** ([chipzen-ai/Chipzen#7830](https://github.com/chipzen-ai/Chipzen/issues/7830)).
+  The `python:3.12-slim` base carries 11 (`su`, `passwd`, `mount` and more),
+  and a setuid file is a way back to uid 0 from the image's non-root `USER`.
+  The final stage of the poker starter (the one `chipzen-sdk init` writes) and
+  of the three Big Bad Bots starters now runs
+  `find / -xdev -perm /6000 -type f -exec chmod a-s {} +` before `USER`. If
+  you built from an older starter, add that line to your own Dockerfile.
+
 - **`chipzen run-external` builds a fresh bot for every match**
   ([#290](https://github.com/chipzen-ai/chipzen-sdk/issues/290)). The CLI
   used to build one instance of your bot and share it across every match, so

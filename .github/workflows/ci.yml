@@ -374,6 +374,8 @@ jobs:
             -v /tmp/check.py:/tmp/check.py \
             -e PYTHONPATH=/bot \
             --entrypoint python chipzen-starter:ci /tmp/check.py
+      - name: The image has no setuid or setgid files
+        run: python3 "$GITHUB_WORKSPACE/scripts/check_image_setuid.py" chipzen-starter:ci
 
   bigbadbots-starter-images:
     # The Big Bad Bots starters (issue #142) ship the same IP-protected
@@ -401,6 +403,8 @@ jobs:
             --entrypoint python "bbb-${{ matrix.starter }}:ci" /tmp/check.py /tmp/doc.md
       - name: The image starts through the log-cap wrapper, and a capped run is capped
         run: bash scripts/check_log_cap_image.sh "bbb-${{ matrix.starter }}:ci" python
+      - name: The image has no setuid or setgid files
+        run: python3 scripts/check_image_setuid.py "bbb-${{ matrix.starter }}:ci"
 
   bigbadbots-js-starter-image:
     # The JavaScript Big Bad Bots starter (issue #151) compiles bot.js and the
@@ -437,6 +441,31 @@ jobs:
         run: node scripts/check_bigbadbots_js_starter_image.mjs bbb-js-rusher:ci docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md
       - name: The image starts through the log-cap wrapper, and a capped run is capped
         run: bash scripts/check_log_cap_image.sh bbb-js-rusher:ci python3
+      - name: The image has no setuid or setgid files
+        run: python3 scripts/check_image_setuid.py bbb-js-rusher:ci
+
+  starter-images-setuid:
+    # A setuid or setgid file in a bot image is a way back to uid 0 from the
+    # non-root USER (chipzen-ai/Chipzen#7830). Debian and python:*-slim bases
+    # ship about a dozen; every starter's final stage clears them. The
+    # starters built by the jobs above run scripts/check_image_setuid.py right
+    # after their build; this job builds the two that no other job builds
+    # (the JavaScript poker starter and the Rust starter) and runs the same
+    # check.
+    # (tests/test_starter_setuid_strip.py separately checks every starter
+    # Dockerfile has the strip step, so a new starter cannot skip it.)
+    name: Starter image has no setuid files (${{ matrix.starter }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        starter: [javascript/starters/javascript, rust/starters/rust]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the starter image
+        run: docker build -t starter:ci "packages/${{ matrix.starter }}"
+      - name: The image has no setuid or setgid files
+        run: python3 scripts/check_image_setuid.py starter:ci
 
   reference-bot:
     name: Reference bot (lint)
