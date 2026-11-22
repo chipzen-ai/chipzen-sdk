@@ -108,7 +108,7 @@ EXPECTED_DIGESTS: dict[str, str] = {
         "b2e91a9a44096369f863c58ddbca435ecaea119248edcf708c19cf70bf0f0980"
     ),
     "EXTERNAL-API-BOT-PROTOCOL": (
-        "8a3669c2febee0a9763fd0400d4be52be6ed4bf64a82624bdbe056e1d8d7905a"
+        "a3f5c2493540aff1bc616ec2424990b6f97462f35ef522487a38aefdcd80e70e"
     ),
     "LAYER2-COMMON": ("20df68f9c5ee596aa27ceeac6bc0d6bdf589e66cdfc12c061bbd334b847484ed"),
     "OFC-GAME-STATE-PROTOCOL": ("b4a4da158cf9f1b08a3c835ba2372c640a8f31f2e1c8ea3cae454df57f99c8cc"),
