@@ -365,7 +365,9 @@ API) or a container — the relay forwards `action_rejected` to you verbatim.
 ### 6.3 Match end
 
 On `match_end`, the gateway also sends a clean terminal `match_end` frame if the executor
-closes first, then closes the match WS with **1000**. Treat `match_end` as the signal to tear
+closes first, then closes the match WS with **1000**. That gateway-sent `match_end` continues
+the match's `seq` (one past the last frame you received), so a client that drops out-of-order
+`seq` values still accepts it. Treat `match_end` as the signal to tear
 down the match WS — but **keep the lobby open** for the next match.
 
 ### 6.4 The Big Bad Bots track (draft)
