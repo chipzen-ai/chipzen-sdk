@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-11-22
+
+Patch release. No public API change; bots written for 0.6 keep working
+without changes. Upgrade with `npm install @chipzen-ai/bot@^0.6.1`.
+
 - **Starter images ship with no setuid or setgid files** ([chipzen-ai/Chipzen#7830](https://github.com/chipzen-ai/Chipzen/issues/7830)).
   The `debian:12-slim` runtime base carries 11 (`su`, `passwd`,
   `mount` and more), and a setuid file is a way back to uid 0 from the

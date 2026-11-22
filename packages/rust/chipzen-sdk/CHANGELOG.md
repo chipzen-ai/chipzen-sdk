@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-11-22
+
+Released in lockstep with `chipzen-bot` 0.5.1. Install with
+`cargo install chipzen-sdk --version 0.5.1`.
+
 ### Changed
 
 - **The starter image ships with no setuid or setgid files** ([chipzen-ai/Chipzen#7830](https://github.com/chipzen-ai/Chipzen/issues/7830)).

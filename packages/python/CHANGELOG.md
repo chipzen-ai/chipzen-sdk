@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-22
+
+Patch release. No public API change; bots written for 0.7 keep working
+without changes. Upgrade with `pip install -U chipzen-bot`.
+
 - **Starter images ship with no setuid or setgid files** ([chipzen-ai/Chipzen#7830](https://github.com/chipzen-ai/Chipzen/issues/7830)).
   The `python:3.12-slim` base carries 11 (`su`, `passwd`, `mount` and more),
   and a setuid file is a way back to uid 0 from the image's non-root `USER`.
