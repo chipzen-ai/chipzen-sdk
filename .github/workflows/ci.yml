@@ -317,6 +317,23 @@ jobs:
       - name: Check every log_cap.py copy against the pin
         run: python scripts/log_cap_hash.py --check
 
+  rulesets-tables:
+    # docs/RULESETS.md section 7 publishes each Big Bad Bots rule set's
+    # parameter table. The tables are generated from the SDK's bundled
+    # rule-set files (packages/python/src/chipzen/rulesets/bigbadbots/*.json)
+    # by scripts/rulesets_tables.py, so the published numbers cannot drift
+    # from the bundled ones (issue #138). This fails if a table is stale, a
+    # released file has no table, or an entry's sha256 differs from its file.
+    name: Rule-set table guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the RULESETS.md tables against the rule-set files
+        run: python scripts/rulesets_tables.py --check
+
   starter-pins:
     # A starter installs the SDK from the registry at its pin, so a release can
     # move past the pin with nothing here going red: the JavaScript starter sat
