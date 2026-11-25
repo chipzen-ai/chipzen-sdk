@@ -634,7 +634,8 @@ The participant remains in the `awaiting_action` state. The original `request_id
 
 - `details` is `{"code": "<rejection code>"}`. The code is a short machine string listed in the Layer 2 spec, and it is the stable field to match on. `reason` and `message` read `answer rejected: <code>`.
 - `remaining_ms` is what is left of the `timeout_ms` the `turn_request` carried.
-- **Retries are allowed until `timeout_ms` runs out**, and an answer may be rejected more than once. The first accepted answer is played, as if it had been the only one.
+- **Retries are allowed until `timeout_ms` runs out, up to 3 answers per request in all: the first answer and two retries.** An answer may be rejected more than once. The first accepted answer is played, as if it had been the only one.
+- **If the 3rd answer is rejected too, it stands at once, as if `timeout_ms` had run out.** No `action_rejected` is sent for it, no further answer to that `request_id` is read, and it means what the next point says.
 - **When `timeout_ms` runs out, the last answer received stands.** The Layer 2 spec says what a rejected answer that stands means (in chess, a miss). With no time left, no `action_rejected` is sent.
 - Each rejected answer is recorded in the seat's `match_end.results[].bot_errors` (section 8.9).
 
