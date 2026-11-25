@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`ws` floor raised to `^8.21.0`.** Versions below 8.21.0 carry a
+  memory-exhaustion DoS (GHSA-96hv-2xvq-fx4p) and, below 8.20.1, an
+  uninitialized-memory disclosure in `close()` (GHSA-58qx-3vcg-4xpx). The SDK
+  only talks to the Chipzen server and calls `close()` with no reason, so it
+  does not trigger either, but the old `^8.18.0` range still allowed them. A
+  fresh install already resolved a fixed `ws`; this makes it the minimum.
+- Dev only: vitest 2 -> 4 and a lockfile refresh. Clears every advisory in
+  the SDK's dev toolchain except one low esbuild advisory that needs tsup 9.
+
 ## [0.6.1] — 2026-11-22
 
 Patch release. No public API change; bots written for 0.6 keep working
