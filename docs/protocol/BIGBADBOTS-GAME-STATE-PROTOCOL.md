@@ -143,12 +143,12 @@ Every fight `turn_request` carries its time limit in the existing Layer 1 field 
 
 ### 3.5 Missed ticks and the default action (provisional)
 
-A seat **misses** a tick when no acceptable answer arrives within `timeout_ms`, or when it is disconnected (§3.9).
+A seat **misses** a tick when no acceptable answer arrives within `timeout_ms`. A disconnected seat sends nothing, so its ticks are misses too (§3.9).
 
 - **The late answer is dropped.** It is never applied to a later tick. A `turn_action` carrying the `request_id` of a tick that has already resolved is dropped silently, as any unsolicited action is (Layer 1 §12.2).
-- **The bank is spent**, except on a disconnect: no time was waited.
+- **The bank is spent**, on a disconnect too: the server waits out the full `timeout_ms` either way.
 - **The tick plays the default action (provisional, D-01):** the seat's previous tick's action if that was `block`, `move_in` or `move_out`, otherwise `idle`. So a seat that was holding a block keeps blocking, and a seat that was walking keeps walking, rather than dropping its guard for one tick of network jitter.
-- The server sends `action_timeout` with `auto_action` set to the action it applied, and the seat's `turn_result` for the tick carries `is_timeout: true`.
+- The server sends `action_timeout` with `auto_action` set to the action it applied, and the seat's `turn_result` for the tick carries `details.is_timeout: true` (§4.5).
 - A miss is not a rules violation. It does count toward the disconnect forfeit (§3.9).
 
 Gear-up calls default too, when no acceptable answer arrives in time: the **first body on the offer**, a **bid of 0**, and an **empty fitting**.
@@ -179,18 +179,18 @@ Each correction is logged as a violation against the seat in the match record.
 
 ### 3.8 `turn_result`: once per step, to each seat
 
-When a step resolves, the server sends **one `turn_result` to each seat**. Its `seat` is the receiving seat, `is_timeout` says whether that seat's own action was a default (§3.5), and `details` carries that seat's action as applied **and the opponent's action as that seat is allowed to see it** (§4.5). So each seat learns both actions of the step, masked exactly as the next `turn_request.state` masks them.
+When a step resolves, the server sends **one `turn_result` to each seat**. Its `seat` is the receiving seat, never the opponent's. `details` carries that seat's action as applied, how it came about (`details.source`, and `details.is_timeout`, which is `true` when it was a default, §3.5), **and the opponent's action as that seat is allowed to see it** (§4.5). So each seat learns both actions of the step, masked exactly as the next `turn_request.state` masks them. There is no top-level `is_timeout` (Layer 1 §8.6).
 
 The next `turn_request.state` is authoritative. `turn_result` is a convenience for logging and statistics, and a bot can ignore it.
 
 ### 3.9 Disconnects and forfeits (provisional)
 
-- **The tick clock does not stop for a disconnected seat.** Its ticks are misses (§3.5): each plays the default action, and none spends its bank.
+- **A disconnect is silence.** The tick clock does not stop for a disconnected seat. Each of its ticks is held for the seat's full `timeout_ms` (the window plus the bank left), then counts as a miss (§3.5): it plays the default action and spends the bank, exactly as if the seat were connected and said nothing. The opponent's next tick waits for that hold, so a match with a disconnect runs about as long as one with a silent bot.
 - **Disconnect grace: 5 s (provisional, D-03).** A seat that misses **every tick for 5 s** of match time forfeits the round, and the opponent takes it. The grace is counted in ticks, `rule_set.forfeit.grace_seconds × rule_set.rounds.ticks_per_second` (50 ticks at 10 per second), so the same match replays the same way. It is match time, not wall-clock time: the platform does not pace ticks (§3.3).
 - **Any answer resets the count**, including one that is rejected or corrected. The check runs after each tick and only while both fighters are standing, so a KO on the same tick takes precedence.
 - **Match forfeit: 2 forfeited rounds (provisional, D-03).** A seat that has forfeited that many rounds forfeits the match, and the opponent wins it however many rounds either had won.
 - If both seats run out of grace on the same tick, the round has no winner and both are charged a forfeit. If both forfeit the match at once, the match is a **no-contest**: it has no winner and no coin flip. How `match_end` encodes a no-contest is open (§4.8).
-- **Reconnecting** follows Layer 1 §11 unchanged: the seat reconnects, receives `reconnected`, and if a tick is in flight, `reconnected.pending_request` is that tick's `turn_request` with the time remaining. Play resumes on the next tick. Gear-up calls have no grace rule; a disconnected seat's gear-up calls take their defaults.
+- **Reconnecting** follows Layer 1 §11 unchanged: the seat reconnects, receives `reconnected`, and if a tick is in flight, `reconnected.pending_request` is that tick's `turn_request` with the time remaining. Play resumes on the next tick. Gear-up calls have no grace rule; a disconnected seat's gear-up calls are held to their timeout, then take their defaults.
 
 ### 3.10 `session_control` pause and resume
 
@@ -694,13 +694,15 @@ Today's server is looser than this table. It takes any string of up to 64 charac
 
 ### 4.5 Turn result details (`turn_result.details`)
 
-**Not yet pinned by the wire schemas.** One `turn_result` per seat per step (§3.8). `details` always carries:
+**Not yet pinned by the wire schemas, and not sent yet:** the platform sends per-step results for no game today. One `turn_result` per seat per step (§3.8). The envelope's `seat` is the receiving seat. `details` always carries:
 
 | Field | Type | Description |
 |---|---|---|
 | `phase` | string | The step's phase. |
-| `action` | string | This seat's action as applied: its answer, or the default (§3.5). |
-| `params` | object | This seat's params as applied, after any correction (§3.7). `{}` in the fight. |
+| `action` | string | In the fight, this seat's action as applied: its answer, `idle` for a malformed one (§3.7), or the default on a miss (§3.5). In gear-up, the call: `choose_body`, `bid` or `fit`. |
+| `params` | object | This seat's params as applied, after any correction (§3.7). `{}` in the fight. In the fitting, the fitting as answered (`{"fit": {}}` if none was taken); entries the engine drops are not reported. |
+| `source` | string | How this seat's action came about: `bot` (its answer, applied as sent), `corrected` (it answered, and the applied value differs, §3.7), `default` (no answer arrived, §3.5) or `late` (an answer after its `timeout_ms`, which is a miss too). |
+| `is_timeout` | boolean | `true` when this seat's action was a default: `source` is `default` or `late` (§3.5). |
 
 and, by phase, what the step revealed about the opponent:
 
@@ -709,7 +711,9 @@ and, by phase, what the step revealed about the opponent:
 | `body_shop` | `opponent_body`: the opponent's chosen body. |
 | `auction` | `lot_index`, and `sold`: the SoldLot entry for this lot, with both bids. |
 | `fitting` | None. The opponent's fitting is never shown. |
-| `fight` | `round`, `tick`, and `opponent_action`: the opponent's `action` exactly as the next `act` request will show it, so `"attack"` while it winds up. |
+| `fight` | `round`, `tick`, and `opponent_action`: the opponent's `action` exactly as the next `act` request will show it, so `"attack"` while it winds up. After the match's last tick there is no next request, and `opponent_action` is left out. |
+
+No other key appears in `details`.
 
 **Example: a fight tick** (illustrative values):
 
@@ -720,15 +724,14 @@ and, by phase, what the step revealed about the opponent:
   "seq": 34,
   "server_ts": "2026-09-29T12:00:00.100Z",
   "seat": 1,
-  "is_timeout": false,
-  "details": {"phase": "fight", "action": "kick_low", "params": {}, "round": 1, "tick": 21, "opponent_action": "attack"}
+  "details": {"phase": "fight", "action": "kick_low", "params": {}, "source": "bot", "is_timeout": false, "round": 1, "tick": 21, "opponent_action": "attack"}
 }
 ```
 
 **Example: an auction lot** (`details` only):
 
 ```json
-{"phase": "auction", "action": "bid", "params": {"amount": 0}, "lot_index": 0, "sold": {"part": "spring", "my_bid": 0, "opp_bid": 92, "winner": "opp"}}
+{"phase": "auction", "action": "bid", "params": {"amount": 0}, "source": "bot", "is_timeout": false, "lot_index": 0, "sold": {"part": "spring", "my_bid": 0, "opp_bid": 92, "winner": "opp"}}
 ```
 
 ### 4.6 Phase change (`phase_change.state`)
@@ -845,7 +848,7 @@ Big Bad Bots changes no Layer 1 message, field, sequencing rule or error code, a
 |---|---|---|
 | §8.12: the auto-action is `check` if legal, otherwise `fold` | Big Bad Bots' default action (§3.5). Same shape of delta as OFC's legal auto-placement. | Delta, with precedent |
 | §10.3 / §14.4: 100–500 ms of random jitter before each `turn_result` | A 100–500 ms delay cannot fit a 100 ms tick (provisional). The jitter exists so that result timing never reveals an opponent's thinking time. Big Bad Bots meets that purpose by releasing both requests of a step together and fight results on the fixed tick boundary, which carry no timing information. | Review |
-| §11.2 / §12.4: the disconnected seat's turn timer pauses on its first disconnect | Pausing one seat's timer would stall the opponent's fight. Big Bad Bots keeps the tick clock running; the disconnected seat's ticks take the default action and spend none of its bank (§3.9). | Review |
+| §11.2 / §12.4: the disconnected seat's turn timer pauses on its first disconnect | Pausing one seat's timer would stall the opponent's fight. Big Bad Bots keeps the tick clock running and treats a disconnected seat as silent: each of its ticks is held for its full `timeout_ms`, takes the default action and spends its bank (§3.9). | Review |
 | §13.1: at most 10 messages per second per participant, and 5 invalid actions per round | At 10 ticks per second, a bot that answers every tick already sends 10 messages a second, before any `pong` or retry, and would be rate-limited in normal play. A fight round is up to `rounds.round_ticks` decisions, against a limit of 5 invalid actions. The server-side limits for `bigbadbots` tables must be set for the tick rate. | **Review, blocks the runner** |
 
 ---

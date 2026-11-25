@@ -27,6 +27,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The SDK has no chess rules and no chess library: it only reads the legal
     moves each request lists.
 
+## [0.7.1] — 2026-11-22
+
+Patch release. No public API change; bots written for 0.7 keep working
+without changes. Upgrade with `pip install -U chipzen-bot`.
+
+- **Starter images ship with no setuid or setgid files** ([chipzen-ai/Chipzen#7830](https://github.com/chipzen-ai/Chipzen/issues/7830)).
+  The `python:3.12-slim` base carries 11 (`su`, `passwd`, `mount` and more),
+  and a setuid file is a way back to uid 0 from the image's non-root `USER`.
+  The final stage of the poker starter (the one `chipzen-sdk init` writes) and
+  of the three Big Bad Bots starters now runs
+  `find / -xdev -perm /6000 -type f -exec chmod a-s {} +` before `USER`. If
+  you built from an older starter, add that line to your own Dockerfile.
+
+- **`chipzen run-external` builds a fresh bot for every match**
+  ([#290](https://github.com/chipzen-ai/chipzen-sdk/issues/290)). The CLI
+  used to build one instance of your bot and share it across every match, so
+  overlapping matches (a paid plan allows more than one at a time) mixed
+  their per-match state. Each match now gets its own bot. A single-match run
+  still builds exactly one, and a broken `__init__` still exits 2 before
+  connecting. No new flag; `run_external_bot()` is unchanged.
+- **`run_external_bot()` tells the lobby which client is connected**
+  ([#279](https://github.com/chipzen-ai/chipzen-sdk/issues/279)). After the
+  server's lobby `hello`, the SDK sends one client `hello` with
+  `client_name`, `client_version` and an empty `capabilities` list, once per
+  lobby connection and again after a reconnect. `authenticate` is unchanged.
+  A server that predates the frame ignores it, so nothing changes about how
+  the bot connects or is matched.
+- **`TurnResult.is_timeout` reads `details.is_timeout`.** The protocol docs put
+  the flag inside `details`, next to `source`, so per-step results in step
+  games always parsed as `False`. Frames that still carry it at the top level
+  are read from there.
+
 ## [0.7.0] — 2026-11-12
 
 Minor release. It adds two public names, `chipzen.ProtocolCloseError` and

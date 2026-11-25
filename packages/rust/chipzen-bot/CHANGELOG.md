@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-11-22
+
+Released in lockstep with the `chipzen-sdk` CLI 0.5.1, whose `init` now
+writes a starter image with no setuid or setgid files
+([chipzen-ai/Chipzen#7830](https://github.com/chipzen-ai/Chipzen/issues/7830)).
+No change to the library itself.
+
 ## [0.5.0] — 2026-11-12
 
 Minor release (pre-1.0). `RunExternalOptions` gains a public field,

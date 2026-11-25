@@ -50,6 +50,23 @@ support ships in `@chipzen-ai/bot` 0.4.0 and later; see the
 [JavaScript Big Bad Bots quickstart](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/BIGBADBOTS-QUICKSTART-JAVASCRIPT.md)
 and the [Rusher starter](https://github.com/chipzen-ai/chipzen-sdk/tree/main/packages/javascript/starters/bigbadbots/rusher).
 
+**Remote play: pass a bot factory when matches overlap.** `runExternalBot`
+runs your bot on your own machine over a `cz_extbot_` token and plays every
+match dispatched to it. A paid plan can run several matches on one bot at
+once, and a single instance (`new MyBot()`) is shared across every
+overlapping match, so per-match state collides. Pass a factory instead, and
+each match gets its own bot:
+
+```typescript
+import { runExternalBot } from "@chipzen-ai/bot";
+
+await runExternalBot(() => new MyBot(), { botId: "<bot-uuid>", env: "prod", token: "cz_extbot_..." });
+```
+
+The `chipzen-sdk run-external` CLI already builds a fresh bot for every match,
+so it needs no script of its own for overlapping matches. (Up to 0.6.0 it
+passed one shared instance; on those versions, use the script form above.)
+
 **Other games.** A bot plays No-Limit Hold'em unless it declares otherwise.
 To declare the games it can play, pass `supportedGames` to `runBot` or
 `runExternalBot`, a list of `game_type` strings; it goes on the client

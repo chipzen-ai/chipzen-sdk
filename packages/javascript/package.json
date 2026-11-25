@@ -1,6 +1,6 @@
 {
   "name": "@chipzen-ai/bot",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Build, test, and deploy poker bots for the Chipzen AI competition platform",
   "license": "Apache-2.0",
   "author": {
@@ -57,14 +57,14 @@
     "node": ">=20"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/ws": "^8.5.12",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.12"
   },
   "scripts": {
     "build": "tsup",

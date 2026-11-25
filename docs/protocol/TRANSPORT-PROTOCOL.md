@@ -421,6 +421,8 @@ Requests an action from the bot. The bot must respond with a `turn_action` befor
 
 Sent to every participant after an action is applied, whoever acted. The acting seat receives it at once; the other seats receive it after a random 100-500ms jitter, so they cannot infer the actor's computation time (section 10.3).
 
+**Games where every seat answers each step together** (such as Big Bad Bots) use the frame differently. When a step resolves, each seat receives **one** `turn_result` carrying its own result: `seat` is the **receiving** seat, and `details` holds that seat's action as applied and what the step revealed to it, as its Layer 2 spec defines. The Layer 2 spec also says whether the frame is sent at all; today it is sent for no such game.
+
 ```json
 {
   "type": "turn_result",
@@ -437,10 +439,10 @@ Sent to every participant after an action is applied, whoever acted. The acting 
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `seat` | integer | yes | Seat number of the participant who acted |
+| `seat` | integer | yes | Seat number of the participant who acted. In a game where every seat answers each step together, the receiving seat (see above). |
 | `details` | object | yes | Game-specific action details (opaque to Layer 1). The action string (e.g., `"raise"`, `"fold"`) is carried inside this object as defined by the Layer 2 protocol. |
 
-There is no top-level `is_timeout`. Whether the server substituted the action (timeout, disconnect or unparseable reply) is `details.is_timeout`, which is always present; see the Layer 2 spec.
+There is no top-level `is_timeout`. Whether the server substituted the action (timeout, disconnect or unparseable reply) is `details.is_timeout`; see the Layer 2 spec. In turn-based games it is always present. In a game where each seat receives its own result, it describes the receiving seat's own action, where the Layer 2 spec includes it.
 
 ### 8.7 `phase_change`
 
@@ -495,7 +497,7 @@ The server retains all dealt information (e.g., all player cards) even if not ex
 
 ### 8.9 `match_end`
 
-Signals the end of a match. When the match is played out, every seat receives the frame below.
+Signals the end of a match. When the match is played out, every seat receives the frame below. The frame shown is the one seat 1 (`MyBot`) receives: its own entry carries `bot_errors` and `decision_latency_samples_ms`, and every other seat's entry has neither key (see "Own-seat fields" below).
 
 ```json
 {
@@ -510,9 +512,7 @@ Signals the end of a match. When the match is played out, every seat receives th
       "name": "AlphaBot",
       "net_chips": -10000,
       "hands_won": 21,
-      "final_stack": 0,
-      "bot_errors": [],
-      "decision_latency_samples_ms": [12.4, 9.8, 15.1]
+      "final_stack": 0
     },
     {
       "seat": 1,
@@ -543,8 +543,8 @@ Signals the end of a match. When the match is played out, every seat receives th
 | `results[].net_chips` | integer | yes | Chips won (positive) or lost (negative) over the match |
 | `results[].hands_won` | integer | yes | Hands this seat won |
 | `results[].final_stack` | integer | yes | Chips at the end of the match |
-| `results[].bot_errors` | object[] | yes | Errors recorded against this seat (chipzen-ai/Chipzen#1082). Empty when the seat played cleanly. |
-| `results[].decision_latency_samples_ms` | number[] | yes | The seat's decision round-trip times in milliseconds (chipzen-ai/Chipzen#2218). Empty if it made no decision. |
+| `results[].bot_errors` | object[] | own seat only | Errors recorded against this seat (chipzen-ai/Chipzen#1082). Empty when the seat played cleanly. Absent on every other seat's entry. |
+| `results[].decision_latency_samples_ms` | number[] | own seat only | The seat's decision round-trip times in milliseconds (chipzen-ai/Chipzen#2218). Empty if it made no decision. Absent on every other seat's entry. |
 | `total_hands_played` | integer | yes | Hands played in the match |
 | `mode` | string | yes | Always `"elimination"` (chipzen-ai/Chipzen#1588) |
 | `finishing_order` | object[] | yes | `{"place", "seat", "name"}` per seat; place 1 is the last seat standing |
@@ -559,6 +559,10 @@ These keys appear only when they apply:
 | `all_disconnected`, `error_message` (and `simultaneous_disconnect` when both seats dropped together) | Every seat was disconnected for too long. |
 | `abandoned`, `abandoned_seat` | A human seat walked away (chipzen-ai/Chipzen#2561). |
 | `safety_limit_reached` | The match hit the internal hand-count safety cap instead of ending by elimination. |
+
+**Own-seat fields (chipzen-ai/Chipzen#7659).** `bot_errors` and `decision_latency_samples_ms` are a seat's own diagnostics. Each seat's `match_end` carries them on its own `results[]` entry only; on every other seat's entry both keys are **absent**. Absent means "not sent to you", never "no errors" or "no decisions": an empty list on your own entry still means a clean seat or no decisions. Spectators are not a seat, so no entry they receive carries either key. Before #7659 every seat and every spectator received every seat's lists; the per-decision samples line up with each round's `action_history`, so they gave away the opponent's think time on every action. Read the keys with a default (`entry.get("bot_errors", [])`), or look only at your own seat's entry. The owner can still read a bot's samples and errors after the match through the owner-only latency-stats and match-log endpoints.
+
+**`bot_errors` in games where every seat answers each step together.** These games (such as Big Bad Bots and chess) send `results[].bot_errors` only when their Layer 2 spec rejects illegal answers (section 8.11), as chess does. Each entry is one rejected answer, in the order they arrived: `{"reason": "bot_invalid_action", "code", "step", "phase", "message"}`, where `code` is the rejection code sent in `action_rejected.details.code` and `step` counts the match's steps from 1. A game that rejects nothing, such as Big Bad Bots, sends no `bot_errors` key. Each Layer 2 spec lists the other `results[]` fields its game sends.
 
 **Matches that never finish.** If the match cannot be played out, the executor sends every connected seat a shorter `match_end` with no `results`, built on one counter for the whole match rather than per seat:
 
@@ -625,6 +629,15 @@ The submitted action failed validation. The bot receives another chance to submi
 | `valid_actions` | array of string | yes | The seat's currently legal action types (same set sent in the originating `turn_request`). Use it to pick a legal retry. Servers before v0.3.53 did not send it; a client that must support them MAY fall back to `["check", "fold"]`, one of which the auto-action policy guarantees is legal. |
 
 The participant remains in the `awaiting_action` state. The original `request_id` is still valid. The bot should submit a corrected `turn_action` with the same `request_id`.
+
+**Games where every seat answers each step together.** Only a game whose Layer 2 spec rejects illegal answers (such as chess) sends `action_rejected`. A game that declares no rejection, such as Big Bad Bots, sends none and offers no retry: its spec says how a bad answer is corrected. Where it is sent:
+
+- `details` is `{"code": "<rejection code>"}`. The code is a short machine string listed in the Layer 2 spec, and it is the stable field to match on. `reason` and `message` read `answer rejected: <code>`.
+- `remaining_ms` is what is left of the `timeout_ms` the `turn_request` carried.
+- **Retries are allowed until `timeout_ms` runs out, up to 3 answers per request in all: the first answer and two retries.** An answer may be rejected more than once. The first accepted answer is played, as if it had been the only one.
+- **If the 3rd answer is rejected too, it stands at once, as if `timeout_ms` had run out.** No `action_rejected` is sent for it, no further answer to that `request_id` is read, and it means what the next point says.
+- **When `timeout_ms` runs out, the last answer received stands.** The Layer 2 spec says what a rejected answer that stands means (in chess, a miss). With no time left, no `action_rejected` is sent.
+- Each rejected answer is recorded in the seat's `match_end.results[].bot_errors` (section 8.9).
 
 ### 8.12 `action_timeout`
 
@@ -1118,8 +1131,7 @@ S→B  {"type":"match_end","match_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","se
       "results":[
         {"seat":0,"name":"ExampleBot","net_chips":10000,"hands_won":14,"final_stack":20000,
          "bot_errors":[],"decision_latency_samples_ms":[3.2,4.0,2.9]},
-        {"seat":1,"name":"OpponentBot","net_chips":-10000,"hands_won":11,"final_stack":0,
-         "bot_errors":[],"decision_latency_samples_ms":[12.4,9.8,15.1]}
+        {"seat":1,"name":"OpponentBot","net_chips":-10000,"hands_won":11,"final_stack":0}
       ],
       "total_hands_played":25,"mode":"elimination",
       "finishing_order":[
@@ -1328,7 +1340,7 @@ All server schemas include the common envelope and specify `"additionalPropertie
 
 #### match_end
 
-The schema of the `match_end` a seat receives when the match is played out. See section 8.9 for the conditional keys and for the shorter frame sent when a match cannot be played out.
+The schema of the `match_end` a seat receives when the match is played out. See section 8.9 for the conditional keys and for the shorter frame sent when a match cannot be played out. `bot_errors` and `decision_latency_samples_ms` are not in `required`: they appear only on the receiving seat's own entry (section 8.9, chipzen-ai/Chipzen#7659).
 
 ```json
 {
@@ -1352,7 +1364,7 @@ The schema of the `match_end` a seat receives when the match is played out. See 
           "bot_errors": { "type": "array", "items": { "type": "object" } },
           "decision_latency_samples_ms": { "type": "array", "items": { "type": "number" } }
         },
-        "required": ["seat", "name", "net_chips", "hands_won", "final_stack", "bot_errors", "decision_latency_samples_ms"],
+        "required": ["seat", "name", "net_chips", "hands_won", "final_stack"],
         "additionalProperties": true
       }
     },

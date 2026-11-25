@@ -204,13 +204,88 @@ lobby closes with **4002** (token revoked).
 > connection"). Run exactly one lobby connection per bot.
 
 > **Lobby frames are presence-only.** The lobby socket carries `hello`, `ping`/`pong`, and
-> `matched`/`evict` notifications. Do **not** send game frames on the lobby socket — they are
-> silently dropped. Match play happens on the per-match gateway WS only.
+> `matched`/`evict` notifications, plus the opt-in lobby-state frames below. Do **not** send
+> game frames on the lobby socket — they are silently dropped. Match play happens on the
+> per-match gateway WS only.
 
 > **Forward compatibility.** Silently ignore any lobby frame `type` you do not recognise, and
 > any field you do not recognise on a frame you do. Never close the socket over one. New types
 > and new fields can appear on the lobby at any time, as they can on the match socket (§6.2),
 > including a `capabilities` list on the server `hello`.
+
+### Lobby state (opt-in `lobby_state` capability)
+
+A connected bot is in one of two lobby states. With "no lobby connection" that makes three:
+
+| State | Ad-hoc play: house-bot challenges ([§7.4](#74-casual-house-bot-challenges-token-initiated)), the rated queue ([§7.5](#75-rated-remote-vs-remote-matchmaking-queue)), direct challenges sent or received ([§7.6](#76-direct-remote-challenges-name-your-opponent)) | Scheduled competition: season fixtures, tournaments | Counts toward your account's daily lobby-hours allowance ([§8.4](#84-rate-limits)) |
+|---|---|---|---|
+| No lobby connection | No | No | No |
+| `CONNECTED` | No | Yes | No (an ad-hoc match still running does, see below) |
+| `IN_LOBBY` | Yes | Yes | Yes |
+
+- **`IN_LOBBY`** is open to everything. Every lobby session starts `IN_LOBBY`, reconnects
+  included. A bot that does not opt in to this capability is `IN_LOBBY` while connected, as
+  every bot has been so far, unless an account limit ([§8.4](#84-rate-limits)) takes it out.
+- **`CONNECTED`** keeps the bot reachable for the competition it entered without taking ad-hoc
+  play. Its own house-bot challenges, queue joins, direct challenges and accepts are refused
+  with `409 EXT_BOT_OFFLINE`. Discovery does not list it, a direct challenge aimed at it is
+  refused with `409 EXTAPI_CHALLENGE_OPPONENT_OFFLINE`, and a challenge it sent earlier can no
+  longer be accepted. Season fixtures and tournament matches still seat it and still deliver
+  `matched`: scheduled competition is never refused because of lobby state, and a `CONNECTED`
+  bot counts as present for attendance.
+- **Lobby time** accrues while a bot is `IN_LOBBY`, and while it plays an ad-hoc match
+  (overlaps count once per account). Time spent `CONNECTED` with no ad-hoc match running does
+  not count. Season fixtures and tournament matches never count, in either state.
+
+**Opting in.** The server `hello` lists `lobby_state` in its `capabilities` when the platform
+offers it. To opt in, declare it in your optional client `hello` (step 4 of the handshake
+above):
+
+```json
+{"type": "hello", "client_name": "my-bot", "client_version": "1.2.0", "capabilities": ["lobby_state"]}
+```
+
+A session is opted in only when the server `hello` advertised `lobby_state` **and** that
+socket's client `hello` declared it. Only the first client `hello` on a socket is read, so
+declare it there. If the server `hello` does not list `lobby_state`, the frames below do
+nothing.
+
+**Changing state.** An opted-in session sends either frame on the lobby socket:
+
+```
+B→S  {"type": "leave_lobby"}     # IN_LOBBY  -> CONNECTED
+B→S  {"type": "enter_lobby"}     # CONNECTED -> IN_LOBBY
+```
+
+The server replies with the state now in effect:
+
+```json
+{"type": "lobby_state", "state": "CONNECTED", "reason": "requested"}
+```
+
+| Field | Description |
+|---|---|
+| `state` | `"CONNECTED"` or `"IN_LOBBY"`: the state in effect after your frame |
+| `reason` | `"requested"` on a reply to your own `enter_lobby` / `leave_lobby` |
+
+- Asking for the state you are already in changes nothing and still gets a reply.
+- If the change could not be applied (for example this socket was just replaced by a newer
+  connection), the reply carries the state that is still in effect. Treat `state` as the
+  truth, not the frame you sent.
+- At most **one** `enter_lobby` / `leave_lobby` per second is handled per socket. Extra frames
+  inside that second are dropped with no reply.
+- `leave_lobby` during a match does not touch the match: it plays on its own socket and
+  finishes normally. It only stops new ad-hoc play.
+- A reconnect starts `IN_LOBBY` again. To stay `CONNECTED`, send `leave_lobby` again after
+  each new connection's client `hello`.
+- A `lobby_state` frame can also arrive with no frame of yours before it, with another
+  `reason`. Act on `state` and ignore a `reason` value or field you do not recognise.
+
+**Not opted in: nothing changes.** A client that does not declare `lobby_state` (including
+one that sends no client `hello` at all) sees no change from this capability: its session
+starts `IN_LOBBY` as before, and it never receives a `lobby_state` frame or any other new
+frame type. `enter_lobby` / `leave_lobby` from such a client are dropped like any unrecognised
+lobby frame.
 
 ---
 
@@ -365,7 +440,9 @@ API) or a container — the relay forwards `action_rejected` to you verbatim.
 ### 6.3 Match end
 
 On `match_end`, the gateway also sends a clean terminal `match_end` frame if the executor
-closes first, then closes the match WS with **1000**. Treat `match_end` as the signal to tear
+closes first, then closes the match WS with **1000**. That gateway-sent `match_end` continues
+the match's `seq` (one past the last frame you received), so a client that drops out-of-order
+`seq` values still accepts it. Treat `match_end` as the signal to tear
 down the match WS — but **keep the lobby open** for the next match.
 
 ### 6.4 The Big Bad Bots track (draft)

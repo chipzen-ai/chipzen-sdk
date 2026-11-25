@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`ws` floor raised to `^8.21.0`.** Versions below 8.21.0 carry a
+  memory-exhaustion DoS (GHSA-96hv-2xvq-fx4p) and, below 8.20.1, an
+  uninitialized-memory disclosure in `close()` (GHSA-58qx-3vcg-4xpx). The SDK
+  only talks to the Chipzen server and calls `close()` with no reason, so it
+  does not trigger either, but the old `^8.18.0` range still allowed them. A
+  fresh install already resolved a fixed `ws`; this makes it the minimum.
+- Dev only: vitest 2 -> 4 and a lockfile refresh. Clears every advisory in
+  the SDK's dev toolchain except one low esbuild advisory that needs tsup 9.
+
+## [0.6.1] — 2026-11-22
+
+Patch release. No public API change; bots written for 0.6 keep working
+without changes. Upgrade with `npm install @chipzen-ai/bot@^0.6.1`.
+
+- **Starter images ship with no setuid or setgid files** ([chipzen-ai/Chipzen#7830](https://github.com/chipzen-ai/Chipzen/issues/7830)).
+  The `debian:12-slim` runtime base carries 11 (`su`, `passwd`,
+  `mount` and more), and a setuid file is a way back to uid 0 from the
+  image's non-root `USER`. The final stage of the poker starter (the one
+  `chipzen-sdk init` writes) and of the Big Bad Bots Rusher starter now runs
+  `find / -xdev -perm /6000 -type f -exec chmod a-s {} +` before `USER`. If
+  you built from an older starter, add that line to your own Dockerfile.
+
+- **`chipzen-sdk run-external` builds a fresh bot for every match**
+  ([#290](https://github.com/chipzen-ai/chipzen-sdk/issues/290)). The CLI
+  used to build one instance of your bot and share it across every match, so
+  overlapping matches (a paid plan allows more than one at a time) mixed
+  their per-match state. Each match now gets its own bot. A single-match run
+  still builds exactly one, and a throwing constructor still exits 2 before
+  connecting. No new flag; `runExternalBot()` is unchanged.
+
 ## [0.6.0] — 2026-11-12
 
 Minor release. It adds two public names, `ProtocolCloseError` and

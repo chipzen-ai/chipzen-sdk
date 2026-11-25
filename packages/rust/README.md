@@ -88,6 +88,18 @@ async fn main() -> Result<(), chipzen_bot::Error> {
 }
 ```
 
+**When matches overlap, pass a bot factory, not one shared instance.** A
+paid plan can run several matches on one bot at once. `run_external_bot` and
+`run_external_cli` always take a factory: they call it once per match, so
+return a fresh bot from it (`|| MyBot::new()`). Don't hand every match a
+clone of one shared `Arc<Mutex<…>>` unless you mean the matches to share that
+state:
+
+```rust
+// Right: each overlapping match gets its own MyBot.
+run_external_cli(|| MyBot::new(), RunExternalArgs::new()).await?;
+```
+
 See [`docs/EXTERNAL-API-BOT-PROTOCOL.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/EXTERNAL-API-BOT-PROTOCOL.md)
 and [`docs/PORTING-BETWEEN-SDKS.md`](https://github.com/chipzen-ai/chipzen-sdk/blob/main/docs/PORTING-BETWEEN-SDKS.md) §7.
 Run `chipzen-sdk run-external` to verify your `chipzen.toml` + env setup

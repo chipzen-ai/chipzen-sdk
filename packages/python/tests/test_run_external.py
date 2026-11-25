@@ -22,6 +22,7 @@ standalone (the SDK doesn't ship a test-helpers fixture module).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -38,6 +39,7 @@ from chipzen.run_external import (
     _build_parser,
     _find_bot_subclasses,
     _load_bot_module,
+    _per_match_factory,
     _resolve_connection,
     _select_bot_class,
     run_external_cli,
@@ -775,6 +777,238 @@ class TestRunExternalCli:
         with pytest.raises(SystemExit) as exc:
             run_external_cli([str(bot_file), "--token", "x", "--bot-id", "y"])
         assert exc.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# One bot per match (chipzen-ai/chipzen-sdk#290)
+# ---------------------------------------------------------------------------
+
+# A bot that keeps per-match state. Every instance registers itself in the
+# module-level ``INSTANCES`` so a test can inspect what the CLI built.
+_STATEFUL_BOT_FILE = """\
+from chipzen import Bot, GameState, Action
+
+INSTANCES = []
+
+
+class StatefulBot(Bot):
+    def __init__(self):
+        INSTANCES.append(self)
+        self.match_ids = []
+        self.decisions = 0
+
+    def on_match_start(self, match_info):
+        self.match_ids.append(match_info.get("match_id"))
+
+    def decide(self, state: GameState) -> Action:
+        self.decisions += 1
+        return Action.fold()
+"""
+
+
+class _OverlapLobbyWS:
+    """Lobby: replays its frames, then blocks until the loop's recv timeout."""
+
+    def __init__(self, frames: list[dict]):
+        self._frames = [json.dumps(f) for f in frames]
+
+    async def send(self, data: str) -> None:
+        pass
+
+    async def recv(self) -> str:
+        if self._frames:
+            return self._frames.pop(0)
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+class _OverlapGatewayWS:
+    """One match's gateway. It holds back ``match_end`` until every match in
+    ``state["expected"]`` has started, so the matches overlap."""
+
+    def __init__(self, match_id: str, state: dict):
+        self._match_id = match_id
+        self._state = state
+        self._rest = [
+            {
+                "type": "match_start",
+                "match_id": match_id,
+                "seats": [{"seat": 0, "is_self": True}, {"seat": 1, "is_self": False}],
+                "turn_timeout_ms": 5000,
+            },
+            {
+                "type": "turn_request",
+                "match_id": match_id,
+                "request_id": f"req_{match_id}",
+                "valid_actions": ["fold", "call", "raise"],
+                "state": {
+                    "phase": "preflop",
+                    "board": [],
+                    "your_hole_cards": ["Ah", "Kd"],
+                    "pot": 15,
+                    "to_call": 5,
+                    "min_raise": 20,
+                    "max_raise": 995,
+                },
+            },
+            {"type": "match_end", "match_id": match_id, "reason": "complete"},
+        ]
+
+    async def send(self, data: str) -> None:
+        pass
+
+    async def recv(self) -> str:
+        return json.dumps({"type": "hello", "selected_version": "1.0", "game_type": "nlhe_6max"})
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._rest:
+            raise StopAsyncIteration
+        frame = self._rest[0]
+        if frame["type"] == "match_end":
+            await self._state["all_started"].wait()
+        self._rest.pop(0)
+        if frame["type"] == "match_start":
+            started = self._state["started"]
+            started.add(self._match_id)
+            if started >= self._state["expected"]:
+                self._state["all_started"].set()
+        return json.dumps(frame)
+
+
+def _install_overlap_transport(monkeypatch, match_ids: list[str]) -> dict:
+    """Patch ``websockets.connect``: the lobby dispatches every id in
+    ``match_ids`` back to back, and each gateway plays one short match that
+    does not end until all of them have started."""
+    import websockets
+
+    import chipzen.external as external
+
+    state: dict = {"started": set(), "expected": set(match_ids), "gateway": []}
+    lobby_frames = [{"type": "hello", "endpoint": "lobby"}] + [
+        {
+            "type": "matched",
+            "match_id": mid,
+            "participant_id": "p1",
+            "gateway_ws_url": f"/ws/external/match/{mid}/p1",
+            "rated": False,
+        }
+        for mid in match_ids
+    ]
+
+    class _Conn:
+        def __init__(self, ws):
+            self._ws = ws
+
+        async def __aenter__(self):
+            return self._ws
+
+        async def __aexit__(self, *args):
+            return False
+
+    def _connect(url, *, max_size=None, user_agent_header=None, subprotocols=None):
+        if "/ws/external/match/" in url:
+            # Built inside the running loop, on the first gateway connect.
+            state.setdefault("all_started", asyncio.Event())
+            match_id = url.split("/ws/external/match/", 1)[1].split("/", 1)[0]
+            state["gateway"].append(match_id)
+            return _Conn(_OverlapGatewayWS(match_id, state))
+        return _Conn(_OverlapLobbyWS(lobby_frames))
+
+    monkeypatch.setattr(websockets, "connect", _connect)
+    monkeypatch.setattr(external, "_LOBBY_RECV_TIMEOUT_S", 0.02)
+    return state
+
+
+def _capture_bot_module(monkeypatch) -> dict:
+    """Record the module the CLI loads, so a test can read its ``INSTANCES``."""
+    import chipzen.run_external as run_external_mod
+
+    captured: dict = {}
+    real_load = run_external_mod._load_bot_module
+
+    def _spy(bot_file):
+        captured["module"] = real_load(bot_file)
+        return captured["module"]
+
+    monkeypatch.setattr(run_external_mod, "_load_bot_module", _spy)
+    return captured
+
+
+class TestOneBotPerMatch:
+    """The CLI builds a fresh bot for every match, so overlapping matches do
+    not share one instance and its per-match state (chipzen-sdk#290)."""
+
+    def _run(self, tmp_path, monkeypatch, match_ids: list[str]):
+        _bypass_config_discovery(monkeypatch, tmp_path)
+        _clear_chipzen_env(monkeypatch)
+        state = _install_overlap_transport(monkeypatch, match_ids)
+        captured = _capture_bot_module(monkeypatch)
+        bot_file = tmp_path / "stateful_bot.py"
+        bot_file.write_text(_STATEFUL_BOT_FILE)
+        run_external_cli(
+            [
+                str(bot_file),
+                "--bot-id",
+                "overlap-bot",
+                "--token",
+                "cz_extbot_x",
+                "--max-matches",
+                str(len(match_ids)),
+            ]
+        )
+        return state, captured["module"].INSTANCES
+
+    def test_two_overlapping_matches_get_two_distinct_bots(self, tmp_path, monkeypatch):
+        state, instances = self._run(tmp_path, monkeypatch, ["m1", "m2"])
+
+        # Both matches really ran, and at the same time.
+        assert sorted(state["gateway"]) == ["m1", "m2"]
+        assert state["started"] == {"m1", "m2"}
+
+        assert len(instances) == 2
+        assert instances[0] is not instances[1]
+        # Per-match state stays with its own match: each bot saw exactly one
+        # match start and one decision.
+        assert sorted(bot.match_ids for bot in instances) == [["m1"], ["m2"]]
+        assert [bot.decisions for bot in instances] == [1, 1]
+
+    def test_single_match_builds_one_bot(self, tmp_path, monkeypatch):
+        _state, instances = self._run(tmp_path, monkeypatch, ["m1"])
+        assert len(instances) == 1
+        assert instances[0].match_ids == ["m1"]
+        assert instances[0].decisions == 1
+
+    def test_factory_hands_out_the_first_instance_then_fresh_ones(self):
+        class _B(ChipzenBot):
+            def decide(self, state):  # pragma: no cover - never called
+                raise AssertionError
+
+        first = _B()
+        factory = _per_match_factory(_B, first)
+        a, b, c = factory(), factory(), factory()
+        assert a is first
+        assert isinstance(b, _B) and isinstance(c, _B)
+        assert len({id(a), id(b), id(c)}) == 3
+
+    def test_factory_names_the_class_when_a_later_build_fails(self):
+        calls = {"n": 0}
+
+        class _Flaky(ChipzenBot):
+            def __init__(self):
+                calls["n"] += 1
+                if calls["n"] > 1:
+                    raise ValueError("out of memory")
+
+            def decide(self, state):  # pragma: no cover - never called
+                raise AssertionError
+
+        factory = _per_match_factory(_Flaky, _Flaky())
+        factory()
+        with pytest.raises(RuntimeError, match="Failed to instantiate _Flaky: out of memory"):
+            factory()
 
 
 # ---------------------------------------------------------------------------

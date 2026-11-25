@@ -911,7 +911,9 @@ All-in is a **state**, not an action. There is no `all_in` on the wire, and the 
 
 ### 5.6 Split Pots
 
-When two or more players tie at showdown, `winner_seats` contains all tied seats and `payouts` contains an entry for each winning seat with the pot distributed equally (with any odd chip going to the player in earliest seat position).
+When two or more players tie at showdown, `winner_seats` contains all tied seats and `payouts` contains an entry for each winning seat with the pot distributed equally.
+
+A pot that does not divide evenly leaves one or more odd chips. The first odd chip goes to the first winning seat left of the button (`dealer_seat`), and any further odd chips go one chip per winning seat, clockwise from there: in increasing seat index, wrapping from the highest seat back to seat 0. Heads-up the button is the small blind, so the big blind is first. Each pot, main and side (Section 5.7), is split this way on its own. This is the TDA / WSOP rule, and the same one [`DRAW27-GAME-STATE-PROTOCOL.md`](DRAW27-GAME-STATE-PROTOCOL.md) §5.7 uses.
 
 ### 5.7 Side Pots
 
