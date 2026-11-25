@@ -14,13 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot be played on the platform yet, and the field names may change before
   it goes live. See [`docs/CHESS-BOTS.md`](../../docs/CHESS-BOTS.md).
   - `chipzen.chess`: typed models for `state_shape: "chess"` (`ChessState`,
-    `ChessClock`, `ChessGameConfig`), and `Action.move("e2e4")`.
+    `ChessClock`, `ChessGameConfig` with `engine_version`, `window_ms`,
+    `bank_ms` and `ply_cap`), `ChessState.own_moves_left`, and
+    `Action.move("e2e4")`.
   - `chipzen.ChessBot`: implement `choose_move(state)` and return one of
     `state.legal_moves`. The session loop sends a listed fallback move when the
-    bot is too slow, raises, or answers a move that is not listed, and retries
-    an `action_rejected` with another listed move.
+    bot is too slow, raises, or answers a move that is not listed, and answers
+    an `action_rejected` again with a listed move not sent yet, up to the
+    platform's 3 answers per request (`MAX_ANSWERS_PER_REQUEST`).
   - `chipzen.chess_uci.UciBridgeBot`: plays the moves of a UCI engine you
-    supply (none is bundled), with a legal fallback.
+    supply (none is bundled), with a legal fallback. `start_engine()` loads
+    the engine before connecting, off the clock, and the bank is shared over
+    the moves left before the ply cap when that is fewer than `moves_to_go`.
   - Two starters, `chipzen-sdk init <name> --template chess` (legal mover) and
     `--template chess-uci` (UCI bridge), and `chipzen-sdk validate` chess checks
     against recorded requests from Chipzen's chess engine.

@@ -17,9 +17,9 @@ The requests come from replaying games of Chipzen's chess engine (its golden
 matches, and seeded random games picked for castling, promotion and en
 passant), and each label is the engine's own verdict. They are wire messages
 only: no rules, and nothing that gives the legal moves of any other position.
-The chess wire codec is not built yet, so the `turn_request` rendering follows
-the game-interface specification; it will be regenerated if the published
-chess dialect differs.
+They are rendered and decoded the way the platform's chess codec does it (the
+chess Layer 2 dialect, section 5), and `match_start.game_config` carries
+`variant: "chess"` and `engine_version`, as the platform sends them.
 
 Regenerate with `scripts/extract_chess_fixtures.py` (it needs the private
-engine checkout). Do not edit by hand.
+engine). Do not edit by hand.

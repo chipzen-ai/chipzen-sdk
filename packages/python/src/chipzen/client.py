@@ -36,6 +36,7 @@ from chipzen.bigbadbots import STATE_SHAPE as BIGBADBOTS_STATE_SHAPE
 from chipzen.bigbadbots import StateParseError, parse_bigbadbots_turn_request
 from chipzen.bigbadbots_bot import BigBadBotsBot, fallback_action, is_answer_shaped
 from chipzen.bot import ChipzenBot
+from chipzen.chess import MAX_ANSWERS_PER_REQUEST as CHESS_MAX_ANSWERS
 from chipzen.chess import STATE_SHAPE as CHESS_STATE_SHAPE
 from chipzen.chess import ChessState, ChessStateParseError, parse_chess_turn_request
 from chipzen.chess_bot import ChessBot, is_move_answer
@@ -575,7 +576,9 @@ async def _session_loop(
     # Only used when the server hello declares ``state_shape: chess``. The SDK
     # never works out legality: every answer it sends is a member of the
     # request's ``legal_moves``, which the platform computed.
-    chess_sent: dict[str, Any] = {"request_id": None, "move": None}
+    # The moves sent for the last request, in order: the answer, then any
+    # retries after ``action_rejected`` (at most CHESS_MAX_ANSWERS in all).
+    chess_sent: dict[str, Any] = {"request_id": None, "moves": []}
 
     def _chess_fallback(request: dict, state: ChessState | None, why: str) -> Action | None:
         action: Action | None = None
@@ -651,6 +654,26 @@ async def _session_loop(
             return _chess_fallback(request, state, "the answer was not a legal move"), _elapsed()
         return action, _elapsed()
 
+    def _chess_retry_move(request: dict, tried: list[Any]) -> str | None:
+        """A listed move for a retry after ``action_rejected``, not one already sent.
+
+        A :class:`ChessBot`'s :meth:`~chipzen.ChessBot.fallback_move` first,
+        then the request's ``legal_moves`` in order. Only moves the request
+        lists; the SDK never works out legality.
+        """
+        raw_state = request.get("state")
+        legal = raw_state.get("legal_moves") if isinstance(raw_state, dict) else None
+        listed = [m for m in legal or [] if isinstance(m, str)]
+        if isinstance(bot, ChessBot):
+            try:
+                preferred = bot.fallback_move(parse_chess_turn_request(request))
+            except Exception:  # noqa: BLE001 - a broken override must not cost the retry
+                logger.exception("ChessBot.fallback_move() raised during a retry")
+                preferred = None
+            if isinstance(preferred, str) and preferred in listed and preferred not in tried:
+                return preferred
+        return next((m for m in listed if m not in tried), None)
+
     async def _answer_chess(request: dict) -> None:
         action, decision_ms = await _decide_chess(request)
         last_request.clear()
@@ -658,7 +681,7 @@ async def _session_loop(
         if action is None:
             return
         chess_sent["request_id"] = request.get("request_id")
-        chess_sent["move"] = action.params.get("move")
+        chess_sent["moves"] = [action.params.get("move")]
         await _send_json(
             ws,
             {
@@ -902,28 +925,35 @@ async def _session_loop(
                 )
 
         elif msg_type == "action_rejected" and is_chess:
-            # Retry once with a listed move other than the one rejected. A
-            # second rejection gets no retry: the seat then loses on time.
+            # Answer again with a listed move not sent yet for this request.
+            # The platform reads at most CHESS_MAX_ANSWERS answers per request
+            # (the answer and two retries) while time is left; a 3rd rejected
+            # answer stands as a miss and gets no action_rejected.
             details = payload.get("details")
+            remaining = payload.get("remaining_ms", 0)
             logger.warning(
                 "chess answer rejected (%s): %s -- %sms remaining",
                 details.get("code") if isinstance(details, dict) else payload.get("reason"),
                 payload.get("message", ""),
-                payload.get("remaining_ms", 0),
+                remaining,
             )
             request_id = payload.get("request_id")
             if last_request.get("request_id") != request_id:
                 logger.warning("No retry for rejected request %s", request_id)
                 continue
-            rejected = dict(last_request)
-            last_request.clear()
-            sent = chess_sent["move"] if chess_sent["request_id"] == request_id else None
-            raw_state = rejected.get("state")
-            legal = raw_state.get("legal_moves") if isinstance(raw_state, dict) else None
-            retry_move = next(
-                (m for m in legal or [] if isinstance(m, str) and m != sent),
-                None,
-            )
+            tried: list[Any] = chess_sent["moves"] if chess_sent["request_id"] == request_id else []
+            if len(tried) >= CHESS_MAX_ANSWERS:
+                logger.warning(
+                    "No retry for rejected request %s: %d answers sent, the most the "
+                    "platform reads",
+                    request_id,
+                    len(tried),
+                )
+                continue
+            if isinstance(remaining, int) and not isinstance(remaining, bool) and remaining <= 0:
+                logger.warning("No retry for rejected request %s: no time left", request_id)
+                continue
+            retry_move = _chess_retry_move(dict(last_request), tried)
             if retry_move is None:
                 logger.warning("No other listed move to retry rejected request %s", request_id)
                 continue
@@ -931,6 +961,8 @@ async def _session_loop(
                 retry = Action.move(retry_move)
             except ValueError:
                 continue
+            chess_sent["request_id"] = request_id
+            chess_sent["moves"] = [*tried, retry_move]
             await _send_json(
                 ws,
                 {

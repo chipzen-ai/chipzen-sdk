@@ -65,7 +65,15 @@ class ChessBot(ChipzenBot):
     opponent's time is allowed.
 
     **Rejections.** If the platform rejects an answer (``action_rejected``),
-    the SDK retries once, in the time left, with :meth:`fallback_move`.
+    the SDK answers again, in the time left, with :meth:`fallback_move`, or
+    with the next listed move when that one was already sent. The platform
+    reads at most 3 answers per request (the answer and two retries,
+    :data:`chipzen.chess.MAX_ANSWERS_PER_REQUEST`); a 3rd rejected answer
+    stands as a miss, so the SDK sends no more than that.
+
+    **Ply cap.** The game is drawn after ``game_config.ply_cap`` plies (300
+    in ``chess-1.0``). ``state.own_moves_left`` is how many moves you have
+    left before it.
 
     Example::
 

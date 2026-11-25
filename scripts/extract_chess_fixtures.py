@@ -17,14 +17,21 @@ Run it with the private engine checkout on the path (nothing is written there):
 
     python -B scripts/extract_chess_fixtures.py --engine <chess-engine checkout>
 
+The engine is the copy the platform runs (Chipzen vendors it, unchanged, from
+the chess-engine repository), so point ``--engine`` at a folder that holds the
+``chess_engine`` package and its ``v1/golden`` and ``v1/rulesets`` folders.
+
 Labels come from the engine's own ``check_answer``, applied to the answer as the
-codec decodes it. **Preview:** the chess wire codec is not built yet, so the
-rendering below (the engine request under ``turn_request.state``, next to the
-LAYER2-COMMON compatibility keys; ``timeout_ms`` = window + bank left;
-``valid_actions: ["move"]``; ``params.move`` decoded to ``{"move": ...}`` and
-any other action to the ``not_in_valid_actions`` marker) follows the
-game-interface spec (4.5, 5.6, 6.2, 6.4 and 6.5.3). Regenerate when the
-published chess dialect differs.
+platform's chess codec decodes it. The rendering and decoding below follow the
+chess Layer 2 dialect (``CHESS-GAME-STATE-PROTOCOL.md`` section 5): the engine
+request under ``turn_request.state``, next to ``phase`` and the LAYER2-COMMON
+compatibility keys; ``seat`` in the envelope only; ``timeout_ms`` = window +
+bank left; ``valid_actions: ["move"]``; an answer whose ``action`` is not
+``move`` is ``not_in_valid_actions``, one whose ``params`` is not exactly
+``{"move": <string>}`` is ``bad_shape``, and the move string (cut to 16
+characters) goes to the engine. ``match_start.game_config`` is the dialect's
+section 5.1: ``variant`` ``"chess"``, the rule set's table without its
+``notes``, and ``engine_version``.
 """
 
 from __future__ import annotations
@@ -72,8 +79,17 @@ GOLDENS = (
 RANDOM_SEEDS = range(1, 400)
 
 
+#: The dialect name ``match_start.game_config.variant`` carries (dialect 5.1). Not
+#: the rule set's own ``variant`` key (``"standard"``), which stays in ``rule_set``
+#: and in every request ``state``.
+DIALECT = "chess"
+
+#: Longest move text the codec keeps (dialect section 8).
+MAX_MOVE_TEXT = 16
+
+
 def render(request: dict, n: int, match_id: str) -> dict:
-    """An engine request as a ``turn_request`` (preview rendering, see module doc)."""
+    """An engine request as a ``turn_request`` (dialect section 5.2)."""
     clock = request["clock"]
     state = dict(COMPAT_KEYS)
     state.update({k: v for k, v in request.items() if k != "seat"})
@@ -91,13 +107,17 @@ def render(request: dict, n: int, match_id: str) -> dict:
 
 
 def decode(message: dict) -> dict:
-    """The answer the engine would be handed (preview codec, see module doc)."""
-    if message.get("action") != "move":
+    """The answer the engine is handed, as the platform's codec decodes it (module doc)."""
+    action = message.get("action")
+    if type(action) is not str or action != "move":
         return {"bad": "not_in_valid_actions"}
     params = message.get("params")
     if not isinstance(params, dict) or set(params) != {"move"}:
         return {"bad": "bad_shape"}
-    return {"move": params["move"]}
+    move = params["move"]
+    if type(move) is not str:
+        return {"bad": "bad_shape"}
+    return {"move": move[:MAX_MOVE_TEXT]}
 
 
 def answers(request: dict) -> list[dict]:
@@ -219,10 +239,11 @@ def main() -> int:
             "type": "match_start",
             "match_id": "fixture-chess",
             "game_config": {
-                "variant": rule_set["variant"],
+                "variant": DIALECT,
                 "rule_set_id": RULE_SET_ID,
                 "num_players": 2,
                 "rule_set": rule_set,
+                "engine_version": ce.ENGINE_VERSION,
             },
         },
         "pairs": pairs,

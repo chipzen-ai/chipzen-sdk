@@ -207,7 +207,8 @@ class UciBridgeBot(ChessBot):
     #: Shortest search ever asked for.
     min_movetime_ms: ClassVar[int] = 20
 
-    #: The bank is spent as if this many more moves were to come.
+    #: The bank is spent as if this many more moves were to come, or as many as
+    #: are left before the ply cap draws the game, if fewer.
     moves_to_go: ClassVar[int] = 30
 
     #: After asking a late engine to ``stop``, how long to wait for its ``bestmove``.
@@ -241,10 +242,16 @@ class UciBridgeBot(ChessBot):
         """How long the engine may search this move, in ms.
 
         The free window plus an even share of the bank, less the margins, and
-        never more than the request allows.
+        never more than the request allows. The bank is shared over
+        :attr:`moves_to_go` moves, or over the moves left before the ply cap
+        (``state.own_moves_left``) when that is fewer.
         """
         clock = state.clock
-        share = clock.my_bank_ms // max(self.moves_to_go, 1)
+        moves_to_go = self.moves_to_go
+        left = state.own_moves_left
+        if left is not None:
+            moves_to_go = min(moves_to_go, left)
+        share = clock.my_bank_ms // max(moves_to_go, 1)
         spend = clock.window_ms + share - self.send_margin_ms - self.engine_margin_ms
         ceiling = state.timeout_ms - self.send_margin_ms - self.engine_margin_ms
         return max(self.min_movetime_ms, min(spend, ceiling))
@@ -296,11 +303,29 @@ class UciBridgeBot(ChessBot):
             self._engine.close()
             self._engine = None
 
+    def start_engine(self) -> bool:
+        """Start the engine now and wait for it: ``uci``, the options, ``isready``.
+
+        Call it before connecting (the starter's ``main()`` does): start-up
+        is not on the clock, but anything still loading when the first
+        request arrives is charged to that move. ``False`` (with an error
+        logged) when the engine cannot start; moves are then the fallback
+        until it does.
+        """
+        with self._lock:
+            try:
+                self._ensure_engine()
+            except UciEngineError as exc:
+                logger.error("%s; moves will be the fallback until it starts", exc)
+                return False
+        return True
+
     def on_match_start(self, match_info: dict) -> None:
-        """Start the engine in the background, so the first move does not pay for it.
+        """Start the engine in the background (or reset it with ``ucinewgame``).
 
         Runs on a thread: the session loop must keep answering the server
-        while a large engine loads.
+        while a large engine loads. An engine started by :meth:`start_engine`
+        before connecting only gets ``ucinewgame``.
         """
         super().on_match_start(match_info)
         threading.Thread(target=self._warm_up, name="uci-warm-up", daemon=True).start()

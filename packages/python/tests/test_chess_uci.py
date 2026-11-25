@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import sys
 import time
 from pathlib import Path
 
 import pytest
 
-from chipzen.chess import parse_chess_turn_request
+from chipzen.chess import ChessGameConfig, parse_chess_turn_request
 from chipzen.chess_uci import ENGINE_ENV, UciBridgeBot, UciEngine, UciEngineError
 from chipzen.chess_validate import load_fixtures
 
@@ -82,6 +83,27 @@ def test_movetime_spends_the_window_and_a_share_of_the_bank():
     assert bot.movetime_ms(_state(window_ms=1000, bank_ms=60000)) == 1000 + 2000 - 100
     assert bot.movetime_ms(_state(window_ms=1000, bank_ms=0)) == 900
     assert bot.movetime_ms(_state(window_ms=50, bank_ms=0)) == bot.min_movetime_ms
+
+
+def test_movetime_shares_the_bank_over_the_moves_left_before_the_ply_cap():
+    bot = _bridge("good", "e2e4")
+    config = ChessGameConfig.from_match_start(FIXTURES["match_start"])
+    assert config.ply_cap == 300
+    state = dataclasses.replace(_state(window_ms=1000, bank_ms=60000), game_config=config)
+    # Far from the cap: the usual moves_to_go (30).
+    early = dataclasses.replace(state, ply=10)
+    assert early.own_moves_left == 145
+    assert bot.movetime_ms(early) == 1000 + 60000 // 30 - 100
+    # Ten own moves left before the draw at ply 300: a tenth of the bank.
+    late = dataclasses.replace(state, ply=280)
+    assert late.own_moves_left == 10
+    assert bot.movetime_ms(late) == 1000 + 60000 // 10 - 100
+    # The last move before the cap may spend the whole bank, less the margins.
+    last = dataclasses.replace(state, ply=299)
+    assert last.own_moves_left == 1
+    assert bot.movetime_ms(last) == 1000 + 60000 - 100
+    # No game_config: the ply cap is unknown, so moves_to_go alone.
+    assert bot.movetime_ms(dataclasses.replace(state, game_config=None, ply=299)) == 2900
 
 
 @pytest.mark.parametrize("mode", ["illegal", "none", "crash"])
@@ -161,6 +183,24 @@ def test_match_start_warm_up_runs_off_the_caller():
         assert bot.choose_move(state) == _not_first(state)
     finally:
         bot.close_engine()
+
+
+def test_start_engine_before_connecting(tmp_path):
+    state = _state()
+    log = tmp_path / "uci.log"
+    bot = _bridge("good", _not_first(state), log)
+    try:
+        assert bot.start_engine() is True
+        commands = log.read_text("utf-8").splitlines()
+        assert commands[0] == "uci" and commands[-1] == "isready"
+        assert bot.choose_move(state) == _not_first(state)
+    finally:
+        bot.close_engine()
+
+
+def test_start_engine_reports_a_missing_engine(tmp_path):
+    bot = _bridge("good", "e2e4", engine_path=str(tmp_path / "missing"), engine_args=())
+    assert bot.start_engine() is False
 
 
 def test_engine_read_until_handles_end_of_output():

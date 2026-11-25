@@ -40,6 +40,12 @@ loses on time. The SDK stops waiting `send_margin_ms` (150 ms) before the
 deadline and sends `fallback_move(state)` (the first legal move) instead, so a
 slow bot still moves. This bot answers in well under a millisecond.
 
+The time is measured on the platform from sending the request to receiving
+your answer, so it includes the network; 150 ms is the margin to keep until
+transit times are published. If an answer is rejected, the SDK answers again
+with another listed move, at most 3 answers per move. The game is drawn after
+300 plies (`state.own_moves_left` counts your moves left before that).
+
 ## Check and package
 
 ```

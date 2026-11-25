@@ -3,9 +3,9 @@
 > **PREVIEW: chess is not live on Chipzen yet.** Nothing on this page can be
 > played on the platform today, and the chess support it describes is not in
 > a released `chipzen-bot`. The rule set it follows, `chess-1.0`, is frozen
-> but in `preview`. The chess Layer 2 dialect document is not published yet,
+> but in `preview`. The chess Layer 2 dialect is a draft on the platform side,
 > so message field names may still change before chess goes live; this page
-> and the SDK will follow it.
+> and the SDK follow it.
 
 This page is for building a chess bot with the Python SDK: what your bot
 receives, what it answers, how the clock works, what happens to a bad answer,
@@ -24,7 +24,16 @@ Standard chess under the FIDE Laws, rule set `chess-1.0`:
   draw at 300 plies. Bots cannot claim or offer draws.
 - A bot that misses a move (silence, a disconnect, a late answer, or no legal
   answer before its time runs out) loses on time, except that running out of
-  time when the opponent cannot mate is a draw (FIDE 6.9).
+  time when the opponent cannot mate is a draw (FIDE 6.9). There is no default
+  move: the first miss ends the game.
+- Every number here comes from the rule set, which every match sends in
+  `match_start.game_config.rule_set` (section 2.1). Read it from there; never
+  hard-code it.
+
+A second rule set, `chess-armageddon-1.0`, is a bracket's tie-break game: the
+same game, but every draw counts as a win for Black, and Black's bank is
+smaller (48 s against White's 60 s). A match plays it only when its
+`game_config.rule_set_id` names it.
 
 **No chess rules in the SDK.** Chipzen's chess engine runs on the platform
 only. The SDK never works out which moves are legal: every request lists them.
@@ -51,13 +60,16 @@ Chess uses the same Layer 1 transport as every Chipzen game
 
 | Field | Type | Meaning |
 |---|---|---|
-| `variant` | string | `"standard"`. |
-| `rule_set_id` | string | `"chess-1.0"`. |
+| `variant` | string | `"chess"`, the dialect. (The rule set's own `variant`, `"standard"`, is inside `rule_set` and in every request.) |
+| `rule_set_id` | string | `"chess-1.0"`, or `"chess-armageddon-1.0"` for a tie-break game. |
 | `num_players` | int | `2`. |
 | `rule_set` | object | The rule set's full table: `start_fen`, `window_ms`, `bank_ms`, the draw rules, `ply_cap`, `illegal_answer: "reject"`, `clock_visibility: "public"`, `on_miss: "loss_on_time"`. |
+| `engine_version` | string | The chess engine release that runs the rule set (`"1.0.0"`). |
 
-`ChessBot.game_config` holds it, parsed (`chipzen.chess.ChessGameConfig`), and
-every `ChessState` carries it as `state.game_config`.
+`ChessBot.game_config` holds it, parsed (`chipzen.chess.ChessGameConfig`, with
+`window_ms`, `bank_ms` and `ply_cap` read from `rule_set`), and every
+`ChessState` carries it as `state.game_config`. `state.own_moves_left` is how
+many moves your bot has left before the ply cap draws the game.
 
 ### 2.2 `turn_request`: one per move
 
@@ -135,8 +147,15 @@ shows `clock.window_ms`, your bank (`my_bank_ms`) and your opponent's
 (`opp_bank_ms`), as they stood before this move.
 
 - The platform measures your time from sending the request to receiving your
-  answer, so it includes the network. The typical and worst-case transit time
-  is not published yet: keep a margin.
+  answer, rounded up to whole milliseconds, so it includes the network both
+  ways. The typical and worst-case transit time is not measured yet: keep a
+  150 ms margin until it is published.
+- A rejected answer does not stop the clock: a retry (section 4) must arrive
+  within the same `timeout_ms`, counted from when the request was sent.
+- Start-up is not on the clock: the clock starts with the first
+  `turn_request`. Do slow work (starting an engine, loading a network) before
+  connecting; anything still loading when the first request arrives is
+  charged to that move.
 - `ChessBot.send_margin_ms` (default 150 ms) is that margin. The SDK stops
   waiting for `choose_move` `send_margin_ms` before `timeout_ms` runs out and
   sends `fallback_move(state)` (the first legal move unless you override it),
@@ -159,15 +178,30 @@ may answer again, with the same `request_id`, within the time you have left:
 | `bad_param` | `params.move` is not a UCI move string (`E2E4`, `e2-e4`). |
 | `not_in_legal_set` | A UCI string, but not one of `legal_moves`. |
 
-If no legal move arrives before your time runs out, you lose on time (the
-violation is recorded).
+`action_rejected` carries the same `request_id`, the code in `details.code`,
+and `remaining_ms`, what is left of the request's `timeout_ms`.
+
+- **At most 3 answers per request:** the first answer and two retries, while
+  time is left. The first legal move is played, as if it had been the only
+  answer.
+- **If the 3rd answer is rejected too, it stands at once, as if time had run
+  out:** a miss, so you lose on time. No `action_rejected` is sent for it, and
+  no further answer to that request is read.
+- If time runs out after a rejection, the last answer stands: a miss. With no
+  time left, no `action_rejected` is sent.
+- Every rejected answer is listed in your seat's
+  `match_end.results[].bot_errors` (`reason` `bot_invalid_action`, `code`,
+  `step`, `phase`, `message`).
 
 What the Python SDK does for you:
 
 - before sending, it checks that your answer is in `legal_moves`; if not, it
   logs an error and sends `fallback_move(state)` instead;
-- on `action_rejected`, it retries once with another move from the request's
-  `legal_moves`.
+- on `action_rejected`, it answers again with `fallback_move(state)`, or with
+  the first listed move not sent yet for that request if the fallback was
+  already sent, and stops at 3 answers per request
+  (`chipzen.chess.MAX_ANSWERS_PER_REQUEST`). It does not retry when
+  `remaining_ms` is 0.
 
 ## 5. The starters
 
@@ -195,13 +229,16 @@ class FirstMove(ChessBot):
 
 | Step | UCI |
 |---|---|
-| Match start (in a background thread) | `uci` / `uciok`, a `setoption` per `uci_options` entry, `ucinewgame`, `isready` / `readyok` |
+| Before connecting (`start_engine()`, which the starter's `main()` calls) | `uci` / `uciok`, a `setoption` per `uci_options` entry, `ucinewgame`, `isready` / `readyok` |
+| Match start (in a background thread) | `ucinewgame`, `isready` / `readyok` (and the start-up above if the engine is not running yet) |
 | Each move | `position fen <start_fen> moves <moves...>`, then `go movetime <ms>` |
 | Answer | `bestmove e2e4` becomes `{"action": "move", "params": {"move": "e2e4"}}` |
 | Match end | `quit` |
 
 `<ms>` is the window plus `my_bank_ms / moves_to_go`, less the margins, and
-never more than the request allows. To let the engine manage its own clock,
+never more than the request allows. When fewer moves than `moves_to_go` are
+left before the ply cap (`state.own_moves_left`), the bank is shared over
+those instead. To let the engine manage its own clock,
 override `go_command(state)` and return the clock form,
 `go wtime <ms> btime <ms> winc <window_ms> binc <window_ms>`, with White's and
 Black's banks taken from `my_bank_ms` and `opp_bank_ms` by `state.side`.
@@ -226,10 +263,24 @@ slower than the free window (warning) or than `timeout_ms` (failure). The
 fixtures are data only: they cannot tell you the legal moves of any other
 position.
 
-## 7. Not in this preview
+## 7. The machine
 
-- Fog of War (a later rule set on the same engine);
+What a hosted chess seat gets (house bots and builders' bots alike):
+
+| | |
+|---|---|
+| Processor | 1 vCPU, Linux x86-64 (no arm64). The exact processor model can change between matches: build for the x86-64 baseline, or pick the instruction set at run time. |
+| Memory | 2 GB for the whole container, child processes included. Going over it kills the container: a miss. |
+| Threads and processes | Allowed, no cap, but they share the one vCPU. A bridge may run its engine as a child process. |
+| Disk | The image is read-only; `/tmp` is writable and empty at every match. |
+| Network | None during a match, except the match WebSocket. Put engine files, networks and books in the image. |
+| Image | A plain image with a non-root `USER` and an `ENTRYPOINT` that runs the bot: 250 MB compressed, 1500 MB unpacked. No log-cap wrapper. |
+| Start-up | Free. Connect within 90 s. |
+| Logs | stdout and stderr are your match log, not capped. Log a line or two per move; do not forward an engine's `info` lines. |
+
+## 8. Not in this preview
+
+- Fog of War (a separate game, `fogofwar`, on the same engine);
 - per-move `turn_result` events, reconnection, and human play;
-- the chess bot-machine sheet (CPU, memory, start-up time, and whether a bot
-  may start a second process such as a UCI engine);
+- published transit times (keep the 150 ms margin);
 - JavaScript and Rust chess support.

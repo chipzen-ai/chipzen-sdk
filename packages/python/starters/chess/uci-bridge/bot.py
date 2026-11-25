@@ -6,11 +6,17 @@ Plays the moves of a UCI chess engine you supply (Stockfish-style: it speaks
 `engine/` folder as `engine/engine` (a Linux x86-64 build), and the Dockerfile
 copies it into the image.
 
+The engine is started before the bot connects: start-up is free, but anything
+still loading when the first request arrives is charged to that move.
+
 For each move the bridge sends the engine `position fen <start_fen> moves ...`
-and `go movetime <ms>`, sized to the free window plus a share of your bank, and
-answers with the engine's `bestmove`. If the engine answers a move that is not
-in the request's legal moves, gives no answer in time, or has crashed, the
-bridge plays a legal move from the request instead and logs a warning.
+and `go movetime <ms>`, sized to the free window (1 s in `chess-1.0`) plus a
+share of your bank (60 s, never refilled), shared over the moves left before
+the 300-ply draw when that is fewer, and answers with the engine's `bestmove`.
+If the engine answers a move that is not in the request's legal moves, gives
+no answer in time, or has crashed, the bridge plays a legal move from the
+request instead and logs a warning. If the platform rejects an answer anyway,
+the SDK answers again with another listed move: at most 3 answers per move.
 
 Tune the settings below. To run the engine from somewhere else, set
 `CHIPZEN_UCI_ENGINE` to its path. Keep `main()` at the bottom: the image runs it.
@@ -32,13 +38,16 @@ class MyEngine(UciBridgeBot):
     #: Where the Dockerfile puts your engine.
     engine_path = "/bot/engine/engine"
 
-    #: `setoption` values sent at start-up. A bot gets one CPU, so one thread.
+    #: `setoption` values sent at start-up. A chess seat has 1 vCPU and 2 GB
+    #: for the whole container, so one thread, and keep Hash well under 1024.
     uci_options = {"Threads": 1, "Hash": 64}
 
-    #: The bank is spent as if this many moves were still to come.
+    #: The bank is spent as if this many moves were still to come (or as many
+    #: as are left before the ply cap, if fewer).
     moves_to_go = 30
 
-    #: Kept back from every move for the answer's trip to the platform.
+    #: Kept back from every move for the answer's trip to the platform, which
+    #: counts against your clock. Transit is not measured yet: keep 150 ms.
     send_margin_ms = 150
 
 
@@ -56,10 +65,13 @@ def main() -> None:
         )
         sys.exit(1)
 
+    bot = MyEngine()
+    # Load the engine before connecting, off the clock.
+    bot.start_engine()
     asyncio.run(
         run_bot(
             url,
-            MyEngine(),
+            bot,
             token=os.environ.get("CHIPZEN_TOKEN"),
             ticket=os.environ.get("CHIPZEN_TICKET"),
         )

@@ -17,6 +17,7 @@ import pytest
 import chipzen
 from chipzen import scaffold
 from chipzen.chess import (
+    MAX_ANSWERS_PER_REQUEST,
     REJECTION_CODES,
     ChessClock,
     ChessGameConfig,
@@ -210,9 +211,23 @@ def test_clock_and_game_config():
     assert clock.budget_ms == 42250
     assert ChessClock.from_dict(clock.to_dict()) == clock
     config = ChessGameConfig.from_match_start(FIXTURES["match_start"])
+    assert config.variant == "chess"  # the dialect; the rule set's variant is "standard"
+    assert config.rule_set["variant"] == "standard"
     assert config.rule_set_id == "chess-1.0"
+    assert config.engine_version == "1.0.0"
+    assert (config.window_ms, config.bank_ms, config.ply_cap) == (1000, 60000, 300)
     assert config.rule_set["window_ms"] == 1000
     assert ChessGameConfig.from_dict(config.to_dict()) == config
+    # engine_version is additive: a config without it parses, and stays without it.
+    bare = {
+        k: v for k, v in FIXTURES["match_start"]["game_config"].items() if k != "engine_version"
+    }
+    old = ChessGameConfig.from_dict(bare)
+    assert old.engine_version is None and "engine_version" not in old.to_dict()
+    with pytest.raises(ChessStateParseError):
+        ChessGameConfig.from_dict({**bare, "engine_version": 1})
+    odd = ChessGameConfig.from_dict({**bare, "rule_set": {"ply_cap": True}})
+    assert odd.ply_cap is None and odd.window_ms is None
     with pytest.raises(ChessStateParseError):
         ChessGameConfig.from_match_start({"game_config": {"variant": "standard"}})
     with pytest.raises(ChessStateParseError):
@@ -327,7 +342,13 @@ def _hello(shape: str | None = "chess") -> dict:
         "game_type": "chess",
     }
     if shape is not None:
-        hello["game"] = {"game_type": "chess", "variant": "standard", "state_shape": shape}
+        hello["game"] = {
+            "game_type": "chess",
+            "variant": "chess",
+            "actions": ["move"],
+            "phases": ["move"],
+            "state_shape": shape,
+        }
     return hello
 
 
@@ -418,23 +439,70 @@ async def test_session_uses_the_bots_fallback_move():
     assert _moves_sent(ws) == [pick]
 
 
-async def test_session_retries_a_rejection_with_another_listed_move():
-    request = _requests()[5]
-    legal = request["state"]["legal_moves"]
-    rejection = {
+def _rejection(request: dict, remaining_ms: int = 900, code: str = "not_in_legal_set") -> dict:
+    return {
         "type": "action_rejected",
         "match_id": MATCH_ID,
         "request_id": request["request_id"],
-        "reason": "not legal",
-        "message": "not legal",
-        "details": {"code": "not_in_legal_set"},
+        "reason": f"answer rejected: {code}",
+        "message": f"answer rejected: {code}",
+        "details": {"code": code},
         "submitted_action": "move",
-        "remaining_ms": 900,
+        "remaining_ms": remaining_ms,
         "valid_actions": ["move"],
     }
+
+
+async def test_session_retries_a_rejection_with_another_listed_move():
+    request = _requests()[5]
+    legal = request["state"]["legal_moves"]
+    rejection = _rejection(request)
     stale = {**rejection, "request_id": "req_unknown"}
     ws, _ = await _play(Scripted(lambda s: legal[0]), _session(request, rejection, stale))
     assert _moves_sent(ws) == [legal[0], legal[1]]
+
+
+async def test_session_sends_at_most_three_answers_per_request():
+    # The platform reads the answer and two retries; a 3rd rejected answer
+    # stands as a miss. A rejection after the 3rd answer gets no 4th.
+    request = _requests()[5]
+    legal = request["state"]["legal_moves"]
+    frames = [request, _rejection(request, 800), _rejection(request, 700), _rejection(request, 600)]
+    ws, _ = await _play(Scripted(lambda s: legal[0]), _session(*frames))
+    assert _moves_sent(ws) == [legal[0], legal[1], legal[2]]
+    assert MAX_ANSWERS_PER_REQUEST == 3
+    assert {m["request_id"] for m in ws.of_type("turn_action")} == {request["request_id"]}
+
+
+async def test_session_retries_with_the_bots_fallback_move_first():
+    request = _requests()[5]
+    legal = request["state"]["legal_moves"]
+    pick = legal[-1]
+
+    class OwnFallback(Scripted):
+        def fallback_move(self, state):
+            return pick
+
+    frames = [request, _rejection(request), _rejection(request)]
+    ws, _ = await _play(OwnFallback(lambda s: legal[2]), _session(*frames))
+    # 1st retry: the bot's fallback; 2nd: it was sent already, so the first
+    # listed move not sent yet.
+    assert _moves_sent(ws) == [legal[2], pick, legal[0]]
+
+
+async def test_session_does_not_retry_with_no_time_left():
+    request = _requests()[5]
+    legal = request["state"]["legal_moves"]
+    ws, _ = await _play(Scripted(lambda s: legal[0]), _session(request, _rejection(request, 0)))
+    assert _moves_sent(ws) == [legal[0]]
+
+
+async def test_retry_count_starts_over_at_each_request():
+    first, second = _requests()[5], _requests()[6]
+    frames = [first, _rejection(first), second, _rejection(second), _rejection(second)]
+    ws, _ = await _play(Scripted(lambda s: s.legal_moves[0]), _session(*frames))
+    legal1, legal2 = first["state"]["legal_moves"], second["state"]["legal_moves"]
+    assert _moves_sent(ws) == [legal1[0], legal1[1], legal2[0], legal2[1], legal2[2]]
 
 
 async def test_a_chess_bot_will_not_play_another_game():

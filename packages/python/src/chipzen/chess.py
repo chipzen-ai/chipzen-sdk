@@ -1,10 +1,10 @@
 """Typed models for chess (``state_shape: "chess"``). PREVIEW: chess is not live.
 
 **Preview.** Chess is not playable on Chipzen yet. This module follows the
-step contract of the Chipzen game-interface specification and Chipzen's chess
-engine (rule set ``chess-1.0``, standard chess), but the chess Layer 2 dialect
-document is not published yet, so field names may still change before chess
-goes live. See ``docs/CHESS-BOTS.md``.
+chess Layer 2 dialect (``CHESS-GAME-STATE-PROTOCOL.md``, a draft) and Chipzen's
+chess engine (rule set ``chess-1.0``, standard chess). The dialect is still a
+draft, so field names may change before chess goes live. See
+``docs/CHESS-BOTS.md``.
 
 Chess is turn-based: each step asks only the seat whose colour is to move, with
 one call, ``move``. Every ``turn_request`` carries everything a bot needs to
@@ -63,8 +63,20 @@ MOVE_PHASE = "move"
 #: The colours, as ``state.side`` names them. White moves first.
 SIDES = ("white", "black")
 
-#: The variants this SDK release parses. Fog of War (``"fog"``) comes later.
+#: The ``state.variant`` values this SDK release parses (the rule set's own
+#: ``variant`` key). Fog of War is a separate game, ``fogofwar``, with its own
+#: dialect, and is not supported yet.
 SUPPORTED_VARIANTS = ("standard",)
+
+#: ``match_start.game_config.variant`` at a chess table: the dialect's name.
+#: Not the rule set's ``variant`` (``"standard"``), which is in ``rule_set``.
+DIALECT = "chess"
+
+#: The most answers the platform reads for one request: the first answer and
+#: two retries after ``action_rejected``. A 3rd rejected answer stands at once,
+#: as if time had run out: a miss, which loses on time (TRANSPORT-PROTOCOL
+#: section 8.11).
+MAX_ANSWERS_PER_REQUEST = 3
 
 #: The machine codes the platform may send in ``action_rejected.details.code``
 #: for a chess answer (game-interface spec 4.3 and 6.4):
@@ -144,22 +156,49 @@ class ChessGameConfig:
     """``match_start.game_config`` at a chess table.
 
     Attributes:
-        variant: ``"standard"`` for standard chess.
-        rule_set_id: The rule set this match is pinned to, e.g. ``"chess-1.0"``.
+        variant: ``"chess"``, the dialect (:data:`DIALECT`). The rule set's
+            own ``variant`` (``"standard"``) is in :attr:`rule_set`.
+        rule_set_id: The rule set this match is pinned to: ``"chess-1.0"``,
+            or ``"chess-armageddon-1.0"`` for a bracket's tie-break game.
         num_players: Always ``2``.
         rule_set: The rule set's full table as the server sent it (start
             position, clock, draw rules, ply cap). Read numbers from here or
             from each request's ``clock``; never hard-code them.
+        engine_version: The chess engine release that runs the rule set
+            (``"1.0.0"``), or ``None`` when the server did not send it.
     """
 
     variant: str
     rule_set_id: str
     num_players: int
     rule_set: dict[str, Any]
+    engine_version: str | None = None
+
+    def _rule_int(self, key: str) -> int | None:
+        value = self.rule_set.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    @property
+    def window_ms(self) -> int | None:
+        """The free window per move (``rule_set.window_ms``, 1000 in ``chess-1.0``)."""
+        return self._rule_int("window_ms")
+
+    @property
+    def bank_ms(self) -> int | None:
+        """Each seat's bank at the start, never refilled (``rule_set.bank_ms``, 60000)."""
+        return self._rule_int("bank_ms")
+
+    @property
+    def ply_cap(self) -> int | None:
+        """The ply count at which the game is drawn (``rule_set.ply_cap``, 300)."""
+        return self._rule_int("ply_cap")
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the wire object."""
-        return {f.name: _to_wire(getattr(self, f.name)) for f in dataclasses.fields(self)}
+        """Return the wire object (``engine_version`` only when known)."""
+        out = {f.name: _to_wire(getattr(self, f.name)) for f in dataclasses.fields(self)}
+        if out["engine_version"] is None:
+            del out["engine_version"]
+        return out
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any], where: str = "game_config") -> ChessGameConfig:
@@ -169,6 +208,9 @@ class ChessGameConfig:
                 rule_set_id=_str(data, "rule_set_id", where),
                 num_players=_int(data, "num_players", where),
                 rule_set=_object(data, "rule_set", where),
+                engine_version=(
+                    _str(data, "engine_version", where) if "engine_version" in data else None
+                ),
             )
         except ChessStateParseError:
             raise
@@ -242,6 +284,18 @@ class ChessState:
     game_config: ChessGameConfig | None = dataclasses.field(
         default=None, kw_only=True, compare=False, repr=False
     )
+
+    @property
+    def own_moves_left(self) -> int | None:
+        """How many more moves this seat can make before the ply cap draws the game.
+
+        Counts this move. ``None`` when the ply cap is not known (no
+        ``game_config``, or a rule set without ``ply_cap``).
+        """
+        cap = self.game_config.ply_cap if self.game_config is not None else None
+        if cap is None:
+            return None
+        return max((cap - self.ply + 1) // 2, 0)
 
     @property
     def is_white(self) -> bool:
@@ -344,6 +398,8 @@ def first_legal_move(request: Mapping[str, Any]) -> str | None:
 
 
 __all__ = [
+    "DIALECT",
+    "MAX_ANSWERS_PER_REQUEST",
     "MOVE_ACTION",
     "MOVE_PHASE",
     "REJECTION_CODES",

@@ -96,9 +96,15 @@ COPY --from=builder /build/*.so /bot/
 
 # Run as non-root (defense in depth — the platform also applies seccomp
 # and cap-drop on top of this).
+# The same step clears the setuid and setgid bits the base image ships
+# (su, passwd, mount and a few more). The bot needs none of them, and a
+# setuid file is a way back to uid 0 from a non-root USER. Keep this step
+# after anything that installs packages (and after your engine is copied
+# in), just before USER.
 RUN groupadd --system --gid 10001 bot && \
     useradd --system --uid 10001 --gid bot --home-dir /bot --shell /usr/sbin/nologin bot && \
-    chown bot:bot /bot /bot/*.so
+    chown bot:bot /bot /bot/*.so && \
+    find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 USER 10001
 
 # ENTRYPOINT calls main() from the compiled bot module. The .py source
