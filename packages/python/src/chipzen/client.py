@@ -5,6 +5,7 @@ Implements the Chipzen two-layer protocol:
 - Layer 1 (Transport): ``docs/protocol/TRANSPORT-PROTOCOL.md``
 - Layer 2 (Poker):     ``docs/protocol/POKER-GAME-STATE-PROTOCOL.md``
 - Layer 2 (Big Bad Bots): ``docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md``
+- Chess (preview, not live): ``docs/CHESS-BOTS.md``
 
 Handles the connection lifecycle: ``authenticate``, ``hello`` handshake,
 ``match_start``, per-round ``round_start`` / ``turn_request`` /
@@ -15,8 +16,10 @@ The server ``hello``'s ``game.state_shape`` picks the parser (LAYER2-COMMON
 section 2). Absent, ``27tripledraw`` and ``pineapple`` take the poker path,
 unchanged. ``bigbadbots`` parses each ``turn_request`` into its Big Bad Bots
 model, bounds each decision by the request's ``timeout_ms`` and answers with
-the protocol's default when the bot raises or runs out of time. Any other
-shape ends the session before the client ``hello`` is sent.
+the protocol's default when the bot raises or runs out of time. ``chess``
+(preview, not live) does the same with a move from the request's
+``legal_moves``. Any other shape ends the session before the client ``hello``
+is sent.
 """
 
 from __future__ import annotations
@@ -33,6 +36,11 @@ from chipzen.bigbadbots import STATE_SHAPE as BIGBADBOTS_STATE_SHAPE
 from chipzen.bigbadbots import StateParseError, parse_bigbadbots_turn_request
 from chipzen.bigbadbots_bot import BigBadBotsBot, fallback_action, is_answer_shaped
 from chipzen.bot import ChipzenBot
+from chipzen.chess import MAX_ANSWERS_PER_REQUEST as CHESS_MAX_ANSWERS
+from chipzen.chess import STATE_SHAPE as CHESS_STATE_SHAPE
+from chipzen.chess import ChessState, ChessStateParseError, parse_chess_turn_request
+from chipzen.chess_bot import ChessBot, is_move_answer
+from chipzen.chess_bot import fallback_action as chess_fallback_action
 from chipzen.close_codes import PROTOCOL_CLOSE_LOG, ProtocolCloseError, protocol_close_from
 from chipzen.models import (
     POKER_STATE_SHAPES,
@@ -54,6 +62,10 @@ SUPPORTED_PROTOCOL_VERSIONS = ["1.0"]
 #: stops waiting for the bot and sends the default instead, so the answer
 #: still reaches the server in time.
 BIGBADBOTS_SEND_MARGIN_MS = 20
+
+#: The same margin for a chess request (preview), used for a bot that is not a
+#: :class:`chipzen.ChessBot`; a ChessBot sets its own ``send_margin_ms``.
+CHESS_SEND_MARGIN_MS = 150
 
 
 def _extract_match_id(url: str) -> str:
@@ -560,6 +572,127 @@ async def _session_loop(
         )
         _call_hook(bot.on_decision_latency, decision_ms)
 
+    # --- Chess turn handling (preview) -----------------------------------
+    # Only used when the server hello declares ``state_shape: chess``. The SDK
+    # never works out legality: every answer it sends is a member of the
+    # request's ``legal_moves``, which the platform computed.
+    # The moves sent for the last request, in order: the answer, then any
+    # retries after ``action_rejected`` (at most CHESS_MAX_ANSWERS in all).
+    chess_sent: dict[str, Any] = {"request_id": None, "moves": []}
+
+    def _chess_fallback(request: dict, state: ChessState | None, why: str) -> Action | None:
+        action: Action | None = None
+        if state is not None and isinstance(bot, ChessBot):
+            try:
+                move = bot.fallback_move(state)
+            except Exception:  # noqa: BLE001 - a broken override must not cost the move
+                logger.exception("ChessBot.fallback_move() raised")
+                move = None
+            if isinstance(move, str) and move in state.legal_moves:
+                action = Action.move(move)
+        if action is None:
+            action = chess_fallback_action(request)
+        logger.warning(
+            "chess request %s: %s; sending %s",
+            request.get("request_id"),
+            why,
+            action.to_wire() if action is not None else "nothing (the request lists no move)",
+        )
+        return action
+
+    async def _decide_chess(request: dict) -> tuple[Action | None, float]:
+        """Answer one chess ``turn_request``: the bot's move or a listed fallback.
+
+        Mirrors :func:`_decide_bigbadbots`: a parse failure, a raise
+        (``safe_mode``), an answer that is not one of ``legal_moves`` or a
+        decision still running ``send_margin_ms`` before ``timeout_ms`` ends
+        gets the fallback move instead, with a warning. In chess an
+        unanswered move loses on time, so the fallback is always sent.
+        """
+        start = time.monotonic()
+
+        def _elapsed() -> float:
+            return (time.monotonic() - start) * 1000.0
+
+        try:
+            state = parse_chess_turn_request(request)
+        except ChessStateParseError as exc:
+            logger.exception("chess turn_request failed to parse")
+            if not safe_mode:
+                raise BotDecisionError(str(exc)) from exc
+            return _chess_fallback(request, None, "the payload failed to parse"), _elapsed()
+
+        running = busy["task"]
+        if running is not None and not running.done():
+            fallback = _chess_fallback(request, state, "the previous decision is still running")
+            return fallback, _elapsed()
+        busy["task"] = None
+
+        margin = getattr(bot, "send_margin_ms", CHESS_SEND_MARGIN_MS)
+        if isinstance(margin, bool) or not isinstance(margin, int) or margin < 0:
+            margin = CHESS_SEND_MARGIN_MS
+        budget_ms = max(state.timeout_ms - margin, 1)
+        decide: Any = bot.decide
+        task = asyncio.ensure_future(asyncio.to_thread(decide, state))
+        try:
+            action = await asyncio.wait_for(asyncio.shield(task), budget_ms / 1000.0)
+        except asyncio.TimeoutError:
+            busy["task"] = task
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            return _chess_fallback(request, state, f"no answer within {budget_ms}ms"), _elapsed()
+        except Exception as exc:
+            logger.exception("Bot.decide() raised an exception")
+            if not safe_mode:
+                raise BotDecisionError(str(exc)) from exc
+            return _chess_fallback(request, state, "decide() raised"), _elapsed()
+
+        if not is_move_answer(action, state):
+            message = f"decide() returned {action!r}, not a move from legal_moves"
+            if not safe_mode:
+                raise BotDecisionError(message)
+            logger.error("chess request %s: %s", state.request_id, message)
+            return _chess_fallback(request, state, "the answer was not a legal move"), _elapsed()
+        return action, _elapsed()
+
+    def _chess_retry_move(request: dict, tried: list[Any]) -> str | None:
+        """A listed move for a retry after ``action_rejected``, not one already sent.
+
+        A :class:`ChessBot`'s :meth:`~chipzen.ChessBot.fallback_move` first,
+        then the request's ``legal_moves`` in order. Only moves the request
+        lists; the SDK never works out legality.
+        """
+        raw_state = request.get("state")
+        legal = raw_state.get("legal_moves") if isinstance(raw_state, dict) else None
+        listed = [m for m in legal or [] if isinstance(m, str)]
+        if isinstance(bot, ChessBot):
+            try:
+                preferred = bot.fallback_move(parse_chess_turn_request(request))
+            except Exception:  # noqa: BLE001 - a broken override must not cost the retry
+                logger.exception("ChessBot.fallback_move() raised during a retry")
+                preferred = None
+            if isinstance(preferred, str) and preferred in listed and preferred not in tried:
+                return preferred
+        return next((m for m in listed if m not in tried), None)
+
+    async def _answer_chess(request: dict) -> None:
+        action, decision_ms = await _decide_chess(request)
+        last_request.clear()
+        last_request.update(request)
+        if action is None:
+            return
+        chess_sent["request_id"] = request.get("request_id")
+        chess_sent["moves"] = [action.params.get("move")]
+        await _send_json(
+            ws,
+            {
+                "type": "turn_action",
+                "match_id": match_id,
+                "request_id": request.get("request_id"),  # MUST echo
+                **action.to_wire(),
+            },
+        )
+        _call_hook(bot.on_decision_latency, decision_ms)
+
     # --- Layer 1 handshake --------------------------------------------
     auth_msg: dict[str, Any] = {
         "type": "authenticate",
@@ -617,7 +750,8 @@ async def _session_loop(
         logger.error("Server hello has a malformed game descriptor: %s", exc)
         return None
     is_bigbadbots = state_shape == BIGBADBOTS_STATE_SHAPE
-    if not is_bigbadbots and state_shape not in POKER_STATE_SHAPES:
+    is_chess = state_shape == CHESS_STATE_SHAPE
+    if not is_bigbadbots and not is_chess and state_shape not in POKER_STATE_SHAPES:
         logger.error("%s", UnsupportedStateShapeError(state_shape))
         return None
     if isinstance(bot, BigBadBotsBot) and not is_bigbadbots:
@@ -627,8 +761,17 @@ async def _session_loop(
             state_shape,
         )
         return None
+    if isinstance(bot, ChessBot) and not is_chess:
+        logger.error(
+            "%s is a ChessBot but the table's state_shape is %r; it cannot play here",
+            type(bot).__name__,
+            state_shape,
+        )
+        return None
     if supported_games is None and isinstance(bot, BigBadBotsBot):
         supported_games = [BIGBADBOTS_STATE_SHAPE]
+    if supported_games is None and isinstance(bot, ChessBot):
+        supported_games = [CHESS_STATE_SHAPE]
 
     # #4245 / epic chipzen-ai/Chipzen#4200: the client's declared game
     # vocabulary. Appended LAST and only when the caller declared something,
@@ -725,6 +868,9 @@ async def _session_loop(
             if is_bigbadbots:
                 await _answer_bigbadbots(payload)
                 continue
+            if is_chess:
+                await _answer_chess(payload)
+                continue
             turn_seat, turn_dealer = _turn_seat_context(
                 payload,
                 your_seat=your_seat,
@@ -777,6 +923,55 @@ async def _session_loop(
                         **retry.to_wire(),
                     },
                 )
+
+        elif msg_type == "action_rejected" and is_chess:
+            # Answer again with a listed move not sent yet for this request.
+            # The platform reads at most CHESS_MAX_ANSWERS answers per request
+            # (the answer and two retries) while time is left; a 3rd rejected
+            # answer stands as a miss and gets no action_rejected.
+            details = payload.get("details")
+            remaining = payload.get("remaining_ms", 0)
+            logger.warning(
+                "chess answer rejected (%s): %s -- %sms remaining",
+                details.get("code") if isinstance(details, dict) else payload.get("reason"),
+                payload.get("message", ""),
+                remaining,
+            )
+            request_id = payload.get("request_id")
+            if last_request.get("request_id") != request_id:
+                logger.warning("No retry for rejected request %s", request_id)
+                continue
+            tried: list[Any] = chess_sent["moves"] if chess_sent["request_id"] == request_id else []
+            if len(tried) >= CHESS_MAX_ANSWERS:
+                logger.warning(
+                    "No retry for rejected request %s: %d answers sent, the most the "
+                    "platform reads",
+                    request_id,
+                    len(tried),
+                )
+                continue
+            if isinstance(remaining, int) and not isinstance(remaining, bool) and remaining <= 0:
+                logger.warning("No retry for rejected request %s: no time left", request_id)
+                continue
+            retry_move = _chess_retry_move(dict(last_request), tried)
+            if retry_move is None:
+                logger.warning("No other listed move to retry rejected request %s", request_id)
+                continue
+            try:
+                retry = Action.move(retry_move)
+            except ValueError:
+                continue
+            chess_sent["request_id"] = request_id
+            chess_sent["moves"] = [*tried, retry_move]
+            await _send_json(
+                ws,
+                {
+                    "type": "turn_action",
+                    "match_id": match_id,
+                    "request_id": request_id,
+                    **retry.to_wire(),
+                },
+            )
 
         elif msg_type == "action_rejected":
             # Retry within ``remaining_ms`` using the SAME request_id.
@@ -869,6 +1064,8 @@ async def _session_loop(
             pending = payload.get("pending_request")
             if pending and is_bigbadbots:
                 await _answer_bigbadbots(pending)
+            elif pending and is_chess:
+                await _answer_chess(pending)
             elif pending:
                 # Treat the pending request exactly like a ``turn_request``.
                 turn_seat, turn_dealer = _turn_seat_context(

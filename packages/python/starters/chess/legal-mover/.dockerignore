@@ -1,0 +1,51 @@
+# Keep the build context tight — only bot.py + requirements.txt + Dockerfile
+# need to make it into the builder stage. Anything else is at best wasted
+# bytes shipped to the daemon and at worst leaks something the runtime
+# image shouldn't see.
+
+# Build / dependency artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+build/
+dist/
+.eggs/
+.tox/
+
+# Local virtualenvs
+.venv/
+venv/
+env/
+.python-version
+
+# IDE / editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Docs / configs that don't belong in the runtime image
+*.md
+README*
+LICENSE*
+NOTICE*
+CHANGELOG*
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Secrets — these should never be in a build context
+.env
+.env.*
+*.pem
+*.key
+secrets/
