@@ -8,6 +8,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (preview: chess is not live on Chipzen yet)
+
+- **Chess bots, standard chess (rule set `chess-1.0`).** Preview only: chess
+  cannot be played on the platform yet, and the field names may change before
+  it goes live. See [`docs/CHESS-BOTS.md`](../../docs/CHESS-BOTS.md).
+  - `chipzen.chess`: typed models for `state_shape: "chess"` (`ChessState`,
+    `ChessClock`, `ChessGameConfig` with `engine_version`, `window_ms`,
+    `bank_ms` and `ply_cap`), `ChessState.own_moves_left`, and
+    `Action.move("e2e4")`.
+  - `chipzen.ChessBot`: implement `choose_move(state)` and return one of
+    `state.legal_moves`. The session loop sends a listed fallback move when the
+    bot is too slow, raises, or answers a move that is not listed, and answers
+    an `action_rejected` again with a listed move not sent yet, up to the
+    platform's 3 answers per request (`MAX_ANSWERS_PER_REQUEST`).
+  - `chipzen.chess_uci.UciBridgeBot`: plays the moves of a UCI engine you
+    supply (none is bundled), with a legal fallback. `start_engine()` loads
+    the engine before connecting, off the clock, and the bank is shared over
+    the moves left before the ply cap when that is fewer than `moves_to_go`.
+  - Two starters, `chipzen-sdk init <name> --template chess` (legal mover) and
+    `--template chess-uci` (UCI bridge), and `chipzen-sdk validate` chess checks
+    against recorded requests from Chipzen's chess engine.
+  - The SDK has no chess rules and no chess library: it only reads the legal
+    moves each request lists.
+- **Fog of War bots (rule set `fogofwar-1.0`, game `fogofwar`).** Preview
+  only, like chess ([#300](https://github.com/chipzen-ai/chipzen-sdk/issues/300)).
+  See [`docs/CHESS-BOTS.md`](../../docs/CHESS-BOTS.md) section 8.
+  - `chipzen.fogofwar`: strict models for `state_shape: "fogofwar"`
+    (`FogOfWarState`: `my_moves`, `visible`, `pieces`, `castling`,
+    `legal_moves`, no `fen` and no `moves`), with read-only view helpers
+    (`captured_by`, `piece_at`, `my_pieces`, `seen_opponent_pieces`).
+  - `chipzen.FogOfWarBot`: implement `choose_move(state)`; the same session
+    behaviour as `ChessBot` (fallback, send margin, 3-answer retry cap). It
+    declares `supported_games=["fogofwar"]`. Both now share a base,
+    `chipzen.chess_bot.MoveListBot`.
+  - The session loop accepts `state_shape: "fogofwar"`, and
+    `parse_turn_request(..., state_shape="fogofwar")` returns a
+    `FogOfWarState`.
+  - A starter, `chipzen-sdk init <name> --template fogofwar`, and
+    `chipzen-sdk validate` Fog of War checks against requests recorded from
+    the platform's engine (`scripts/extract_fogofwar_fixtures.py`).
+
 ## [0.7.1] — 2026-11-22
 
 Patch release. No public API change; bots written for 0.7 keep working

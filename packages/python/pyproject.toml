@@ -76,6 +76,28 @@ packages = ["src/chipzen"]
 "starters/python/.dockerignore" = "chipzen/_starters/python/.dockerignore"
 "starters/python/README.md" = "chipzen/_starters/python/README.md"
 "starters/python/.gitignore" = "chipzen/_starters/python/.gitignore"
+# The chess starters (PREVIEW: chess is not live), for `init --template chess`
+# and `--template chess-uci`. Keep equal to chipzen.scaffold.TEMPLATES.
+"starters/chess/legal-mover/bot.py" = "chipzen/_starters/chess-legal-mover/bot.py"
+"starters/chess/legal-mover/requirements.txt" = "chipzen/_starters/chess-legal-mover/requirements.txt"
+"starters/chess/legal-mover/Dockerfile" = "chipzen/_starters/chess-legal-mover/Dockerfile"
+"starters/chess/legal-mover/.dockerignore" = "chipzen/_starters/chess-legal-mover/.dockerignore"
+"starters/chess/legal-mover/README.md" = "chipzen/_starters/chess-legal-mover/README.md"
+"starters/chess/legal-mover/.gitignore" = "chipzen/_starters/chess-legal-mover/.gitignore"
+"starters/chess/uci-bridge/bot.py" = "chipzen/_starters/chess-uci-bridge/bot.py"
+"starters/chess/uci-bridge/requirements.txt" = "chipzen/_starters/chess-uci-bridge/requirements.txt"
+"starters/chess/uci-bridge/Dockerfile" = "chipzen/_starters/chess-uci-bridge/Dockerfile"
+"starters/chess/uci-bridge/.dockerignore" = "chipzen/_starters/chess-uci-bridge/.dockerignore"
+"starters/chess/uci-bridge/README.md" = "chipzen/_starters/chess-uci-bridge/README.md"
+"starters/chess/uci-bridge/.gitignore" = "chipzen/_starters/chess-uci-bridge/.gitignore"
+"starters/chess/uci-bridge/engine/README.md" = "chipzen/_starters/chess-uci-bridge/engine/README.md"
+# The Fog of War starter (PREVIEW: not live), for `init --template fogofwar`.
+"starters/fogofwar/legal-mover/bot.py" = "chipzen/_starters/fogofwar-legal-mover/bot.py"
+"starters/fogofwar/legal-mover/requirements.txt" = "chipzen/_starters/fogofwar-legal-mover/requirements.txt"
+"starters/fogofwar/legal-mover/Dockerfile" = "chipzen/_starters/fogofwar-legal-mover/Dockerfile"
+"starters/fogofwar/legal-mover/.dockerignore" = "chipzen/_starters/fogofwar-legal-mover/.dockerignore"
+"starters/fogofwar/legal-mover/README.md" = "chipzen/_starters/fogofwar-legal-mover/README.md"
+"starters/fogofwar/legal-mover/.gitignore" = "chipzen/_starters/fogofwar-legal-mover/.gitignore"
 
 [tool.ruff]
 target-version = "py310"

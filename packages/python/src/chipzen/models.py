@@ -28,6 +28,10 @@ from chipzen.bigbadbots import (
     parse_bigbadbots_turn_request,
 )
 from chipzen.bigbadbots import STATE_SHAPE as BIGBADBOTS_STATE_SHAPE
+from chipzen.chess import STATE_SHAPE as CHESS_STATE_SHAPE
+from chipzen.chess import ChessState, is_uci_move, parse_chess_turn_request
+from chipzen.fogofwar import STATE_SHAPE as FOGOFWAR_STATE_SHAPE
+from chipzen.fogofwar import FogOfWarState, parse_fogofwar_turn_request
 
 # ---------------------------------------------------------------------------
 # Lenient coercion helpers for OPTIONAL variant keys
@@ -380,6 +384,27 @@ class Action:
             raise ValueError(f"{move!r} is not a Big Bad Bots fight action ({FIGHT_ACTIONS})")
         return cls(action=move)
 
+    # ------------------------------------------------------------------
+    # Chess (PREVIEW, not live: docs/CHESS-BOTS.md)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def move(cls, uci: str) -> Action:
+        """Chess and Fog of War: play ``uci``, one of ``state.legal_moves``. Preview: not live.
+
+        Emits ``{"action": "move", "params": {"move": "e2e4"}}``. A move that
+        is not in ``legal_moves`` is rejected (``action_rejected``), never
+        corrected; a seat that sends no legal move in time loses on time.
+
+        Raises:
+            ValueError: ``uci`` does not have the shape of a UCI move
+                (``e2e4``, ``e7e8q``). The shape only: the SDK does not know
+                which moves are legal.
+        """
+        if not is_uci_move(uci):
+            raise ValueError(f"{uci!r} is not a UCI move string (like 'e2e4' or 'e7e8q')")
+        return cls(action="move", params={"move": uci})
+
 
 @dataclass(slots=True)
 class GameState:
@@ -728,7 +753,7 @@ def parse_turn_request(
     state_shape: str | None = None,
     your_seat: int = 0,
     dealer_seat: int = 0,
-) -> GameState | BigBadBotsTurnState:
+) -> GameState | BigBadBotsTurnState | ChessState | FogOfWarState:
     """Parse a ``turn_request`` into the model for the table's ``state_shape``.
 
     - ``None`` (NLHE), ``"27tripledraw"`` and ``"pineapple"``: a
@@ -736,6 +761,11 @@ def parse_turn_request(
       builds it. ``your_seat`` and ``dealer_seat`` are passed through.
     - ``"bigbadbots"``: the Big Bad Bots model for the call, from
       :func:`chipzen.bigbadbots.parse_bigbadbots_turn_request`.
+    - ``"chess"`` (preview, not live): a :class:`chipzen.chess.ChessState`,
+      from :func:`chipzen.chess.parse_chess_turn_request`.
+    - ``"fogofwar"`` (preview, not live): a
+      :class:`chipzen.fogofwar.FogOfWarState`, from
+      :func:`chipzen.fogofwar.parse_fogofwar_turn_request`.
 
     Raises:
         UnsupportedStateShapeError: any other ``state_shape``. There is no
@@ -747,6 +777,10 @@ def parse_turn_request(
         return GameState.from_turn_request(message, your_seat=your_seat, dealer_seat=dealer_seat)
     if state_shape == BIGBADBOTS_STATE_SHAPE:
         return parse_bigbadbots_turn_request(message)
+    if state_shape == CHESS_STATE_SHAPE:
+        return parse_chess_turn_request(message)
+    if state_shape == FOGOFWAR_STATE_SHAPE:
+        return parse_fogofwar_turn_request(message)
     raise UnsupportedStateShapeError(state_shape)
 
 

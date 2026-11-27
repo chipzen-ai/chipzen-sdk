@@ -7,6 +7,7 @@ so you can catch problems before submitting.
 from __future__ import annotations
 
 import ast
+import functools
 import importlib
 import json
 import os
@@ -110,8 +111,10 @@ ALLOWED_PACKAGES = frozenset(
 ALLOWED_ENTRY_POINTS = ("main.py", "bot.py")
 
 # The games ``validate`` knows. ``nlhe`` is every poker table (the checks
-# that predate Big Bad Bots); ``bigbadbots`` runs the Big Bad Bots checks.
-GAMES = ("nlhe", "bigbadbots")
+# that predate Big Bad Bots); ``bigbadbots`` runs the Big Bad Bots checks;
+# ``chess`` and ``fogofwar`` (preview, not live) run the chess checks on each
+# game's own recorded requests.
+GAMES = ("nlhe", "bigbadbots", "chess", "fogofwar")
 
 # Base classes that make a bot class, and the game each one implies (None:
 # the base does not say, so the bot is a poker bot unless told otherwise).
@@ -120,6 +123,18 @@ _BOT_BASES = {
     "Bot": None,
     "TiltBot": None,  # kept for legacy SDK compat
     "BigBadBotsBot": "bigbadbots",
+    "ChessBot": "chess",
+    "UciBridgeBot": "chess",
+    "FogOfWarBot": "fogofwar",
+}
+
+# The method a bot class on each base must define itself. A UciBridgeBot
+# subclass inherits its choose_move, so it needs none.
+_REQUIRED_METHOD = {
+    "BigBadBotsBot": "act",
+    "ChessBot": "choose_move",
+    "UciBridgeBot": None,
+    "FogOfWarBot": "choose_move",
 }
 
 
@@ -145,10 +160,13 @@ def validate_bot(
             WebSocket. Reports protocol-conformance failures as additional
             check entries. Pure connectivity — does not judge bot strength.
             Poker only.
-        game: ``"nlhe"`` or ``"bigbadbots"``. ``None`` (the default) picks
-            ``bigbadbots`` for a :class:`chipzen.BigBadBotsBot` subclass and
-            ``nlhe`` otherwise. A Big Bad Bots bot gets the Big Bad Bots
-            checks in place of the poker smoke test: every conformance
+        game: ``"nlhe"``, ``"bigbadbots"``, ``"chess"`` or ``"fogofwar"``
+            (both preview). ``None`` (the default) picks ``bigbadbots`` for a
+            :class:`chipzen.BigBadBotsBot` subclass, ``chess`` for a
+            :class:`chipzen.ChessBot` subclass, ``fogofwar`` for a
+            :class:`chipzen.FogOfWarBot` subclass and ``nlhe`` otherwise. A Big
+            Bad Bots bot gets the Big Bad Bots checks in place of the poker
+            smoke test (a chess bot, the chess ones): every conformance
             fixture request of the four calls, each answer judged as the
             server judges it (``chipzen.bigbadbots_validate``).
 
@@ -271,7 +289,8 @@ def _check_directory(
             (
                 "fail",
                 "bot_class",
-                "No class inheriting from ChipzenBot, Bot or BigBadBotsBot found in entry point",
+                "No class inheriting from ChipzenBot, Bot, BigBadBotsBot, ChessBot or "
+                "FogOfWarBot found in entry point",
             )
         )
         return results
@@ -281,6 +300,9 @@ def _check_directory(
         game = _bot_game(tree, bot_class_name) or "nlhe"
     if game == "bigbadbots":
         results.extend(_check_bigbadbots(bot_dir, ep, tree, bot_class_name, check_connectivity))
+        return results
+    if game in ("chess", "fogofwar"):
+        results.extend(_check_chess(bot_dir, ep, tree, bot_class_name, check_connectivity, game))
         return results
 
     # 5. Decide method check
@@ -370,6 +392,63 @@ def _check_bigbadbots(
             )
         )
     return results
+
+
+def _check_chess(
+    bot_dir: Path,
+    entry_point: Path,
+    tree: ast.Module,
+    class_name: str,
+    check_connectivity: bool,
+    game: str = "chess",
+) -> list[tuple[Severity, str, str]]:
+    """The chess / Fog of War (preview) half of ``_check_directory``, after the bot class."""
+    results: list[tuple[Severity, str, str]] = []
+
+    base = _bot_base(tree, class_name)
+    method = _REQUIRED_METHOD.get(base, "decide") if base else "decide"
+    if method is not None:
+        if not _has_method(tree, class_name, method):
+            results.append(
+                ("fail", f"{method}_method", f"{class_name} does not implement {method}()")
+            )
+            return results
+        results.append(("pass", f"{method}_method", f"{class_name}.{method}() implemented"))
+
+    req_file = bot_dir / "requirements.txt"
+    if req_file.exists():
+        results.extend(_check_requirements(req_file))
+    else:
+        results.append(
+            ("pass", "requirements", "No requirements.txt (only stdlib + SDK will be available)")
+        )
+
+    results.extend(
+        _with_bot(bot_dir, entry_point, class_name, functools.partial(_run_chess, game=game))
+    )
+    if check_connectivity:
+        results.append(
+            (
+                "warn",
+                "connectivity",
+                "skipped: the --check-connectivity scenarios are poker sessions; the "
+                f"{game}_* checks above already answer every recorded {game} request",
+            )
+        )
+    return results
+
+
+def _run_chess(bot: object, game: str = "chess") -> list[tuple[Severity, str, str]]:
+    """Instantiate-check ``bot`` and run the chess (or Fog of War) fixture checks on it."""
+    from chipzen.bot import ChipzenBot
+    from chipzen.chess_validate import run_chess_checks
+
+    if not isinstance(bot, ChipzenBot):
+        return [("fail", "smoke_test", f"{type(bot).__name__} is not a chipzen Bot")]
+    return [
+        ("pass", "smoke_test", f"{type(bot).__name__} instantiated"),
+        *run_chess_checks(bot, game=game),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +727,16 @@ def _bot_game(tree: ast.Module, class_name: str) -> str | None:
     return None
 
 
+def _bot_base(tree: ast.Module, class_name: str) -> str | None:
+    """The named class's game-specific base class name, or None."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            for name in _base_names(node):
+                if _BOT_BASES.get(name):
+                    return name
+    return None
+
+
 def _has_method(tree: ast.Module, class_name: str, method: str) -> bool:
     """Check if the named class defines ``method``."""
     for node in ast.walk(tree):
@@ -882,6 +971,21 @@ def validate_cli(args: list[str] | None = None) -> None:
             "  bigbadbots_dockerfile      With a Dockerfile in the folder: the image\n"
             "                             starts through the log-cap wrapper\n"
             "\n"
+            "A chess bot (PREVIEW, chess is not live; a ChessBot or UciBridgeBot\n"
+            "subclass, or --game chess) gets these in place of decide_method,\n"
+            "smoke_test and timeout:\n"
+            "  choose_move_method         ChessBot subclass implements choose_move()\n"
+            "  chess_move                 Every recorded chess request is answered\n"
+            "                             with a move from its legal_moves\n"
+            "  chess_state_mutation       choose_move() does not change its state\n"
+            "  chess_timing               Answers inside timeout_ms (warns past the\n"
+            "                             free window)\n"
+            "\n"
+            "A Fog of War bot (PREVIEW, not live; a FogOfWarBot subclass, or\n"
+            "--game fogofwar) gets the same checks, named fogofwar_move,\n"
+            "fogofwar_state_mutation and fogofwar_timing, on recorded Fog of War\n"
+            "requests (masked views, no fen and no moves).\n"
+            "\n"
             "The validator is a courtesy linter: it catches the most common\n"
             "upload-blocking issues before you ship. The authoritative gate is\n"
             "server-side -- the platform runs its own seccomp + cap-drop sandbox\n"
@@ -927,7 +1031,8 @@ def validate_cli(args: list[str] | None = None) -> None:
         default="auto",
         help=(
             "Which game's checks to run (default: auto, which picks bigbadbots for a "
-            "BigBadBotsBot subclass and nlhe otherwise)"
+            "BigBadBotsBot subclass, chess (preview) for a ChessBot or UciBridgeBot "
+            "subclass, fogofwar (preview) for a FogOfWarBot subclass and nlhe otherwise)"
         ),
     )
     parser.add_argument(
