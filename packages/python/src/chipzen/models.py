@@ -30,6 +30,8 @@ from chipzen.bigbadbots import (
 from chipzen.bigbadbots import STATE_SHAPE as BIGBADBOTS_STATE_SHAPE
 from chipzen.chess import STATE_SHAPE as CHESS_STATE_SHAPE
 from chipzen.chess import ChessState, is_uci_move, parse_chess_turn_request
+from chipzen.fogofwar import STATE_SHAPE as FOGOFWAR_STATE_SHAPE
+from chipzen.fogofwar import FogOfWarState, parse_fogofwar_turn_request
 
 # ---------------------------------------------------------------------------
 # Lenient coercion helpers for OPTIONAL variant keys
@@ -388,7 +390,7 @@ class Action:
 
     @classmethod
     def move(cls, uci: str) -> Action:
-        """Chess: play ``uci``, one of ``ChessState.legal_moves``. Preview: chess is not live.
+        """Chess and Fog of War: play ``uci``, one of ``state.legal_moves``. Preview: not live.
 
         Emits ``{"action": "move", "params": {"move": "e2e4"}}``. A move that
         is not in ``legal_moves`` is rejected (``action_rejected``), never
@@ -751,7 +753,7 @@ def parse_turn_request(
     state_shape: str | None = None,
     your_seat: int = 0,
     dealer_seat: int = 0,
-) -> GameState | BigBadBotsTurnState | ChessState:
+) -> GameState | BigBadBotsTurnState | ChessState | FogOfWarState:
     """Parse a ``turn_request`` into the model for the table's ``state_shape``.
 
     - ``None`` (NLHE), ``"27tripledraw"`` and ``"pineapple"``: a
@@ -761,6 +763,9 @@ def parse_turn_request(
       :func:`chipzen.bigbadbots.parse_bigbadbots_turn_request`.
     - ``"chess"`` (preview, not live): a :class:`chipzen.chess.ChessState`,
       from :func:`chipzen.chess.parse_chess_turn_request`.
+    - ``"fogofwar"`` (preview, not live): a
+      :class:`chipzen.fogofwar.FogOfWarState`, from
+      :func:`chipzen.fogofwar.parse_fogofwar_turn_request`.
 
     Raises:
         UnsupportedStateShapeError: any other ``state_shape``. There is no
@@ -774,6 +779,8 @@ def parse_turn_request(
         return parse_bigbadbots_turn_request(message)
     if state_shape == CHESS_STATE_SHAPE:
         return parse_chess_turn_request(message)
+    if state_shape == FOGOFWAR_STATE_SHAPE:
+        return parse_fogofwar_turn_request(message)
     raise UnsupportedStateShapeError(state_shape)
 
 

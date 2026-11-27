@@ -9,7 +9,8 @@
 
 This page is for building a chess bot with the Python SDK: what your bot
 receives, what it answers, how the clock works, what happens to a bad answer,
-and the two starters.
+and the two starters. Fog of War, a separate game on the same engine, is
+section 8.
 
 ## 1. The game
 
@@ -278,9 +279,93 @@ What a hosted chess seat gets (house bots and builders' bots alike):
 | Start-up | Free. Connect within 90 s. |
 | Logs | stdout and stderr are your match log, not capped. Log a line or two per move; do not forward an engine's `info` lines. |
 
-## 8. Not in this preview
+## 8. Fog of War
 
-- Fog of War (a separate game, `fogofwar`, on the same engine);
+> **PREVIEW: Fog of War is not live on Chipzen either.** It follows the
+> platform's draft Fog of War Layer 2 dialect, a delta of the chess one, and
+> the rule set `fogofwar-1.0` (frozen, `preview`).
+
+Fog of War is **its own game**, `fogofwar`, not a chess rule set. A chess bot
+does not play it and a Fog of War bot does not play chess: upload a Fog of War
+bot declaring `fogofwar`. It runs on the same engine as chess, with three
+differences:
+
+- **Capturing the king wins.** There is no check, no checkmate and no
+  stalemate: any move the pieces can make is legal, including moving into
+  attack and castling in, through or into attack.
+- **Each seat sees only part of the board**: the squares its own pieces stand
+  on and the squares they can move to. A request never carries the position,
+  and never the opponent's moves.
+- **Draws** are threefold repetition, the 50-move rule, a position with no move
+  at all, and 300 plies. There is no insufficient-material draw, and every
+  miss loses on time.
+
+Everything else is chess's: the transport, the clock (1 s window, 60 s bank,
+public), the answer (`{"action": "move", "params": {"move": "<uci>"}}`), the
+rejection codes and the 3-answer retry cap (section 4).
+
+### 8.1 Messages
+
+The server `hello` declares `game.state_shape: "fogofwar"` (and `game_type`
+and `variant` `"fogofwar"`); a `chipzen.FogOfWarBot` answers with
+`supported_games: ["fogofwar"]`. `match_start.game_config` has chess's shape,
+with `variant: "fogofwar"` and `rule_set_id: "fogofwar-1.0"`; the rule set's
+own `variant` is `"fog"`.
+
+`turn_request.state` (parsed into `chipzen.fogofwar.FogOfWarState`) has the
+chess compatibility keys (`board`, `pot`, ...), `phase`, `call`, `side`,
+`variant` (`"fog"`), `ply`, `start_fen`, `legal_moves` and `clock` as chess
+does, and **no `fen` and no `moves`**. In their place:
+
+| Field | Meaning |
+|---|---|
+| `my_moves` | Your own moves from the start, in UCI, in order. Never the opponent's. |
+| `visible` | Every square you see now, as square names `a1` to `h8`. |
+| `pieces` | The pieces on the visible squares, both colours, by square, as FEN letters (`P N B R Q K` White, lower case Black). A visible square with no entry is empty. |
+| `castling` | Your own castling rights in FEN letters (`KQ`, `kq`, `K`, ...), or `-`. |
+
+A bot that wants a belief about the hidden board keeps it itself, from
+`my_moves`, the views it was shown and `ply`. `FogOfWarState` adds a few
+read-only helpers over the view (no rules): `piece_at(square)`,
+`is_visible(square)`, `my_pieces`, `seen_opponent_pieces`, and
+`captured_by(move)`, the opponent piece a move lands on when you see one there
+(`"k"` / `"K"` means the move captures the king and wins).
+
+### 8.2 Writing one
+
+```python
+from chipzen import FogOfWarBot
+
+
+class TakeTheKing(FogOfWarBot):
+    def choose_move(self, state):
+        for move in state.legal_moves:
+            if state.captured_by(move) in ("k", "K"):
+                return move
+        return state.legal_moves[0]
+```
+
+`FogOfWarBot` behaves like `ChessBot` (section 4): the send margin, the
+fallback move, and the retries after `action_rejected`.
+
+The starter, in
+[`packages/python/starters/fogofwar/legal-mover/`](../packages/python/starters/fogofwar/legal-mover/):
+
+| Starter | Create it | What it does |
+|---|---|---|
+| Legal mover | `chipzen-sdk init my_bot --template fogofwar` | Picks from `legal_moves`: a king capture when it sees one, else the biggest visible capture, else a queen promotion, else a random move. No engine. |
+
+There is no UCI bridge for Fog of War: a UCI engine needs the whole position,
+which the fog hides.
+
+`chipzen-sdk validate <folder>` recognises a `FogOfWarBot` subclass (or take
+`--game fogofwar`) and runs the chess checks, named `fogofwar_move`,
+`fogofwar_state_mutation` and `fogofwar_timing`, on Fog of War requests
+recorded from Chipzen's engine (both colours, start to ply 299, with a king
+capture, castling, promotion and en passant on offer).
+
+## 9. Not in this preview
+
 - per-move `turn_result` events, reconnection, and human play;
 - published transit times (keep the 150 ms margin);
-- JavaScript and Rust chess support.
+- JavaScript and Rust chess and Fog of War support.

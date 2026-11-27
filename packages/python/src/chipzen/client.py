@@ -5,7 +5,7 @@ Implements the Chipzen two-layer protocol:
 - Layer 1 (Transport): ``docs/protocol/TRANSPORT-PROTOCOL.md``
 - Layer 2 (Poker):     ``docs/protocol/POKER-GAME-STATE-PROTOCOL.md``
 - Layer 2 (Big Bad Bots): ``docs/protocol/BIGBADBOTS-GAME-STATE-PROTOCOL.md``
-- Chess (preview, not live): ``docs/CHESS-BOTS.md``
+- Chess and Fog of War (preview, not live): ``docs/CHESS-BOTS.md``
 
 Handles the connection lifecycle: ``authenticate``, ``hello`` handshake,
 ``match_start``, per-round ``round_start`` / ``turn_request`` /
@@ -16,8 +16,8 @@ The server ``hello``'s ``game.state_shape`` picks the parser (LAYER2-COMMON
 section 2). Absent, ``27tripledraw`` and ``pineapple`` take the poker path,
 unchanged. ``bigbadbots`` parses each ``turn_request`` into its Big Bad Bots
 model, bounds each decision by the request's ``timeout_ms`` and answers with
-the protocol's default when the bot raises or runs out of time. ``chess``
-(preview, not live) does the same with a move from the request's
+the protocol's default when the bot raises or runs out of time. ``chess`` and
+``fogofwar`` (preview, not live) do the same with a move from the request's
 ``legal_moves``. Any other shape ends the session before the client ``hello``
 is sent.
 """
@@ -38,10 +38,12 @@ from chipzen.bigbadbots_bot import BigBadBotsBot, fallback_action, is_answer_sha
 from chipzen.bot import ChipzenBot
 from chipzen.chess import MAX_ANSWERS_PER_REQUEST as CHESS_MAX_ANSWERS
 from chipzen.chess import STATE_SHAPE as CHESS_STATE_SHAPE
-from chipzen.chess import ChessState, ChessStateParseError, parse_chess_turn_request
-from chipzen.chess_bot import ChessBot, is_move_answer
+from chipzen.chess import ChessStateParseError, parse_chess_turn_request
+from chipzen.chess_bot import MoveListBot, is_move_answer
 from chipzen.chess_bot import fallback_action as chess_fallback_action
 from chipzen.close_codes import PROTOCOL_CLOSE_LOG, ProtocolCloseError, protocol_close_from
+from chipzen.fogofwar import STATE_SHAPE as FOGOFWAR_STATE_SHAPE
+from chipzen.fogofwar import parse_fogofwar_turn_request
 from chipzen.models import (
     POKER_STATE_SHAPES,
     Action,
@@ -63,9 +65,14 @@ SUPPORTED_PROTOCOL_VERSIONS = ["1.0"]
 #: still reaches the server in time.
 BIGBADBOTS_SEND_MARGIN_MS = 20
 
-#: The same margin for a chess request (preview), used for a bot that is not a
-#: :class:`chipzen.ChessBot`; a ChessBot sets its own ``send_margin_ms``.
+#: The same margin for a chess or Fog of War request (preview), used for a bot
+#: that is not a :class:`chipzen.ChessBot` / :class:`chipzen.FogOfWarBot`; those
+#: set their own ``send_margin_ms``.
 CHESS_SEND_MARGIN_MS = 150
+
+#: The move-list games (preview): one ``move`` call, every legal move listed in
+#: the request. Fog of War is chess's session flow with a masked state.
+MOVE_LIST_STATE_SHAPES = (CHESS_STATE_SHAPE, FOGOFWAR_STATE_SHAPE)
 
 
 def _extract_match_id(url: str) -> str:
@@ -572,28 +579,35 @@ async def _session_loop(
         )
         _call_hook(bot.on_decision_latency, decision_ms)
 
-    # --- Chess turn handling (preview) -----------------------------------
-    # Only used when the server hello declares ``state_shape: chess``. The SDK
+    # --- Chess / Fog of War turn handling (preview) -----------------------
+    # Only used when the server hello declares ``state_shape: chess`` or
+    # ``fogofwar`` (the request is parsed by the table's shape). The SDK
     # never works out legality: every answer it sends is a member of the
     # request's ``legal_moves``, which the platform computed.
     # The moves sent for the last request, in order: the answer, then any
     # retries after ``action_rejected`` (at most CHESS_MAX_ANSWERS in all).
     chess_sent: dict[str, Any] = {"request_id": None, "moves": []}
 
-    def _chess_fallback(request: dict, state: ChessState | None, why: str) -> Action | None:
+    def _parse_move_request(request: dict) -> Any:
+        if state_shape == FOGOFWAR_STATE_SHAPE:
+            return parse_fogofwar_turn_request(request)
+        return parse_chess_turn_request(request)
+
+    def _chess_fallback(request: dict, state: Any, why: str) -> Action | None:
         action: Action | None = None
-        if state is not None and isinstance(bot, ChessBot):
+        if state is not None and isinstance(bot, MoveListBot):
             try:
                 move = bot.fallback_move(state)
             except Exception:  # noqa: BLE001 - a broken override must not cost the move
-                logger.exception("ChessBot.fallback_move() raised")
+                logger.exception("%s.fallback_move() raised", type(bot).__name__)
                 move = None
             if isinstance(move, str) and move in state.legal_moves:
                 action = Action.move(move)
         if action is None:
             action = chess_fallback_action(request)
         logger.warning(
-            "chess request %s: %s; sending %s",
+            "%s request %s: %s; sending %s",
+            state_shape,
             request.get("request_id"),
             why,
             action.to_wire() if action is not None else "nothing (the request lists no move)",
@@ -615,9 +629,9 @@ async def _session_loop(
             return (time.monotonic() - start) * 1000.0
 
         try:
-            state = parse_chess_turn_request(request)
-        except ChessStateParseError as exc:
-            logger.exception("chess turn_request failed to parse")
+            state = _parse_move_request(request)
+        except ChessStateParseError as exc:  # FogOfWarStateParseError is one too
+            logger.exception("%s turn_request failed to parse", state_shape)
             if not safe_mode:
                 raise BotDecisionError(str(exc)) from exc
             return _chess_fallback(request, None, "the payload failed to parse"), _elapsed()
@@ -650,7 +664,7 @@ async def _session_loop(
             message = f"decide() returned {action!r}, not a move from legal_moves"
             if not safe_mode:
                 raise BotDecisionError(message)
-            logger.error("chess request %s: %s", state.request_id, message)
+            logger.error("%s request %s: %s", state_shape, state.request_id, message)
             return _chess_fallback(request, state, "the answer was not a legal move"), _elapsed()
         return action, _elapsed()
 
@@ -664,11 +678,11 @@ async def _session_loop(
         raw_state = request.get("state")
         legal = raw_state.get("legal_moves") if isinstance(raw_state, dict) else None
         listed = [m for m in legal or [] if isinstance(m, str)]
-        if isinstance(bot, ChessBot):
+        if isinstance(bot, MoveListBot):
             try:
-                preferred = bot.fallback_move(parse_chess_turn_request(request))
+                preferred = bot.fallback_move(_parse_move_request(request))
             except Exception:  # noqa: BLE001 - a broken override must not cost the retry
-                logger.exception("ChessBot.fallback_move() raised during a retry")
+                logger.exception("%s.fallback_move() raised during a retry", type(bot).__name__)
                 preferred = None
             if isinstance(preferred, str) and preferred in listed and preferred not in tried:
                 return preferred
@@ -750,7 +764,7 @@ async def _session_loop(
         logger.error("Server hello has a malformed game descriptor: %s", exc)
         return None
     is_bigbadbots = state_shape == BIGBADBOTS_STATE_SHAPE
-    is_chess = state_shape == CHESS_STATE_SHAPE
+    is_chess = state_shape in MOVE_LIST_STATE_SHAPES  # chess or Fog of War
     if not is_bigbadbots and not is_chess and state_shape not in POKER_STATE_SHAPES:
         logger.error("%s", UnsupportedStateShapeError(state_shape))
         return None
@@ -761,17 +775,18 @@ async def _session_loop(
             state_shape,
         )
         return None
-    if isinstance(bot, ChessBot) and not is_chess:
+    if isinstance(bot, MoveListBot) and state_shape != bot.game_type:
         logger.error(
-            "%s is a ChessBot but the table's state_shape is %r; it cannot play here",
+            "%s plays %s but the table's state_shape is %r; it cannot play here",
             type(bot).__name__,
+            bot.game_type,
             state_shape,
         )
         return None
     if supported_games is None and isinstance(bot, BigBadBotsBot):
         supported_games = [BIGBADBOTS_STATE_SHAPE]
-    if supported_games is None and isinstance(bot, ChessBot):
-        supported_games = [CHESS_STATE_SHAPE]
+    if supported_games is None and isinstance(bot, MoveListBot):
+        supported_games = [bot.game_type]
 
     # #4245 / epic chipzen-ai/Chipzen#4200: the client's declared game
     # vocabulary. Appended LAST and only when the caller declared something,
@@ -932,7 +947,8 @@ async def _session_loop(
             details = payload.get("details")
             remaining = payload.get("remaining_ms", 0)
             logger.warning(
-                "chess answer rejected (%s): %s -- %sms remaining",
+                "%s answer rejected (%s): %s -- %sms remaining",
+                state_shape,
                 details.get("code") if isinstance(details, dict) else payload.get("reason"),
                 payload.get("message", ""),
                 remaining,

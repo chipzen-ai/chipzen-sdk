@@ -11,8 +11,9 @@ folder as package data (``chipzen/_starters/python``, mapped in
 so ``init`` and the starter cannot drift apart again (issue #260: the old
 inline templates wrote a ``main.py`` with no ``main()`` and no Dockerfile).
 
-``--template`` picks another starter: ``chess`` (the legal-move chess starter)
-or ``chess-uci`` (the UCI bridge). Both are PREVIEW: chess is not live yet.
+``--template`` picks another starter: ``chess`` (the legal-move chess starter),
+``chess-uci`` (the UCI bridge) or ``fogofwar`` (the legal-move Fog of War
+starter). All three are PREVIEW: chess and Fog of War are not live yet.
 """
 
 from __future__ import annotations
@@ -61,6 +62,9 @@ CHESS_STARTER_FILES = (
 )
 CHESS_UCI_STARTER_FILES = (*CHESS_STARTER_FILES, "engine/README.md")
 
+#: The Fog of War starter (PREVIEW: not live). Same files as the chess one.
+FOGOFWAR_STARTER_FILES = CHESS_STARTER_FILES
+
 
 @dataclass(frozen=True)
 class Template:
@@ -86,6 +90,12 @@ TEMPLATES: dict[str, Template] = {
         "_starters/chess-uci-bridge",
         CHESS_UCI_STARTER_FILES,
         "the engine settings, and put your engine in engine/",
+    ),
+    "fogofwar": Template(
+        "fogofwar/legal-mover",
+        "_starters/fogofwar-legal-mover",
+        FOGOFWAR_STARTER_FILES,
+        "choose_move()",
     ),
 }
 
@@ -125,7 +135,7 @@ def scaffold_bot(
         name: Name of the bot project (used as directory name).
         parent_dir: Where to create the directory (default: cwd).
         template: Which starter: ``"python"`` (the default, a poker bot),
-            ``"chess"`` or ``"chess-uci"`` (both preview).
+            ``"chess"``, ``"chess-uci"`` or ``"fogofwar"`` (all preview).
 
     Returns:
         Path to the created directory.
@@ -186,8 +196,9 @@ def init_cli(args: list[str] | None = None) -> None:
         default=DEFAULT_TEMPLATE,
         help=(
             "Which starter to write: python (a poker bot, the default), chess (picks a "
-            "legal move) or chess-uci (a bridge to your UCI engine). Chess is a PREVIEW: "
-            "not live on Chipzen yet."
+            "legal move), chess-uci (a bridge to your UCI engine) or fogofwar (a Fog of War "
+            "bot that picks a legal move). Chess and Fog of War are a PREVIEW: not live on "
+            "Chipzen yet."
         ),
     )
 

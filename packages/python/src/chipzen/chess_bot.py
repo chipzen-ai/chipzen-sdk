@@ -27,7 +27,7 @@ import dataclasses
 import logging
 from abc import abstractmethod
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, ClassVar
 
 from chipzen.bot import ChipzenBot
 from chipzen.chess import (
@@ -38,13 +38,127 @@ from chipzen.chess import (
     ChessStateParseError,
     first_legal_move,
     is_uci_move,
+    parse_chess_turn_request,
 )
 from chipzen.models import Action, GameState
 
 logger = logging.getLogger("chipzen")
 
 
-class ChessBot(ChipzenBot):
+class MoveListBot(ChipzenBot):
+    """The shared base of :class:`ChessBot` and :class:`chipzen.FogOfWarBot`.
+
+    Both games are turn-based, ask one call (``move``) and list every legal
+    move in each request, so a bot answers with one of ``state.legal_moves``
+    and the session loop handles both the same way: the send margin, the
+    fallback move, and the retries after ``action_rejected``. Subclass
+    :class:`ChessBot` or :class:`chipzen.FogOfWarBot`, not this.
+    """
+
+    #: The ``state_shape`` this bot plays, and what it declares in
+    #: ``supported_games`` unless the caller passes its own list.
+    game_type: ClassVar[str]
+
+    #: How long before ``timeout_ms`` the SDK stops waiting for
+    #: :meth:`choose_move` and sends the fallback. It covers the time the
+    #: answer spends in transit, which the platform counts against the clock.
+    send_margin_ms: int = 150
+
+    #: The match's ``match_start.game_config``, parsed by the default
+    #: :meth:`on_match_start` / :meth:`on_reconnected`. ``None`` until then.
+    game_config: ChessGameConfig | None = None
+
+    @staticmethod
+    def parse_request(message: Mapping[str, Any]) -> Any:
+        """Parse a ``turn_request`` of this bot's game into its state model."""
+        raise NotImplementedError
+
+    def _is_own_state(self, state: object) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def choose_move(self, state: Any) -> str | Action:
+        """Return this move: one of ``state.legal_moves``, as a UCI string or an Action."""
+
+    def fallback_move(self, state: Any) -> str:
+        """The move sent when :meth:`choose_move` cannot answer in time or answers badly.
+
+        The default is ``state.legal_moves[0]``. Override it with something
+        cheap and sure (it runs with the clock nearly spent); it must return
+        a member of ``state.legal_moves``.
+        """
+        return str(state.legal_moves[0])
+
+    # ------------------------------------------------------------------
+    # Routing
+    # ------------------------------------------------------------------
+
+    def decide(self, state: Any) -> Action:
+        """Call :meth:`choose_move` and turn its answer into an :class:`Action`.
+
+        You do not normally override this. It fills in ``state.game_config``
+        and returns ``Action.move(...)``. An answer that is not in
+        ``state.legal_moves`` is replaced by :meth:`fallback_move`, with an
+        error logged: sending it would be rejected, and an unanswered move
+        loses on time.
+
+        Raises:
+            TypeError: ``state`` is not this bot's game's state (the bot was
+                seated at another game's table).
+        """
+        if not self._is_own_state(state):
+            raise TypeError(
+                f"{type(self).__name__} received a {type(state).__name__}; "
+                f"it only plays {self.game_type}"
+            )
+        if self.game_config is not None and state.game_config is None:
+            state = dataclasses.replace(state, game_config=self.game_config)
+        answer = self.choose_move(state)
+        move = answer.params.get("move") if isinstance(answer, Action) else answer
+        if isinstance(answer, Action) and answer.action != MOVE_ACTION:
+            move = None
+        if isinstance(move, str) and move in state.legal_moves:
+            return Action.move(move)
+        fallback = self.fallback_move(state)
+        logger.error(
+            "%s request %s: choose_move() returned %r, which is not one of the %d legal "
+            "moves; sending %s instead",
+            self.game_type,
+            state.request_id,
+            answer,
+            len(state.legal_moves),
+            fallback,
+        )
+        return Action.move(fallback)
+
+    # ------------------------------------------------------------------
+    # Match context
+    # ------------------------------------------------------------------
+
+    def on_match_start(self, match_info: dict) -> None:
+        """Parse ``match_start.game_config`` into :attr:`game_config`.
+
+        If you override this, call ``super().on_match_start(match_info)``.
+        """
+        self._learn_game_config(match_info)
+
+    def on_reconnected(self, message: dict) -> None:
+        """Re-learn :attr:`game_config` from a ``reconnected`` message.
+
+        If you override this, call ``super().on_reconnected(message)``.
+        """
+        if "game_config" in message:
+            self._learn_game_config(message)
+
+    def _learn_game_config(self, message: Mapping[str, Any]) -> None:
+        try:
+            self.game_config = ChessGameConfig.from_match_start(message)
+        except ChessStateParseError as exc:
+            self.game_config = None
+            logger.warning("%s game_config could not be read (%s); playing on", self.game_type, exc)
+
+
+class ChessBot(MoveListBot):
     """Base class for a chess bot. Preview: chess is not live on Chipzen yet.
 
     Implement :meth:`choose_move`. Everything else has a working default.
@@ -84,14 +198,15 @@ class ChessBot(ChipzenBot):
                 return state.legal_moves[0]
     """
 
-    #: How long before ``timeout_ms`` the SDK stops waiting for
-    #: :meth:`choose_move` and sends the fallback. It covers the time the
-    #: answer spends in transit, which the platform counts against the clock.
-    send_margin_ms: int = 150
+    game_type: ClassVar[str] = STATE_SHAPE
 
-    #: The match's ``match_start.game_config``, parsed by the default
-    #: :meth:`on_match_start` / :meth:`on_reconnected`. ``None`` until then.
-    game_config: ChessGameConfig | None = None
+    @staticmethod
+    def parse_request(message: Mapping[str, Any]) -> ChessState:
+        """Parse a chess ``turn_request`` (:func:`chipzen.chess.parse_chess_turn_request`)."""
+        return parse_chess_turn_request(message)
+
+    def _is_own_state(self, state: object) -> bool:
+        return isinstance(state, ChessState)
 
     # ------------------------------------------------------------------
     # The one method to write
@@ -110,10 +225,6 @@ class ChessBot(ChipzenBot):
         """
         return state.legal_moves[0]
 
-    # ------------------------------------------------------------------
-    # Routing
-    # ------------------------------------------------------------------
-
     def decide(self, state: GameState | ChessState) -> Action:
         """Call :meth:`choose_move` and turn its answer into an :class:`Action`.
 
@@ -127,56 +238,11 @@ class ChessBot(ChipzenBot):
             TypeError: ``state`` is not a chess state (the bot was seated at
                 another game's table).
         """
-        if not isinstance(state, ChessState):
-            raise TypeError(f"ChessBot received a {type(state).__name__}; it only plays chess")
-        if self.game_config is not None and state.game_config is None:
-            state = dataclasses.replace(state, game_config=self.game_config)
-        answer = self.choose_move(state)
-        move = answer.params.get("move") if isinstance(answer, Action) else answer
-        if isinstance(answer, Action) and answer.action != MOVE_ACTION:
-            move = None
-        if isinstance(move, str) and move in state.legal_moves:
-            return Action.move(move)
-        fallback = self.fallback_move(state)
-        logger.error(
-            "chess request %s: choose_move() returned %r, which is not one of the %d legal "
-            "moves; sending %s instead",
-            state.request_id,
-            answer,
-            len(state.legal_moves),
-            fallback,
-        )
-        return Action.move(fallback)
-
-    # ------------------------------------------------------------------
-    # Match context
-    # ------------------------------------------------------------------
-
-    def on_match_start(self, match_info: dict) -> None:
-        """Parse ``match_start.game_config`` into :attr:`game_config`.
-
-        If you override this, call ``super().on_match_start(match_info)``.
-        """
-        self._learn_game_config(match_info)
-
-    def on_reconnected(self, message: dict) -> None:
-        """Re-learn :attr:`game_config` from a ``reconnected`` message.
-
-        If you override this, call ``super().on_reconnected(message)``.
-        """
-        if "game_config" in message:
-            self._learn_game_config(message)
-
-    def _learn_game_config(self, message: Mapping[str, Any]) -> None:
-        try:
-            self.game_config = ChessGameConfig.from_match_start(message)
-        except ChessStateParseError as exc:
-            self.game_config = None
-            logger.warning("chess game_config could not be read (%s); playing on", exc)
+        return super().decide(state)
 
 
 def fallback_action(request: Mapping[str, Any]) -> Action | None:
-    """A legal answer for a raw chess ``turn_request``: its first listed legal move.
+    """A legal answer for a raw chess or Fog of War ``turn_request``: its first listed move.
 
     Used by the session loop when the payload fails to parse, so a bot whose
     state could not be read still answers with a move from the list the
@@ -186,7 +252,7 @@ def fallback_action(request: Mapping[str, Any]) -> Action | None:
     return Action.move(move) if move is not None else None
 
 
-def is_move_answer(action: object, state: ChessState) -> bool:
+def is_move_answer(action: object, state: Any) -> bool:
     """Whether ``action`` is a ``move`` Action naming one of ``state.legal_moves``."""
     if not isinstance(action, Action) or action.action != MOVE_ACTION:
         return False
@@ -194,4 +260,4 @@ def is_move_answer(action: object, state: ChessState) -> bool:
     return is_uci_move(move) and move in state.legal_moves
 
 
-__all__ = ["STATE_SHAPE", "ChessBot", "fallback_action", "is_move_answer"]
+__all__ = ["STATE_SHAPE", "ChessBot", "MoveListBot", "fallback_action", "is_move_answer"]

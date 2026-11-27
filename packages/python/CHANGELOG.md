@@ -31,6 +31,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     against recorded requests from Chipzen's chess engine.
   - The SDK has no chess rules and no chess library: it only reads the legal
     moves each request lists.
+- **Fog of War bots (rule set `fogofwar-1.0`, game `fogofwar`).** Preview
+  only, like chess ([#300](https://github.com/chipzen-ai/chipzen-sdk/issues/300)).
+  See [`docs/CHESS-BOTS.md`](../../docs/CHESS-BOTS.md) section 8.
+  - `chipzen.fogofwar`: strict models for `state_shape: "fogofwar"`
+    (`FogOfWarState`: `my_moves`, `visible`, `pieces`, `castling`,
+    `legal_moves`, no `fen` and no `moves`), with read-only view helpers
+    (`captured_by`, `piece_at`, `my_pieces`, `seen_opponent_pieces`).
+  - `chipzen.FogOfWarBot`: implement `choose_move(state)`; the same session
+    behaviour as `ChessBot` (fallback, send margin, 3-answer retry cap). It
+    declares `supported_games=["fogofwar"]`. Both now share a base,
+    `chipzen.chess_bot.MoveListBot`.
+  - The session loop accepts `state_shape: "fogofwar"`, and
+    `parse_turn_request(..., state_shape="fogofwar")` returns a
+    `FogOfWarState`.
+  - A starter, `chipzen-sdk init <name> --template fogofwar`, and
+    `chipzen-sdk validate` Fog of War checks against requests recorded from
+    the platform's engine (`scripts/extract_fogofwar_fixtures.py`).
 
 ## [0.7.1] — 2026-11-22
 

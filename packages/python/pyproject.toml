@@ -91,6 +91,13 @@ packages = ["src/chipzen"]
 "starters/chess/uci-bridge/README.md" = "chipzen/_starters/chess-uci-bridge/README.md"
 "starters/chess/uci-bridge/.gitignore" = "chipzen/_starters/chess-uci-bridge/.gitignore"
 "starters/chess/uci-bridge/engine/README.md" = "chipzen/_starters/chess-uci-bridge/engine/README.md"
+# The Fog of War starter (PREVIEW: not live), for `init --template fogofwar`.
+"starters/fogofwar/legal-mover/bot.py" = "chipzen/_starters/fogofwar-legal-mover/bot.py"
+"starters/fogofwar/legal-mover/requirements.txt" = "chipzen/_starters/fogofwar-legal-mover/requirements.txt"
+"starters/fogofwar/legal-mover/Dockerfile" = "chipzen/_starters/fogofwar-legal-mover/Dockerfile"
+"starters/fogofwar/legal-mover/.dockerignore" = "chipzen/_starters/fogofwar-legal-mover/.dockerignore"
+"starters/fogofwar/legal-mover/README.md" = "chipzen/_starters/fogofwar-legal-mover/README.md"
+"starters/fogofwar/legal-mover/.gitignore" = "chipzen/_starters/fogofwar-legal-mover/.gitignore"
 
 [tool.ruff]
 target-version = "py310"
